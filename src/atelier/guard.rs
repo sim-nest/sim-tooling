@@ -199,7 +199,9 @@ fn guideline_rules() -> Vec<GuidelineRule> {
             GuidelineSeverity::Warning,
             "public README, generated Markdown, and Rust comments",
             "scan public-facing text for roadmap, history, and future wording",
-            Some("Move roadmap/history language to the control-plane docs (docs/future or docs/history)."),
+            Some(
+                "Move roadmap/history language to the control-plane docs (docs/future or docs/history).",
+            ),
             "EditRepo(*)",
         ),
         rule(
