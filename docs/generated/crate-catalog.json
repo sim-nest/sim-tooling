@@ -1,0 +1,20 @@
+{
+  "generator": "xtask crate-catalog v1",
+  "package_count": 1,
+  "packages": [
+    {
+      "description": "Repository maintenance tasks.",
+      "generated_readme": false,
+      "manifest": "Cargo.toml",
+      "name": "xtask",
+      "publish": "false",
+      "readme": "README.md",
+      "root": ".",
+      "target_kinds": [
+        "bin",
+        "lib",
+        "test"
+      ]
+    }
+  ]
+}

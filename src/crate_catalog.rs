@@ -43,8 +43,16 @@ struct PackageEntry {
 /// Generates crate metadata, READMEs, and the crate catalog for the current
 /// repository; with `check` true it instead verifies they are current and
 /// fails when they are stale. Returns the run summary.
-pub fn crate_catalog(check: bool) -> Result<CrateCatalogReport, String> {
-    let repo = find_repo_root(&std::env::current_dir().map_err(display_io)?)?;
+pub fn crate_catalog(
+    check: bool,
+    repo_override: Option<PathBuf>,
+) -> Result<CrateCatalogReport, String> {
+    let repo = match repo_override {
+        // An explicit repo root (used by the control-plane fleet gate to run
+        // against a sibling public repo, which has no AGENTS.md of its own).
+        Some(path) => path.canonicalize().map_err(display_io)?,
+        None => find_repo_root(&std::env::current_dir().map_err(display_io)?)?,
+    };
     let metadata = cargo_metadata(&repo)?;
     let mut entries = workspace_packages(&repo, &metadata)?;
     let mut report = CrateCatalogReport {

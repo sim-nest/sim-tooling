@@ -118,20 +118,25 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             println!("validation-matrix: generated matrix is current");
             Ok(())
         }
-        [_, command] if command == "crate-catalog" => {
-            let report = crate_catalog(false)?;
-            println!(
-                "crate-catalog: {} package(s), {} manifest(s), {} readme(s), {} catalog file(s)",
-                report.packages,
-                report.manifests_changed,
-                report.readmes_changed,
-                report.catalogs_changed
-            );
-            Ok(())
-        }
-        [_, command, flag] if command == "crate-catalog" && flag == "--check" => {
-            crate_catalog(true)?;
-            println!("crate-catalog: metadata and generated files are current");
+        [_, command, rest @ ..] if command == "crate-catalog" => {
+            let check = rest.iter().any(|arg| arg == "--check");
+            let repo = rest
+                .iter()
+                .position(|arg| arg == "--repo")
+                .and_then(|i| rest.get(i + 1))
+                .map(std::path::PathBuf::from);
+            let report = crate_catalog(check, repo)?;
+            if check {
+                println!("crate-catalog: metadata and generated files are current");
+            } else {
+                println!(
+                    "crate-catalog: {} package(s), {} manifest(s), {} readme(s), {} catalog file(s)",
+                    report.packages,
+                    report.manifests_changed,
+                    report.readmes_changed,
+                    report.catalogs_changed
+                );
+            }
             Ok(())
         }
         [_, command, target] if command == "citizenize" => {
