@@ -1,5 +1,12 @@
 # xtask
 
+xtask is the SIM constellation's internal build-and-dev tooling: it generates
+documentation, agent cards, the Atelier developer surfaces, and validation
+reports across the code repos.
+
+This is internal build tooling, not a product you install -- if you want to use
+SIM, install the `sim` command from sim-run and see sim-say.
+
 xtask is a package in the SIM constellation.
 
 ## Crates
