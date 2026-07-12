@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use sim_lib_net_core::hex_encode;
 
 use crate::{CardSpine, DocPosition};
 
@@ -75,13 +76,15 @@ pub(crate) fn lanes_to_reencode(spine: &CardSpine, state: &CardSpineState) -> Ve
 }
 
 pub(crate) fn lane_digest(contents: &str) -> String {
-    format!("sha256:{}", sha256_hex(contents.as_bytes()))
+    let digest = Sha256::digest(contents.as_bytes());
+    format!("sha256:{}", hex_encode(&digest))
 }
 
 pub(crate) fn file_lane_digest(root: &Path, lane: &str) -> Option<String> {
-    fs::read(root.join(lane))
-        .ok()
-        .map(|bytes| format!("sha256:{}", sha256_hex(&bytes)))
+    fs::read(root.join(lane)).ok().map(|bytes| {
+        let digest = Sha256::digest(&bytes);
+        format!("sha256:{}", hex_encode(&digest))
+    })
 }
 
 pub(crate) fn state_path(root: &Path) -> PathBuf {
@@ -135,15 +138,6 @@ fn string_map(value: &Value, key: &str) -> Option<BTreeMap<String, String>> {
         .iter()
         .map(|(map_key, map_value)| Some((map_key.clone(), map_value.as_str()?.to_owned())))
         .collect()
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 #[cfg(test)]

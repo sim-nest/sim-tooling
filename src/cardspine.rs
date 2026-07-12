@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
+use sim_lib_net_core::hex_encode;
 
 use crate::simdoc::{collect_recipe_files, repo_name};
 
@@ -58,10 +59,8 @@ impl CardSpine {
 /// Returns the content-addressed id for one Card.
 pub fn card_content_id(card: &Card) -> String {
     let canonical = canonical_card_bytes(card);
-    format!(
-        "{CARD_CONTENT_ID_ALGORITHM}:{}",
-        sha256_hex(canonical.as_bytes())
-    )
+    let digest = Sha256::digest(canonical.as_bytes());
+    format!("{CARD_CONTENT_ID_ALGORITHM}:{}", hex_encode(&digest))
 }
 
 fn recipe_card(repo: &str, recipe: &str) -> Card {
@@ -139,15 +138,6 @@ fn canonical_card_bytes(card: &Card) -> String {
 
 fn json_string(input: &str) -> String {
     serde_json::to_string(input).expect("serializing a string cannot fail")
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 #[cfg(test)]
