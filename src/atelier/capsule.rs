@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sim_cookbook::fnv1a64_hex;
 
 use super::{
     index_manifest::{RepoEntry, read_repos_manifest},
@@ -358,12 +359,7 @@ fn git_text(root: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn content_hash(events: &[Value]) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in format!("{events:?}").bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("fnv1a64:{hash:016x}")
+    format!("fnv1a64:{}", fnv1a64_hex(format!("{events:?}").as_bytes()))
 }
 
 fn pretty_json(value: &Value) -> Result<String, String> {

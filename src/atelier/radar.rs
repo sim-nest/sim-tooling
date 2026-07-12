@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sim_cookbook::fnv1a64;
 
 use super::{
     index::{AtelierIndexOptions, atelier_index},
@@ -423,12 +424,7 @@ fn embedding(text: &str) -> [f32; EMBED_DIM] {
 }
 
 fn stable_hash(text: &str) -> usize {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in text.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash as usize
+    fnv1a64(text.as_bytes()) as usize
 }
 
 fn cosine(left: &[f32; EMBED_DIM], right: &[f32; EMBED_DIM]) -> f32 {
