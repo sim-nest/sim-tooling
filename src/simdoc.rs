@@ -9,6 +9,7 @@ use std::process::Command;
 use crate::cardspine_state::{CardSpineState, file_lane_digest, lane_digest, lanes_to_reencode};
 use crate::simdoc_rustdoc::run_api_docs;
 use crate::{CardSpine, DocEncoder, DocPosition};
+use sim_codec_json::json_escape;
 
 pub fn run(args: Vec<String>) -> Result<(), String> {
     let options = SimdocOptions::parse(&args)?;
@@ -355,20 +356,6 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, String> {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/"))
-}
-
-fn json_escape(input: &str) -> String {
-    input
-        .chars()
-        .flat_map(|ch| match ch {
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            other => vec![other],
-        })
-        .collect()
 }
 
 struct ExpectedFiles {
