@@ -1,6 +1,7 @@
 //! Single documentation encoder over the build-side Card spine.
 
 use crate::{Card, CardSpine};
+use sim_codec_json::json_escape;
 
 /// Documentation output positions.
 ///
@@ -151,20 +152,6 @@ fn json_array_lines(entries: &[String]) -> String {
         .map(|entry| format!("    \"{}\"", json_escape(entry)))
         .collect::<Vec<_>>()
         .join(",\n")
-}
-
-fn json_escape(input: &str) -> String {
-    input
-        .chars()
-        .flat_map(|ch| match ch {
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            other => vec![other],
-        })
-        .collect()
 }
 
 #[cfg(test)]
