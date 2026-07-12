@@ -8,6 +8,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sim_cookbook::fnv1a64_hex;
 
 use crate::{
     repo_contract_cut::{CONTRACT_CUT_PATH, SplitCut, parse_split_cut},
@@ -463,19 +464,12 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn stable_hash(paths: &[PathBuf]) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
+    let mut bytes = Vec::new();
     for path in paths {
-        hash_bytes(&mut hash, path.to_string_lossy().as_bytes());
-        if let Ok(bytes) = fs::read(path) {
-            hash_bytes(&mut hash, &bytes);
+        bytes.extend_from_slice(path.to_string_lossy().as_bytes());
+        if let Ok(file_bytes) = fs::read(path) {
+            bytes.extend_from_slice(&file_bytes);
         }
     }
-    format!("{hash:016x}")
-}
-
-fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
-    for byte in bytes {
-        *hash ^= u64::from(*byte);
-        *hash = hash.wrapping_mul(0x100000001b3);
-    }
+    fnv1a64_hex(&bytes)
 }

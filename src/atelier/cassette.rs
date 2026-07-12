@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
+use sim_cookbook::fnv1a64_hex;
 
 use super::io::{check_cache, display_io, write_cache};
 
@@ -147,16 +148,7 @@ fn redact_path(value: &str) -> String {
 }
 
 fn content_hash(events: &[Value]) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
-    hash_bytes(&mut hash, format!("{events:?}").as_bytes());
-    format!("fnv1a64:{hash:016x}")
-}
-
-fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
-    for byte in bytes {
-        *hash ^= u64::from(*byte);
-        *hash = hash.wrapping_mul(0x100000001b3);
-    }
+    format!("fnv1a64:{}", fnv1a64_hex(format!("{events:?}").as_bytes()))
 }
 
 fn pretty_json(value: &Value) -> Result<String, String> {

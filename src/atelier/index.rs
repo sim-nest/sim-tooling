@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+use sim_cookbook::fnv1a64_hex;
 
 use super::{
     index_doc::{f1_recursive_chunks, line_for_offset},
@@ -297,12 +298,7 @@ fn infer_codecs(text: &str) -> Vec<&'static str> {
 }
 
 fn content_hash(text: &str) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in text.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("fnv1a64:{hash:016x}")
+    format!("fnv1a64:{}", fnv1a64_hex(text.as_bytes()))
 }
 
 fn cache_file(options: &AtelierIndexOptions) -> PathBuf {

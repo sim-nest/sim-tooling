@@ -1,6 +1,7 @@
 //! Deterministic Atelier self-hosting scenario fixtures.
 
 use serde_json::{Value, json};
+use sim_cookbook::fnv1a64_hex;
 
 const SCHEMA: &str = "sim.atelier.self-hosting-scenarios.v1";
 
@@ -186,12 +187,9 @@ fn scenario_row_json(scenario: &AtelierEvalScenario) -> Value {
 }
 
 fn cassette_content_hash(events: &[&str]) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
+    let mut bytes = Vec::new();
     for event in events {
-        for byte in event.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
+        bytes.extend_from_slice(event.as_bytes());
     }
-    format!("fnv1a64:{hash:016x}")
+    format!("fnv1a64:{}", fnv1a64_hex(&bytes))
 }
