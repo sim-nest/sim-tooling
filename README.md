@@ -22,6 +22,13 @@ cargo fmt --check && cargo test && cargo clippy -- -D warnings && cargo doc --no
 cargo run -p xtask -- simdoc --check
 ```
 
+## Citizenize
+
+`cargo run -p xtask -- citizenize <crate-name-or-path>` rewrites public
+candidate structs toward the citizen conventions and writes versioned
+dependencies that are legal in a public repository. `--local-paths` switches
+those dependencies to sibling checkout paths for deliberate local migrations.
+
 ## Atelier Site
 
 `cargo run -p xtask -- atelier-site` emits the SIM Atelier Studio Site graph and

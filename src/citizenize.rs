@@ -26,6 +26,14 @@ struct CrateInfo {
     repo: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DependencyMode {
+    /// Write versioned dependencies that are legal in a public repository.
+    Published,
+    /// Write local path dependencies for deliberate local checkout migrations.
+    LocalPaths,
+}
+
 #[derive(Clone, Debug)]
 struct Candidate {
     name: String,
@@ -37,29 +45,46 @@ struct Candidate {
 /// Citizenizes the crate named or located by `target`, resolved within the
 /// current repository, and returns the run summary.
 pub fn citizenize_arg(target: &str) -> Result<CitizenizeReport, String> {
+    citizenize_arg_with_mode(target, DependencyMode::Published)
+}
+
+pub(crate) fn citizenize_arg_with_mode(
+    target: &str,
+    mode: DependencyMode,
+) -> Result<CitizenizeReport, String> {
     let repo = find_repo_root(&std::env::current_dir().map_err(display_io)?)?;
     let krate = resolve_crate(&repo, target)?;
-    citizenize_crate(&krate)
+    citizenize_crate(&krate, mode)
 }
 
 /// Citizenizes the crate rooted at `path` (the directory holding its
 /// `Cargo.toml`) and returns the run summary.
 pub fn citizenize_path(path: &Path) -> Result<CitizenizeReport, String> {
+    citizenize_path_with_mode(path, DependencyMode::Published)
+}
+
+pub(crate) fn citizenize_path_with_mode(
+    path: &Path,
+    mode: DependencyMode,
+) -> Result<CitizenizeReport, String> {
     let repo = find_repo_root(&std::env::current_dir().map_err(display_io)?)?;
     let root = path.canonicalize().map_err(display_io)?;
     let manifest = root.join("Cargo.toml");
     let name = package_name(&manifest)?;
     let domain = domain_from_package(&name);
-    citizenize_crate(&CrateInfo {
-        root,
-        manifest,
-        name,
-        domain,
-        repo,
-    })
+    citizenize_crate(
+        &CrateInfo {
+            root,
+            manifest,
+            name,
+            domain,
+            repo,
+        },
+        mode,
+    )
 }
 
-fn citizenize_crate(krate: &CrateInfo) -> Result<CitizenizeReport, String> {
+fn citizenize_crate(krate: &CrateInfo, mode: DependencyMode) -> Result<CitizenizeReport, String> {
     let files = rust_files(&krate.root.join("src")).map_err(display_io)?;
     let skip_by_impl = collect_skip_impls(&files)?;
     let mut report = CitizenizeReport::default();
@@ -82,7 +107,7 @@ fn citizenize_crate(krate: &CrateInfo) -> Result<CitizenizeReport, String> {
         }
     }
 
-    if report.candidates > 0 && ensure_citizen_dependencies(krate)? {
+    if report.candidates > 0 && ensure_citizen_dependencies(krate, mode)? {
         report.files_changed += 1;
     }
 
@@ -260,32 +285,41 @@ fn crate_info(repo: &Path, root: PathBuf) -> Result<CrateInfo, String> {
     })
 }
 
-fn ensure_citizen_dependencies(krate: &CrateInfo) -> Result<bool, String> {
+fn ensure_citizen_dependencies(krate: &CrateInfo, mode: DependencyMode) -> Result<bool, String> {
     let text = fs::read_to_string(&krate.manifest).map_err(display_io)?;
     let mut additions = Vec::new();
     if !has_dependency(&text, "sim-citizen") {
-        additions.push(format!(
-            "sim-citizen = {{ path = \"{}\" }}",
-            dependency_path(krate, "sim-citizen")
-        ));
+        additions.push(dependency_spec(krate, "sim-citizen", mode));
     }
     if !has_dependency(&text, "sim-citizen-derive") {
-        additions.push(format!(
-            "sim-citizen-derive = {{ path = \"{}\" }}",
-            dependency_path(krate, "sim-citizen-derive")
-        ));
+        additions.push(dependency_spec(krate, "sim-citizen-derive", mode));
     }
     if !has_dependency(&text, "sim-kernel") {
-        additions.push(format!(
-            "sim-kernel = {{ path = \"{}\" }}",
-            dependency_path(krate, "sim-kernel")
-        ));
+        additions.push(dependency_spec(krate, "sim-kernel", mode));
     }
     if additions.is_empty() {
         return Ok(false);
     }
     fs::write(&krate.manifest, insert_dependencies(&text, &additions)).map_err(display_io)?;
     Ok(true)
+}
+
+fn dependency_spec(krate: &CrateInfo, dep: &str, mode: DependencyMode) -> String {
+    match mode {
+        DependencyMode::Published => format!("{dep} = \"{}\"", published_version(dep)),
+        DependencyMode::LocalPaths => {
+            format!("{dep} = {{ path = \"{}\" }}", dependency_path(krate, dep))
+        }
+    }
+}
+
+fn published_version(dep: &str) -> &'static str {
+    match dep {
+        "sim-citizen" => "0.1.1",
+        "sim-citizen-derive" => "0.1.0",
+        "sim-kernel" => "0.1.3",
+        _ => "0.1",
+    }
 }
 
 fn has_dependency(manifest: &str, name: &str) -> bool {
