@@ -269,6 +269,7 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             "cargo clippy --all-targets -- -D warnings",
             "cargo doc --no-deps",
             "cargo run -p xtask -- simdoc --check",
+            "cargo run -p xtask -- check-file-sizes",
             "cargo run -p xtask -- repo-contract --check --repo .",
             "cargo run -p xtask -- validation-matrix --check --repo .",
             "cargo run -p xtask -- crate-catalog --check --repo ."

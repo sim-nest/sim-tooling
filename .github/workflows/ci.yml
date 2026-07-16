@@ -19,3 +19,4 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo run -p xtask -- simdoc --check
+      - run: cargo run -p xtask -- check-file-sizes

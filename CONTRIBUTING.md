@@ -21,6 +21,7 @@ Every PR runs these gates in CI, and they must be green before merge:
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo doc --no-deps`
 - `cargo run -p xtask -- simdoc --check`
+- `cargo run -p xtask -- check-file-sizes`
 
 Please keep source and Markdown ASCII-only, and add or update tests for behavior
 you change. Public APIs carry `#![deny(missing_docs)]`; document new public items.

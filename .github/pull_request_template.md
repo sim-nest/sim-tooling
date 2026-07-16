@@ -9,6 +9,7 @@
 - [ ] `cargo clippy --all-targets -- -D warnings` passes
 - [ ] `cargo doc --no-deps` passes
 - [ ] `cargo run -p xtask -- simdoc --check` passes
+- [ ] `cargo run -p xtask -- check-file-sizes` passes
 - [ ] Tests added/updated for the behavior changed
 - [ ] Source and Markdown are ASCII-only
 - [ ] Commits are signed off (DCO: `git commit -s`)
