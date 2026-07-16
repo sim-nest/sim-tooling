@@ -34,13 +34,79 @@ pub struct PlainRecord {
     assert!(syn::parse_file(&source).is_ok());
 
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("sim-citizen = { path = "));
-    assert!(manifest.contains("sim-citizen-derive = { path = "));
-    assert!(manifest.contains("sim-kernel = { path = "));
+    assert!(manifest.contains("sim-citizen = \"0.1.1\""));
+    assert!(manifest.contains("sim-citizen-derive = \"0.1.0\""));
+    assert!(manifest.contains("sim-kernel = \"0.1.3\""));
+    assert!(!manifest.contains("path ="));
 
     let second = citizenize_path(&fixture).unwrap();
     assert_eq!(second.candidates, 0);
     assert_eq!(second.files_changed, 0);
+}
+
+#[test]
+fn citizenize_default_dependencies_are_publishable() {
+    let fixture = fixture("published_deps");
+    write_fixture(
+        &fixture,
+        r#"
+pub struct PlainRecord {
+    pub values: Vec<i64>,
+}
+"#,
+    );
+
+    citizenize_path(&fixture).unwrap();
+
+    let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("sim-citizen = \"0.1.1\""));
+    assert!(manifest.contains("sim-citizen-derive = \"0.1.0\""));
+    assert!(manifest.contains("sim-kernel = \"0.1.3\""));
+    assert!(!manifest.contains("path ="));
+}
+
+#[test]
+fn citizenize_local_path_dependencies_are_explicit() {
+    let fixture = fixture("local_paths");
+    write_fixture(
+        &fixture,
+        r#"
+pub struct PlainRecord {
+    pub values: Vec<i64>,
+}
+"#,
+    );
+
+    citizenize_path_with_mode(&fixture, DependencyMode::LocalPaths).unwrap();
+
+    let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("sim-citizen = { path = "));
+    assert!(manifest.contains("sim-citizen-derive = { path = "));
+    assert!(manifest.contains("sim-kernel = { path = "));
+}
+
+#[test]
+fn citizenize_cli_local_paths_are_explicit() {
+    let fixture = fixture("cli_local_paths");
+    write_fixture(
+        &fixture,
+        r#"
+pub struct PlainRecord {
+    pub values: Vec<i64>,
+}
+"#,
+    );
+
+    crate::run(vec![
+        "xtask".to_owned(),
+        "citizenize".to_owned(),
+        "--local-paths".to_owned(),
+        fixture.display().to_string(),
+    ])
+    .unwrap();
+
+    let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("path ="));
 }
 
 #[test]
@@ -133,14 +199,32 @@ pub struct PlainRecord {
 "#,
     );
     citizenize_path(&fixture).unwrap();
-    let missing = missing_path_dependencies(&fixture);
-    if !missing.is_empty() {
-        eprintln!(
-            "skipping citizenize compile fixture; missing path dependencies: {}",
-            missing.join(", ")
-        );
-        return;
-    }
+    let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
+    assert!(!manifest.contains("path ="));
+    let status = Command::new("cargo")
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(fixture.join("Cargo.toml"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+#[ignore = "local path mode depends on sibling source checkouts"]
+fn citizenize_local_path_fixture_compiles() {
+    let fixture = fixture("local_compile");
+    write_fixture(
+        &fixture,
+        r#"
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlainRecord {
+    pub name: String,
+    pub values: Vec<i64>,
+}
+"#,
+    );
+    citizenize_path_with_mode(&fixture, DependencyMode::LocalPaths).unwrap();
     patch_transitive_kernel_dependency(&fixture);
     let status = Command::new("cargo")
         .arg("check")
@@ -176,22 +260,6 @@ edition = "2024"
     )
     .unwrap();
     fs::write(root.join("src/lib.rs"), source.trim_start()).unwrap();
-}
-
-fn missing_path_dependencies(root: &Path) -> Vec<String> {
-    let manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
-    manifest
-        .lines()
-        .filter_map(path_dependency)
-        .filter_map(|path| {
-            let dependency = if Path::new(&path).is_absolute() {
-                PathBuf::from(&path)
-            } else {
-                root.join(&path)
-            };
-            (!dependency.join("Cargo.toml").is_file()).then_some(path)
-        })
-        .collect()
 }
 
 fn patch_transitive_kernel_dependency(root: &Path) {

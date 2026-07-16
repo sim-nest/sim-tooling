@@ -12,7 +12,7 @@
     "cargo run -p xtask -- validation-matrix --check --repo .",
     "cargo run -p xtask -- crate-catalog --check --repo ."
   ],
-  "workspace_hash": "fed055dec883a988",
+  "workspace_hash": "2a3828e99286408f",
   "workspace_hash_algorithm": "fnv1a64",
   "workspace_hash_input_count": 45,
   "workspace_hash_inputs": [

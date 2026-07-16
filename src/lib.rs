@@ -135,15 +135,44 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
-        [_, command, target] if command == "citizenize" => {
-            let report = citizenize_arg(target)?;
+        [_, command, args @ ..] if command == "citizenize" => {
+            let (target, dependency_mode) = parse_citizenize_args(args)?;
+            let report = citizenize::citizenize_arg_with_mode(target, dependency_mode)?;
             println!(
                 "citizenize: {} candidate(s), {} file(s) changed",
                 report.candidates, report.files_changed
             );
             Ok(())
         }
-        [program, ..] => Err(format!("usage: {program} <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>")),
-        [] => Err("usage: xtask <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>".to_owned()),
+        [program, ..] => Err(format!("usage: {program} <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>")),
+        [] => Err("usage: xtask <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>".to_owned()),
     }
+}
+
+fn parse_citizenize_args(args: &[String]) -> Result<(&str, citizenize::DependencyMode), String> {
+    let mut dependency_mode = citizenize::DependencyMode::Published;
+    let mut target = None;
+
+    for arg in args {
+        match arg.as_str() {
+            "--local-paths" => dependency_mode = citizenize::DependencyMode::LocalPaths,
+            "-h" | "--help" => return Err(citizenize_usage()),
+            other if other.starts_with('-') => {
+                return Err(format!("unknown citizenize argument `{other}`"));
+            }
+            other => {
+                if target.replace(other).is_some() {
+                    return Err("citizenize accepts exactly one target".to_owned());
+                }
+            }
+        }
+    }
+
+    target
+        .map(|target| (target, dependency_mode))
+        .ok_or_else(citizenize_usage)
+}
+
+fn citizenize_usage() -> String {
+    "usage: xtask citizenize [--local-paths] <crate-name-or-path>".to_owned()
 }
