@@ -13,6 +13,7 @@
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
 //!   crate catalog.
 //! - `citizenize` -- rewrite a crate or path toward the citizen conventions.
+//! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
 //! - `atelier-cassette`, `atelier-capsule`, and `atelier-index` -- check caches.
 //! - `atelier-radar` -- query ranked confidence hints over the Atelier index.
@@ -34,7 +35,9 @@ mod cardspine_state;
 mod citizenize;
 mod crate_catalog;
 mod crate_catalog_manifest;
+mod dispatch;
 mod docencoder;
+mod file_size_gate;
 mod generator_options;
 mod repo_contract;
 mod repo_contract_cut;
@@ -64,115 +67,5 @@ pub use validation_matrix::{ValidationMatrixReport, validation_matrix};
 /// its optional flags or argument.
 /// Returns a usage error for an unrecognized command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
-    if matches!(args.as_slice(), [_, command, ..] if command == "simdoc") {
-        return simdoc::run(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-site") {
-        return atelier::run(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-cassette") {
-        return atelier::run_cassette(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-capsule") {
-        return atelier::run_capsule(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-index") {
-        return atelier::run_index(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-radar") {
-        return atelier::run_radar(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-guard") {
-        return atelier::run_guard(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-tools") {
-        return atelier::run_tools(args);
-    }
-    if matches!(args.as_slice(), [_, command, ..] if command == "atelier-shell") {
-        return atelier::run_shell(args);
-    }
-
-    match args.as_slice() {
-        [_, command, ..] if command == "repo-contract" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report = repo_contract::repo_contract_for_repo(options.check, &options.repo)?;
-            if options.check {
-                println!("repo-contract: generated contract files are current");
-                return Ok(());
-            }
-            println!(
-                "repo-contract: {} package(s), {} artifact(s) changed",
-                report.packages, report.artifacts_changed
-            );
-            Ok(())
-        }
-        [_, command, ..] if command == "validation-matrix" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report = validation_matrix::validation_matrix_for_repo(options.check, &options.repo)?;
-            if options.check {
-                println!("validation-matrix: generated matrix is current");
-                return Ok(());
-            }
-            println!(
-                "validation-matrix: {} row(s), {} artifact(s) changed",
-                report.rows, report.artifacts_changed
-            );
-            Ok(())
-        }
-        [_, command, ..] if command == "crate-catalog" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report = crate_catalog(options.check, Some(options.repo))?;
-            if options.check {
-                println!("crate-catalog: metadata and generated files are current");
-            } else {
-                println!(
-                    "crate-catalog: {} package(s), {} manifest(s), {} readme(s), {} catalog file(s)",
-                    report.packages,
-                    report.manifests_changed,
-                    report.readmes_changed,
-                    report.catalogs_changed
-                );
-            }
-            Ok(())
-        }
-        [_, command, args @ ..] if command == "citizenize" => {
-            let (target, dependency_mode) = parse_citizenize_args(args)?;
-            let report = citizenize::citizenize_arg_with_mode(target, dependency_mode)?;
-            println!(
-                "citizenize: {} candidate(s), {} file(s) changed",
-                report.candidates, report.files_changed
-            );
-            Ok(())
-        }
-        [program, ..] => Err(format!("usage: {program} <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>")),
-        [] => Err("usage: xtask <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>".to_owned()),
-    }
-}
-
-fn parse_citizenize_args(args: &[String]) -> Result<(&str, citizenize::DependencyMode), String> {
-    let mut dependency_mode = citizenize::DependencyMode::Published;
-    let mut target = None;
-
-    for arg in args {
-        match arg.as_str() {
-            "--local-paths" => dependency_mode = citizenize::DependencyMode::LocalPaths,
-            "-h" | "--help" => return Err(citizenize_usage()),
-            other if other.starts_with('-') => {
-                return Err(format!("unknown citizenize argument `{other}`"));
-            }
-            other => {
-                if target.replace(other).is_some() {
-                    return Err("citizenize accepts exactly one target".to_owned());
-                }
-            }
-        }
-    }
-
-    target
-        .map(|target| (target, dependency_mode))
-        .ok_or_else(citizenize_usage)
-}
-
-fn citizenize_usage() -> String {
-    "usage: xtask citizenize [--local-paths] <crate-name-or-path>".to_owned()
+    dispatch::dispatch(args)
 }

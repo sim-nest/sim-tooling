@@ -6,8 +6,11 @@ use serde_json::{Value, json};
 
 use super::{
     index_manifest::{RepoEntry, read_repos_manifest},
-    io::{check_cache, display_io, write_cache},
+    io::{check_cache, write_cache},
 };
+
+mod cli;
+mod render;
 
 const SCHEMA: &str = "sim.atelier.tools.v1";
 const DEFAULT_CACHE: &str = ".sim/atelier/tools.json";
@@ -164,8 +167,8 @@ pub fn atelier_tools(options: AtelierToolsOptions) -> Result<AtelierToolsReport,
     }
     let descriptors = tool_descriptors(&repos, control_repo.as_deref(), docs_repo.as_deref());
     validate_descriptors(&descriptors, control_repo.as_deref())?;
-    let catalog = catalog_json(&options, &manifest_path, &descriptors);
-    let content = pretty_json(&catalog)?;
+    let catalog = render::catalog_json(&options, &manifest_path, &descriptors);
+    let content = render::pretty_json(&catalog)?;
     let cache_file = options
         .cache_path
         .clone()
@@ -183,71 +186,7 @@ pub fn atelier_tools(options: AtelierToolsOptions) -> Result<AtelierToolsReport,
 }
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
-    let mut options = AtelierToolsOptions {
-        control_root: std::env::current_dir().map_err(display_io)?,
-        ..AtelierToolsOptions::default()
-    };
-    let mut print = true;
-    let mut args = args.into_iter().skip(2);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--control-root" => {
-                options.control_root = next_path(&mut args, "--control-root")?;
-            }
-            "--repos-manifest" => {
-                options.repos_manifest = Some(next_path(&mut args, "--repos-manifest")?);
-            }
-            "--repo" => {
-                options.repo_filter = Some(next_string(&mut args, "--repo")?);
-            }
-            "--cache" => {
-                options.cache_path = Some(next_path(&mut args, "--cache")?);
-            }
-            "--json" => {
-                print = true;
-            }
-            "--check" => {
-                options.check = true;
-                print = false;
-            }
-            "--refresh-only" => {
-                print = false;
-            }
-            "-h" | "--help" => {
-                print_usage();
-                return Ok(());
-            }
-            other => return Err(format!("unknown atelier-tools option: {other}")),
-        }
-    }
-
-    let manifest_path = options
-        .repos_manifest
-        .clone()
-        .unwrap_or_else(|| options.control_root.join("repos.toml"));
-    let print_options = options.clone();
-    let report = atelier_tools(options)?;
-    if print {
-        print!(
-            "{}",
-            pretty_json(&catalog_json(
-                &print_options,
-                &manifest_path,
-                &report.descriptors,
-            ))?
-        );
-    }
-    let status = if report.cache_changed {
-        "updated"
-    } else {
-        "current"
-    };
-    eprintln!(
-        "atelier-tools: {} descriptor(s), cache {status}: {}",
-        report.descriptors.len(),
-        report.cache_file.display()
-    );
-    Ok(())
+    cli::run(args)
 }
 
 fn control_repo_name(repos: &[RepoEntry]) -> Option<String> {
@@ -452,58 +391,4 @@ fn validate_descriptors(
         }
     }
     Ok(())
-}
-
-fn catalog_json(
-    options: &AtelierToolsOptions,
-    manifest_path: &std::path::Path,
-    descriptors: &[AtelierToolDescriptor],
-) -> Value {
-    json!({
-        "schema": SCHEMA,
-        "source_policy": {
-            "repos_manifest": manifest_display(&options.control_root, manifest_path),
-            "generated_roots": [".meta-workspace/"],
-            "editable_roots_include_meta_workspace": false,
-            "github_mirror_operations_allowed": false,
-            "control_repo_rust_code_allowed": false,
-        },
-        "summary": {
-            "descriptors": descriptors.len(),
-            "repo_scoped": descriptors.iter().filter(|descriptor| descriptor.repo.is_some()).count(),
-        },
-        "descriptors": descriptors.iter().map(AtelierToolDescriptor::to_json).collect::<Vec<_>>(),
-    })
-}
-
-fn manifest_display(control_root: &std::path::Path, manifest_path: &std::path::Path) -> String {
-    manifest_path
-        .strip_prefix(control_root)
-        .unwrap_or(manifest_path)
-        .display()
-        .to_string()
-}
-
-fn pretty_json(value: &Value) -> Result<String, String> {
-    serde_json::to_string_pretty(value)
-        .map(|mut text| {
-            text.push('\n');
-            text
-        })
-        .map_err(|err| format!("render atelier tools json: {err}"))
-}
-
-fn print_usage() {
-    println!(
-        "usage: xtask atelier-tools [--control-root PATH] [--repos-manifest PATH] [--repo NAME] [--cache PATH] [--json] [--check] [--refresh-only]"
-    );
-}
-
-fn next_path(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<PathBuf, String> {
-    next_string(args, flag).map(PathBuf::from)
-}
-
-fn next_string(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-    args.next()
-        .ok_or_else(|| format!("{flag} requires a value"))
 }

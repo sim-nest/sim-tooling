@@ -20,7 +20,14 @@ These commands are the repository gate recorded in the constellation manifest.
 ```bash
 cargo fmt --all --check && cargo test && cargo clippy --all-targets -- -D warnings && cargo doc --no-deps
 cargo run -p xtask -- simdoc --check
+cargo run -p xtask -- check-file-sizes
 ```
+
+## File Size Gate
+
+`cargo run -p xtask -- check-file-sizes` scans Rust source files and fails when
+an entrypoint (`lib.rs`, `main.rs`, or `mod.rs`) exceeds 250 lines or any other
+Rust source file exceeds 700 lines.
 
 ## Citizenize
 
