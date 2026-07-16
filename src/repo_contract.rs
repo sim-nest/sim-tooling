@@ -545,6 +545,28 @@ mod tests {
         fs::remove_dir_all(right).unwrap();
     }
 
+    #[test]
+    fn simdoc_generated_contracts_list_root_package() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let artifacts = contract_artifacts(root).unwrap();
+
+        assert_eq!(artifacts.package_count, 1);
+
+        let feature_map = generated_json(&artifacts, "feature-map.json");
+        let rustdoc_index = generated_json(&artifacts, "rustdoc-index.json");
+        let repo_contract = generated_json(&artifacts, "repo-contract.json");
+
+        assert_eq!(feature_map["packages"][0]["package"], "xtask");
+        assert_eq!(rustdoc_index["packages"][0]["package"], "xtask");
+        assert_eq!(repo_contract["packages"][0]["name"], "xtask");
+        assert_eq!(repo_contract["packages"][0]["manifest"], "Cargo.toml");
+        assert_eq!(repo_contract["packages"][0]["root"], "");
+    }
+
+    fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {
+        serde_json::from_str(artifacts.files.get(name).unwrap()).unwrap()
+    }
+
     fn temp_root(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
