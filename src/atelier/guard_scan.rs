@@ -50,7 +50,7 @@ pub(super) fn scan_repo(
     findings.extend(rule_code_free(repo, rules, &files));
     findings.extend(rule_local_path_deps(repo, rules, &files)?);
     findings.extend(rule_meta_workspace(repo, rules));
-    findings.extend(rule_no_github(repo, rules)?);
+    findings.extend(rule_remote_policy(repo, rules)?);
     findings.extend(rule_file_size(repo, rules, &files)?);
     findings.extend(rule_kernel_boundary(repo, rules, &files)?);
     Ok(findings)
@@ -237,11 +237,11 @@ fn rule_meta_workspace(repo: &RepoEntry, rules: &[GuidelineRule]) -> Vec<Guideli
     findings
 }
 
-fn rule_no_github(
+fn rule_remote_policy(
     repo: &RepoEntry,
     rules: &[GuidelineRule],
 ) -> Result<Vec<GuidelineFinding>, String> {
-    let rule = by_id(rules, "no-github-work");
+    let rule = by_id(rules, "remote-policy");
     let mut findings = Vec::new();
     if repo.publish_to_github {
         findings.push(finding(
@@ -253,13 +253,26 @@ fn rule_no_github(
         ));
     }
     for remote in git_remotes(&repo.checkout_path)? {
-        if remote.to_ascii_lowercase().contains("github.com") {
+        let lower = remote.to_ascii_lowercase();
+        if repo.kind == "private" && lower.contains("github.com") {
             findings.push(finding(
                 rule,
                 repo,
                 Some(Path::new(".git/config")),
                 rule.severity,
-                format!("git remote references GitHub: {remote}"),
+                format!("private repo has GitHub remote: {remote}"),
+            ));
+        }
+        if matches!(repo.kind.as_str(), "code" | "frontpage")
+            && lower.contains("puh:13000/sim-nest")
+            && lower.ends_with("(push)")
+        {
+            findings.push(finding(
+                rule,
+                repo,
+                Some(Path::new(".git/config")),
+                rule.severity,
+                format!("public mirror push remote is configured: {remote}"),
             ));
         }
     }
