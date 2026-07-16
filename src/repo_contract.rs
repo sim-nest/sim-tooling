@@ -246,7 +246,16 @@ fn provenance(repo: &Path) -> Result<Value, String> {
         .iter()
         .map(|path| rel_path(repo, path))
         .collect::<Result<Vec<_>, _>>()?;
+    let source_commit = git_output(repo, &["rev-parse", "HEAD"])
+        .ok_or_else(|| "git rev-parse HEAD did not return a commit".to_owned())?;
+    let source_remote = public_origin(repo)?;
     Ok(json!({
+        "schema": "sim.provenance.v1",
+        "repo": repo_name(repo),
+        "source_commit": source_commit,
+        "source_remote": source_remote,
+        "generated_by": "cargo run -p xtask -- simdoc",
+        "api_docs": "target/doc/",
         "generator": GENERATOR,
         "generation_timestamp": preserved
             .get("generation_timestamp")
@@ -254,11 +263,7 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             .map(str::to_owned)
             .or_else(|| git_output(repo, &["show", "-s", "--format=%cI", "HEAD"]))
             .unwrap_or_else(|| "unknown".to_owned()),
-        "git_commit": preserved
-            .get("git_commit")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| git_output(repo, &["rev-parse", "HEAD"])),
+        "git_commit": source_commit,
         "workspace_hash": stable_hash(repo, &inputs),
         "workspace_hash_algorithm": "fnv1a64",
         "workspace_hash_input_count": input_paths.len(),
@@ -275,6 +280,39 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             "cargo run -p xtask -- crate-catalog --check --repo ."
         ],
     }))
+}
+
+fn repo_name(repo: &Path) -> String {
+    repo.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("REPO_NAME")
+        .to_owned()
+}
+
+fn public_origin(repo: &Path) -> Result<String, String> {
+    let origin = git_output(repo, &["config", "--get", "remote.origin.url"])
+        .ok_or_else(|| "git remote origin url is not configured".to_owned())?;
+    sanitize_origin_url(&origin)
+}
+
+fn sanitize_origin_url(origin: &str) -> Result<String, String> {
+    let mut url = if let Some(rest) = origin.strip_prefix("git@github.com:") {
+        format!("https://github.com/{rest}")
+    } else if let Some(rest) = origin.strip_prefix("http://github.com/") {
+        format!("https://github.com/{rest}")
+    } else {
+        origin.to_owned()
+    };
+    if let Some(rest) = url.strip_suffix(".git") {
+        url = rest.to_owned();
+    }
+    if url.starts_with("https://github.com/") && !url.contains('\\') {
+        Ok(url)
+    } else {
+        Err(format!(
+            "remote origin is not a public GitHub URL: {origin}"
+        ))
+    }
 }
 
 fn preserved_provenance(repo: &Path) -> Value {
@@ -554,14 +592,39 @@ mod tests {
         assert_eq!(artifacts.package_count, 1);
 
         let feature_map = generated_json(&artifacts, "feature-map.json");
+        let provenance = generated_json(&artifacts, "provenance.json");
         let rustdoc_index = generated_json(&artifacts, "rustdoc-index.json");
         let repo_contract = generated_json(&artifacts, "repo-contract.json");
 
         assert_eq!(feature_map["packages"][0]["package"], "xtask");
+        assert_eq!(provenance["schema"], "sim.provenance.v1");
+        assert_eq!(provenance["repo"], "sim-tooling");
+        assert_eq!(provenance["generated_by"], "cargo run -p xtask -- simdoc");
+        assert_eq!(provenance["api_docs"], "target/doc/");
+        assert!(provenance["source_commit"].as_str().is_some());
+        assert!(
+            provenance["source_remote"]
+                .as_str()
+                .is_some_and(|remote| remote.starts_with("https://github.com/"))
+        );
+        assert_eq!(provenance["git_commit"], provenance["source_commit"]);
         assert_eq!(rustdoc_index["packages"][0]["package"], "xtask");
         assert_eq!(repo_contract["packages"][0]["name"], "xtask");
         assert_eq!(repo_contract["packages"][0]["manifest"], "Cargo.toml");
         assert_eq!(repo_contract["packages"][0]["root"], "");
+    }
+
+    #[test]
+    fn origin_sanitizer_emits_public_github_url() {
+        assert_eq!(
+            sanitize_origin_url("git@github.com:sim-nest/sim-tooling.git").unwrap(),
+            "https://github.com/sim-nest/sim-tooling"
+        );
+        assert_eq!(
+            sanitize_origin_url("https://github.com/sim-nest/sim-tooling.git").unwrap(),
+            "https://github.com/sim-nest/sim-tooling"
+        );
+        assert!(sanitize_origin_url("/home/bo/projects/sim-tooling").is_err());
     }
 
     fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {
