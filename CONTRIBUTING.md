@@ -8,7 +8,7 @@ of repos that build together; contributions of all sizes are welcome.
 This repo is self-contained and builds against the published SIM crates on
 crates.io -- no extra tooling or sibling checkouts are required:
 
-- Clone this repo and run `cargo build` and `cargo test --workspace`.
+- Clone this repo and run the validation and docs gates below.
 - Cross-repo dependencies resolve from crates.io; dependencies within this repo
   resolve locally.
 
@@ -17,9 +17,10 @@ crates.io -- no extra tooling or sibling checkouts are required:
 Every PR runs these gates in CI, and they must be green before merge:
 
 - `cargo fmt --all --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`
-- `cargo doc --workspace --no-deps`
+- `cargo test`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo doc --no-deps`
+- `cargo run -p xtask -- simdoc --check`
 
 Please keep source and Markdown ASCII-only, and add or update tests for behavior
 you change. Public APIs carry `#![deny(missing_docs)]`; document new public items.
