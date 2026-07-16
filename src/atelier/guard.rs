@@ -245,13 +245,15 @@ fn guideline_rules() -> Vec<GuidelineRule> {
             "EditRepo(*)",
         ),
         rule(
-            "no-github-work",
-            "No GitHub remotes, publish flags, or mirror work",
-            "R2 and Stage 1 invariant",
+            "remote-policy",
+            "Repository remotes follow public and private policy",
+            "R2/R4 and public GitHub-origin policy",
             GuidelineSeverity::Error,
             "git remotes and repos.toml publish flags",
-            "inspect git remotes and publish_to_github",
-            Some("Keep work on the upstream remote and leave publish_to_github false."),
+            "inspect git remotes, Forgejo mirror push URLs, and publish_to_github",
+            Some(
+                "Keep public repos on GitHub origin, keep Forgejo mirrors read-only, and keep private repos off GitHub.",
+            ),
             "PlanPin",
         ),
         rule(

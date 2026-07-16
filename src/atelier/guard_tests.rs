@@ -65,7 +65,7 @@ fn failing_fixture_reports_each_error_rule() {
         "code-free-control-repos",
         "no-local-public-path-deps",
         "meta-workspace-not-source",
-        "no-github-work",
+        "remote-policy",
         "rust-file-size-policy",
     ] {
         assert!(
@@ -79,6 +79,85 @@ fn failing_fixture_reports_each_error_rule() {
             .iter()
             .any(|finding| finding.gated_capability == "PlanPin")
     );
+}
+
+#[test]
+fn public_repos_github_origin_is_allowed() {
+    let fixture = GuardFixture::new("github-origin");
+    fixture.code_repo("sim-tooling", false);
+    fixture.code_free_repo("sim-say", false);
+    fixture.git_init_commit("sim-tooling");
+    fixture.git_init("sim-say");
+    fixture.git_remote(
+        "sim-tooling",
+        "origin",
+        "https://github.com/sim-nest/sim-tooling.git",
+    );
+    fixture.git_remote(
+        "sim-say",
+        "origin",
+        "https://github.com/sim-nest/sim-say.git",
+    );
+    fixture.write_manifest(&[
+        fixture.repo_row("sim-tooling", "code", true, "src", false),
+        fixture.repo_row("sim-say", "frontpage", false, "", false),
+    ]);
+
+    let report = fixture.guard();
+
+    assert!(!report.findings.iter().any(|finding| {
+        finding.rule_id == "remote-policy"
+            && (finding.location.contains("sim-tooling") || finding.location.contains("sim-say"))
+    }));
+}
+
+#[test]
+fn private_repo_github_remote_is_rejected() {
+    let fixture = GuardFixture::new("private-github");
+    fixture.code_free_repo("sim-private", false);
+    fixture.git_init("sim-private");
+    fixture.git_remote(
+        "sim-private",
+        "origin",
+        "https://github.com/sim-nest/sim-private.git",
+    );
+    fixture.write_manifest(&[fixture.repo_row("sim-private", "private", false, "", false)]);
+
+    let report = fixture.guard();
+
+    assert!(report.findings.iter().any(|finding| {
+        finding.rule_id == "remote-policy"
+            && finding.location.contains("sim-private")
+            && finding.evidence.contains("private repo has GitHub remote")
+    }));
+}
+
+#[test]
+fn public_mirror_push_remote_is_rejected() {
+    let fixture = GuardFixture::new("mirror-push");
+    fixture.code_repo("sim-tooling", false);
+    fixture.git_init_commit("sim-tooling");
+    fixture.git_remote(
+        "sim-tooling",
+        "origin",
+        "https://github.com/sim-nest/sim-tooling.git",
+    );
+    fixture.git_push_remote(
+        "sim-tooling",
+        "origin",
+        "http://puh:13000/sim-nest/sim-tooling.git",
+    );
+    fixture.write_manifest(&[fixture.repo_row("sim-tooling", "code", true, "src", false)]);
+
+    let report = fixture.guard();
+
+    assert!(report.findings.iter().any(|finding| {
+        finding.rule_id == "remote-policy"
+            && finding.location.contains("sim-tooling")
+            && finding
+                .evidence
+                .contains("public mirror push remote is configured")
+    }));
 }
 
 #[test]
@@ -198,7 +277,7 @@ impl GuardFixture {
 
     fn git_init_commit(&self, repo: &str) {
         let path = self.root.join(repo);
-        git(&path, &["init", "-q"]);
+        self.git_init(repo);
         git(&path, &["add", "."]);
         git(
             &path,
@@ -212,6 +291,21 @@ impl GuardFixture {
                 "-m",
                 "fixture",
             ],
+        );
+    }
+
+    fn git_init(&self, repo: &str) {
+        git(&self.root.join(repo), &["init", "-q"]);
+    }
+
+    fn git_remote(&self, repo: &str, name: &str, url: &str) {
+        git(&self.root.join(repo), &["remote", "add", name, url]);
+    }
+
+    fn git_push_remote(&self, repo: &str, name: &str, url: &str) {
+        git(
+            &self.root.join(repo),
+            &["remote", "set-url", "--push", name, url],
         );
     }
 }
