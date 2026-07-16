@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use sim_cookbook::fnv1a64_hex;
 
 use crate::{
-    repo_contract_cut::{CONTRACT_CUT_PATH, SplitCut, parse_split_cut},
+    generator_options::find_repo_root,
+    repo_contract_cut::SplitCut,
     repo_contract_render::artifacts,
     repo_contract_scan::{
         card_index, citizen_classes, input_files, non_citizen_exemptions, recipe_books,
@@ -51,22 +52,52 @@ pub(crate) struct PackageContract {
 /// stale. Returns the run summary.
 pub fn repo_contract(check: bool) -> Result<RepoContractReport, String> {
     let repo = find_repo_root(&std::env::current_dir().map_err(display_io)?)?;
-    let metadata = cargo_metadata(&repo)?;
-    let cut_text = fs::read_to_string(repo.join(CONTRACT_CUT_PATH)).map_err(display_io)?;
-    let cut = parse_split_cut(&cut_text)?;
-    let packages = workspace_packages(&repo, &metadata, &cut)?;
+    repo_contract_for_repo(check, &repo)
+}
+
+pub(crate) fn repo_contract_for_repo(
+    check: bool,
+    repo: &Path,
+) -> Result<RepoContractReport, String> {
+    let artifacts = contract_artifacts(repo)?;
+    let package_count = artifacts.package_count;
+    let generated_dir = repo.join("docs/generated");
+    if !check {
+        fs::create_dir_all(&generated_dir).map_err(display_io)?;
+    }
+
+    let mut report = RepoContractReport {
+        packages: package_count,
+        artifacts_changed: 0,
+    };
+    for (name, content) in artifacts.files {
+        write_or_check(&generated_dir.join(name), &content, check, &mut report)?;
+    }
+    Ok(report)
+}
+
+pub(crate) struct ContractArtifacts {
+    pub(crate) package_count: usize,
+    pub(crate) files: BTreeMap<&'static str, String>,
+}
+
+pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, String> {
+    let metadata = cargo_metadata(repo)?;
+    let workspace_names = workspace_package_names(&metadata)?;
+    let cut = crate::repo_contract_cut::load_or_derive_split_cut(repo, &workspace_names)?;
+    let packages = workspace_packages(repo, &metadata, &cut)?;
     validate_cut(&packages, &cut)?;
 
     let package_groups = packages
         .iter()
         .map(|package| (package.name.clone(), package.group.clone()))
         .collect::<BTreeMap<_, _>>();
-    let citizens = citizen_classes(&repo);
-    let exemptions = non_citizen_exemptions(&repo);
-    let recipes = recipe_books(&repo, &package_groups);
-    let cards = card_index(&repo, &package_groups);
-    let provenance = provenance(&repo)?;
-    let artifacts = artifacts(
+    let citizens = citizen_classes(repo);
+    let exemptions = non_citizen_exemptions(repo);
+    let recipes = recipe_books(repo, &package_groups);
+    let cards = card_index(repo, &package_groups);
+    let provenance = provenance(repo)?;
+    let files = artifacts(
         &packages,
         &cut,
         &citizens,
@@ -76,18 +107,10 @@ pub fn repo_contract(check: bool) -> Result<RepoContractReport, String> {
         &provenance,
     )?;
 
-    let mut report = RepoContractReport {
-        packages: packages.len(),
-        artifacts_changed: 0,
-    };
-    let generated_dir = repo.join("docs/generated");
-    if !check {
-        fs::create_dir_all(&generated_dir).map_err(display_io)?;
-    }
-    for (name, content) in artifacts {
-        write_or_check(&generated_dir.join(name), &content, check, &mut report)?;
-    }
-    Ok(report)
+    Ok(ContractArtifacts {
+        package_count: packages.len(),
+        files,
+    })
 }
 
 fn cargo_metadata(repo: &Path) -> Result<Value, String> {
@@ -179,6 +202,28 @@ fn workspace_packages(
     Ok(packages)
 }
 
+fn workspace_package_names(metadata: &Value) -> Result<BTreeSet<String>, String> {
+    let member_ids = metadata["workspace_members"]
+        .as_array()
+        .ok_or("cargo metadata missing workspace_members")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    Ok(metadata["packages"]
+        .as_array()
+        .ok_or("cargo metadata missing packages")?
+        .iter()
+        .filter_map(|package| {
+            let id = package["id"].as_str()?;
+            member_ids
+                .contains(id)
+                .then(|| package["name"].as_str())
+                .flatten()
+                .map(str::to_owned)
+        })
+        .collect())
+}
+
 fn validate_cut(packages: &[PackageContract], cut: &SplitCut) -> Result<(), String> {
     let workspace = packages
         .iter()
@@ -214,14 +259,19 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             .and_then(Value::as_str)
             .map(str::to_owned)
             .or_else(|| git_output(repo, &["rev-parse", "HEAD"])),
-        "workspace_hash": stable_hash(&inputs),
+        "workspace_hash": stable_hash(repo, &inputs),
         "workspace_hash_algorithm": "fnv1a64",
         "workspace_hash_input_count": input_paths.len(),
         "workspace_hash_inputs": input_paths,
         "validation_commands": [
-            "cargo run -p xtask -- repo-contract",
-            "./scripts/check-generated-contracts.sh",
-            "./scripts/validate.sh"
+            "cargo fmt --all --check",
+            "cargo test",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo doc --no-deps",
+            "cargo run -p xtask -- simdoc --check",
+            "cargo run -p xtask -- repo-contract --check --repo .",
+            "cargo run -p xtask -- validation-matrix --check --repo .",
+            "cargo run -p xtask -- crate-catalog --check --repo ."
         ],
     }))
 }
@@ -437,15 +487,6 @@ fn rel_path(repo: &Path, path: &Path) -> Result<String, String> {
         .replace(std::path::MAIN_SEPARATOR, "/"))
 }
 
-fn find_repo_root(start: &Path) -> Result<PathBuf, String> {
-    for dir in start.ancestors() {
-        if dir.join("Cargo.toml").is_file() && dir.join("AGENTS.md").is_file() {
-            return Ok(dir.to_path_buf());
-        }
-    }
-    Err(format!("could not find repo root from {}", start.display()))
-}
-
 fn display_io(err: io::Error) -> String {
     err.to_string()
 }
@@ -463,13 +504,55 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn stable_hash(paths: &[PathBuf]) -> String {
+fn stable_hash(repo: &Path, paths: &[PathBuf]) -> String {
     let mut bytes = Vec::new();
     for path in paths {
-        bytes.extend_from_slice(path.to_string_lossy().as_bytes());
+        let rel = rel_path(repo, path).unwrap_or_else(|_| path.to_string_lossy().into_owned());
+        bytes.extend_from_slice(rel.as_bytes());
+        bytes.push(0);
         if let Ok(file_bytes) = fs::read(path) {
             bytes.extend_from_slice(&file_bytes);
         }
+        bytes.push(0);
     }
     fnv1a64_hex(&bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        env, fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+
+    #[test]
+    fn stable_hash_uses_repo_relative_paths() {
+        let left = temp_root("sim-tooling-hash-left");
+        let right = temp_root("sim-tooling-hash-right");
+        fs::create_dir_all(left.join("src")).unwrap();
+        fs::create_dir_all(right.join("src")).unwrap();
+        fs::write(left.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+        fs::write(right.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+
+        let left_hash = stable_hash(&left, &[left.join("src/lib.rs")]);
+        let right_hash = stable_hash(&right, &[right.join("src/lib.rs")]);
+
+        assert_eq!(left_hash, right_hash);
+
+        fs::remove_dir_all(left).unwrap();
+        fs::remove_dir_all(right).unwrap();
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }

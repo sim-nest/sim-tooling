@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cardspine_state::{CardSpineState, file_lane_digest, lane_digest, lanes_to_reencode};
+use crate::repo_contract::contract_artifacts;
 use crate::simdoc_rustdoc::run_api_docs;
 use crate::{CardSpine, DocEncoder, DocPosition};
-use sim_codec_json::json_escape;
 
 pub fn run(args: Vec<String>) -> Result<(), String> {
     let options = SimdocOptions::parse(&args)?;
@@ -138,6 +138,7 @@ fn run_recipe_gate(root: &Path) -> Result<(), String> {
 
 fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
     let repo = repo_name(root);
+    let contract_files = contract_artifacts(root)?.files;
     let spine = CardSpine::for_repo(root)?;
     let state = CardSpineState::read(root)?;
     let reencode = state
@@ -169,19 +170,26 @@ fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
                 "# Generated Diagrams\n\nGenerated diagram images for `{repo}` are written here.\n"
             ),
         ),
-        GeneratedFile::new("docs/generated/provenance.json", provenance_json(&repo)),
-        planner.file(
-            DocPosition::RepoContract,
-            "docs/generated/repo-contract.json",
-        ),
-        GeneratedFile::new(
-            "docs/generated/rustdoc-index.json",
-            rustdoc_index_json(&repo),
-        ),
-        planner.file(DocPosition::CardIndex, "docs/generated/card-index.json"),
-        GeneratedFile::new("docs/generated/feature-map.json", feature_map_json(&repo)),
+        generated_contract_file(&contract_files, "provenance.json")?,
+        generated_contract_file(&contract_files, "repo-contract.json")?,
+        generated_contract_file(&contract_files, "rustdoc-index.json")?,
+        generated_contract_file(&contract_files, "card-index.json")?,
+        generated_contract_file(&contract_files, "feature-map.json")?,
     ];
     Ok(ExpectedFiles { spine, files })
+}
+
+fn generated_contract_file(
+    contract_files: &BTreeMap<&'static str, String>,
+    name: &'static str,
+) -> Result<GeneratedFile, String> {
+    let contents = contract_files
+        .get(name)
+        .ok_or_else(|| format!("repo-contract generator did not produce {name}"))?;
+    Ok(GeneratedFile::new(
+        format!("docs/generated/{name}"),
+        contents.clone(),
+    ))
 }
 
 struct CardLanePlanner<'a> {
@@ -273,27 +281,6 @@ fn is_recipe_path(path: &Path) -> bool {
             .map(|part| part == "recipes")
             .unwrap_or(false)
     })
-}
-
-fn provenance_json(repo: &str) -> String {
-    format!(
-        "{{\n  \"schema\": \"sim.provenance.v1\",\n  \"repo\": \"{}\",\n  \"generated_by\": \"cargo run -p xtask -- simdoc\",\n  \"api_docs\": \"target/doc/\"\n}}\n",
-        json_escape(repo)
-    )
-}
-
-fn rustdoc_index_json(repo: &str) -> String {
-    format!(
-        "{{\n  \"schema\": \"sim.rustdoc-index.v1\",\n  \"repo\": \"{}\",\n  \"target_doc\": \"target/doc/\"\n}}\n",
-        json_escape(repo)
-    )
-}
-
-fn feature_map_json(repo: &str) -> String {
-    format!(
-        "{{\n  \"schema\": \"sim.feature-map.v1\",\n  \"repo\": \"{}\",\n  \"packages\": []\n}}\n",
-        json_escape(repo)
-    )
 }
 
 fn write_files(root: &Path, files: &[GeneratedFile]) -> Result<(), String> {
