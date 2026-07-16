@@ -15,10 +15,10 @@ xtask is a package in the SIM constellation.
 
 ## Validation
 
-These commands run in the constellation workspace; only `sim-kernel` builds from a lone clone today (see `DEVELOPING.md` in `sim-sdk`). A single-repo build lands with the first crates.io publish.
+These commands are the repository gate recorded in the constellation manifest.
 
 ```bash
-cargo fmt --check && cargo test && cargo clippy -- -D warnings && cargo doc --no-deps
+cargo fmt --all --check && cargo test && cargo clippy --all-targets -- -D warnings && cargo doc --no-deps
 cargo run -p xtask -- simdoc --check
 ```
 
@@ -27,7 +27,7 @@ cargo run -p xtask -- simdoc --check
 `cargo run -p xtask -- citizenize <crate-name-or-path>` rewrites public
 candidate structs toward the citizen conventions and writes versioned
 dependencies that are legal in a public repository. `--local-paths` switches
-those dependencies to sibling checkout paths for deliberate local migrations.
+those dependencies to sibling checkout paths for deliberate local rewrites.
 
 ## Atelier Site
 
