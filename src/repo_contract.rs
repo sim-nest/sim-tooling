@@ -246,7 +246,9 @@ fn provenance(repo: &Path) -> Result<Value, String> {
         .iter()
         .map(|path| rel_path(repo, path))
         .collect::<Result<Vec<_>, _>>()?;
-    let source_commit = git_output(repo, &["rev-parse", "HEAD"])
+    let workspace_hash = stable_hash(repo, &inputs);
+    let source_commit = preserved_source_commit(&preserved, &workspace_hash)
+        .or_else(|| git_output(repo, &["rev-parse", "HEAD"]))
         .ok_or_else(|| "git rev-parse HEAD did not return a commit".to_owned())?;
     let source_remote = public_origin(repo)?;
     Ok(json!({
@@ -264,7 +266,7 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             .or_else(|| git_output(repo, &["show", "-s", "--format=%cI", "HEAD"]))
             .unwrap_or_else(|| "unknown".to_owned()),
         "git_commit": source_commit,
-        "workspace_hash": stable_hash(repo, &inputs),
+        "workspace_hash": workspace_hash,
         "workspace_hash_algorithm": "fnv1a64",
         "workspace_hash_input_count": input_paths.len(),
         "workspace_hash_inputs": input_paths,
@@ -280,6 +282,19 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             "cargo run -p xtask -- crate-catalog --check --repo ."
         ],
     }))
+}
+
+fn preserved_source_commit(preserved: &Value, workspace_hash: &str) -> Option<String> {
+    let preserved_hash = preserved.get("workspace_hash").and_then(Value::as_str)?;
+    if preserved_hash != workspace_hash {
+        return None;
+    }
+    preserved
+        .get("source_commit")
+        .or_else(|| preserved.get("git_commit"))
+        .and_then(Value::as_str)
+        .filter(|commit| !commit.is_empty())
+        .map(str::to_owned)
 }
 
 fn repo_name(repo: &Path) -> String {
@@ -625,6 +640,43 @@ mod tests {
             "https://github.com/sim-nest/sim-tooling"
         );
         assert!(sanitize_origin_url("/home/bo/projects/sim-tooling").is_err());
+    }
+
+    #[test]
+    fn preserved_source_commit_survives_generated_doc_commit() {
+        let preserved = json!({
+            "workspace_hash": "same-hash",
+            "source_commit": "source-commit",
+            "git_commit": "legacy-commit"
+        });
+
+        assert_eq!(
+            preserved_source_commit(&preserved, "same-hash").as_deref(),
+            Some("source-commit")
+        );
+    }
+
+    #[test]
+    fn preserved_source_commit_accepts_legacy_git_commit() {
+        let preserved = json!({
+            "workspace_hash": "same-hash",
+            "git_commit": "legacy-commit"
+        });
+
+        assert_eq!(
+            preserved_source_commit(&preserved, "same-hash").as_deref(),
+            Some("legacy-commit")
+        );
+    }
+
+    #[test]
+    fn preserved_source_commit_ignores_changed_workspace_hash() {
+        let preserved = json!({
+            "workspace_hash": "old-hash",
+            "source_commit": "source-commit"
+        });
+
+        assert!(preserved_source_commit(&preserved, "new-hash").is_none());
     }
 
     fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {
