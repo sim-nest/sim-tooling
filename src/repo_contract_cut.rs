@@ -1,6 +1,10 @@
-//! Parsing of the split-cut configuration that groups packages for repo-contract.
+//! Package grouping for repo-contract generators.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 pub(crate) const CONTRACT_CUT_PATH: &str = "repo-contract-cut.toml";
 
@@ -9,6 +13,36 @@ pub(crate) struct SplitCut {
     pub group_order: Vec<String>,
     pub groups: BTreeMap<String, Vec<String>>,
     pub package_groups: BTreeMap<String, String>,
+}
+
+pub(crate) fn load_or_derive_split_cut(
+    repo: &Path,
+    package_names: &BTreeSet<String>,
+) -> Result<SplitCut, String> {
+    let path = repo.join(CONTRACT_CUT_PATH);
+    if path.is_file() {
+        return parse_split_cut(&fs::read_to_string(path).map_err(display_io)?);
+    }
+    derive_split_cut(package_names)
+}
+
+fn derive_split_cut(package_names: &BTreeSet<String>) -> Result<SplitCut, String> {
+    if package_names.is_empty() {
+        return Err("cannot derive repo contract cut for an empty workspace".to_owned());
+    }
+    let group = "workspace".to_owned();
+    let packages = package_names.iter().cloned().collect::<Vec<_>>();
+    let mut groups = BTreeMap::new();
+    groups.insert(group.clone(), packages.clone());
+    let package_groups = packages
+        .into_iter()
+        .map(|package| (package, group.clone()))
+        .collect::<BTreeMap<_, _>>();
+    Ok(SplitCut {
+        group_order: vec![group],
+        groups,
+        package_groups,
+    })
 }
 
 pub(crate) fn parse_split_cut(text: &str) -> Result<SplitCut, String> {
@@ -95,6 +129,10 @@ pub(crate) fn parse_split_cut(text: &str) -> Result<SplitCut, String> {
         groups,
         package_groups,
     })
+}
+
+fn display_io(err: std::io::Error) -> String {
+    err.to_string()
 }
 
 fn strip_comment(line: &str) -> &str {

@@ -35,6 +35,7 @@ mod citizenize;
 mod crate_catalog;
 mod crate_catalog_manifest;
 mod docencoder;
+mod generator_options;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
@@ -92,41 +93,36 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
     }
 
     match args.as_slice() {
-        [_, command] if command == "repo-contract" => {
-            let report = repo_contract(false)?;
+        [_, command, ..] if command == "repo-contract" => {
+            let options = generator_options::parse_repo_tool_args(&args, command)?;
+            let report = repo_contract::repo_contract_for_repo(options.check, &options.repo)?;
+            if options.check {
+                println!("repo-contract: generated contract files are current");
+                return Ok(());
+            }
             println!(
                 "repo-contract: {} package(s), {} artifact(s) changed",
                 report.packages, report.artifacts_changed
             );
             Ok(())
         }
-        [_, command, flag] if command == "repo-contract" && flag == "--check" => {
-            repo_contract(true)?;
-            println!("repo-contract: generated contract files are current");
-            Ok(())
-        }
-        [_, command] if command == "validation-matrix" => {
-            let report = validation_matrix(false)?;
+        [_, command, ..] if command == "validation-matrix" => {
+            let options = generator_options::parse_repo_tool_args(&args, command)?;
+            let report = validation_matrix::validation_matrix_for_repo(options.check, &options.repo)?;
+            if options.check {
+                println!("validation-matrix: generated matrix is current");
+                return Ok(());
+            }
             println!(
                 "validation-matrix: {} row(s), {} artifact(s) changed",
                 report.rows, report.artifacts_changed
             );
             Ok(())
         }
-        [_, command, flag] if command == "validation-matrix" && flag == "--check" => {
-            validation_matrix(true)?;
-            println!("validation-matrix: generated matrix is current");
-            Ok(())
-        }
-        [_, command, rest @ ..] if command == "crate-catalog" => {
-            let check = rest.iter().any(|arg| arg == "--check");
-            let repo = rest
-                .iter()
-                .position(|arg| arg == "--repo")
-                .and_then(|i| rest.get(i + 1))
-                .map(std::path::PathBuf::from);
-            let report = crate_catalog(check, repo)?;
-            if check {
+        [_, command, ..] if command == "crate-catalog" => {
+            let options = generator_options::parse_repo_tool_args(&args, command)?;
+            let report = crate_catalog(options.check, Some(options.repo))?;
+            if options.check {
                 println!("crate-catalog: metadata and generated files are current");
             } else {
                 println!(
@@ -147,7 +143,7 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             );
             Ok(())
         }
-        [program, ..] => Err(format!("usage: {program} <repo-contract [--check]|validation-matrix [--check]|crate-catalog [--check]|citizenize <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>")),
-        [] => Err("usage: xtask <repo-contract [--check]|validation-matrix [--check]|crate-catalog [--check]|citizenize <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>".to_owned()),
+        [program, ..] => Err(format!("usage: {program} <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>")),
+        [] => Err("usage: xtask <repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]>".to_owned()),
     }
 }

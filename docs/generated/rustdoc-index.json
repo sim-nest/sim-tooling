@@ -1,5 +1,12 @@
 {
-  "schema": "sim.rustdoc-index.v1",
-  "repo": "sim-tooling",
-  "target_doc": "target/doc/"
+  "generator": "xtask repo-contract v1",
+  "packages": [
+    {
+      "crate_name": "xtask",
+      "group": "workspace",
+      "manifest": "Cargo.toml",
+      "package": "xtask",
+      "summary": "xtask: the SIM constellation build and documentation tool."
+    }
+  ]
 }

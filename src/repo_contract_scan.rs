@@ -83,6 +83,7 @@ pub(crate) fn citizen_classes(repo: &Path) -> Vec<Value> {
 }
 
 pub(crate) fn non_citizen_exemptions(repo: &Path) -> Vec<Value> {
+    let root_package = root_package_name(repo);
     let mut files = rust_files(repo);
     files.sort();
     let mut out = Vec::new();
@@ -107,7 +108,7 @@ pub(crate) fn non_citizen_exemptions(repo: &Path) -> Vec<Value> {
             out.push(json!({
                 "file": rel,
                 "line": index + 1,
-                "crate": crate_for_path(&path),
+                "crate": crate_for_path(&path, &root_package),
                 "kind": attr_value(&attr, "kind").unwrap_or_else(|| "unknown".to_owned()),
                 "reason": attr_value(&attr, "reason").unwrap_or_else(|| "unspecified".to_owned()),
             }));
@@ -165,7 +166,6 @@ pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for path in [
         "Cargo.toml",
-        "Cargo.lock",
         CONTRACT_CUT_PATH,
         "docs/generated/citizens.md",
     ] {
@@ -177,8 +177,7 @@ pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
     collect_named_files(repo, "Cargo.toml", &mut files);
     collect_named_files(repo, "book.toml", &mut files);
     collect_named_files(repo, "recipe.toml", &mut files);
-    collect_named_files(repo, "lib.rs", &mut files);
-    collect_named_files(repo, "main.rs", &mut files);
+    files.extend(rust_files(repo));
     files.sort();
     files.dedup();
     files
@@ -235,6 +234,7 @@ fn scan_static_card_keys(
     cards: &mut BTreeMap<String, Value>,
     package_groups: &BTreeMap<String, String>,
 ) {
+    let root_package = root_package_name(repo);
     let mut paths = Vec::new();
     collect_named_files(&repo.join("crates"), "cards.rs", &mut paths);
     paths.sort();
@@ -242,7 +242,7 @@ fn scan_static_card_keys(
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        let package = crate_for_path(&path);
+        let package = crate_for_path(&path, &root_package);
         let group = package_groups.get(&package).map(String::as_str);
         let mut pending_key: Option<String> = None;
         for line in text.lines() {
@@ -398,7 +398,7 @@ fn trim_code(text: &str) -> String {
     text.trim().trim_matches('`').to_owned()
 }
 
-fn crate_for_path(path: &Path) -> String {
+fn crate_for_path(path: &Path, root_package: &str) -> String {
     let mut parts = path.components().filter_map(|part| match part {
         std::path::Component::Normal(value) => value.to_str(),
         _ => None,
@@ -408,7 +408,19 @@ fn crate_for_path(path: &Path) -> String {
             return parts.next().unwrap_or("sim").to_owned();
         }
     }
-    "sim".to_owned()
+    root_package.to_owned()
+}
+
+fn root_package_name(repo: &Path) -> String {
+    fs::read_to_string(repo.join("Cargo.toml"))
+        .ok()
+        .and_then(|text| toml_string_value(&text, "name"))
+        .unwrap_or_else(|| {
+            repo.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("workspace")
+                .to_owned()
+        })
 }
 
 fn should_descend(path: &Path) -> bool {
@@ -423,4 +435,55 @@ fn rel_path(repo: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        env, fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+
+    #[test]
+    fn input_files_cover_rust_sources_without_local_lockfile() {
+        let root = temp_root("sim-tooling-input-files");
+        fs::create_dir_all(root.join("src/nested")).unwrap();
+        fs::create_dir_all(root.join("crates/sim-fixture/src")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "# local ignored lockfile\n").unwrap();
+        fs::write(root.join("src/lib.rs"), "").unwrap();
+        fs::write(root.join("src/nested/tool.rs"), "").unwrap();
+        fs::write(root.join("crates/sim-fixture/src/lib.rs"), "").unwrap();
+
+        let paths = input_files(&root)
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"Cargo.toml".to_owned()));
+        assert!(paths.contains(&"src/lib.rs".to_owned()));
+        assert!(paths.contains(&"src/nested/tool.rs".to_owned()));
+        assert!(paths.contains(&"crates/sim-fixture/src/lib.rs".to_owned()));
+        assert!(!paths.contains(&"Cargo.lock".to_owned()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }

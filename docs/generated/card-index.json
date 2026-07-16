@@ -1,4 +1,18 @@
 {
-  "schema": "sim.card-index.v1",
-  "cards": []
+  "card_count": 2,
+  "cards": [
+    {
+      "id": "browse/catalog",
+      "kind": "browse-root",
+      "owner": "workspace",
+      "summary": "root browse catalog"
+    },
+    {
+      "id": "registry/catalog",
+      "kind": "browse-registry",
+      "owner": "workspace",
+      "summary": "registry catalog browse card"
+    }
+  ],
+  "generator": "xtask repo-contract v1"
 }
