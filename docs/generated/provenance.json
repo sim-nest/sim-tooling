@@ -3,10 +3,10 @@
   "generated_by": "cargo run -p xtask -- simdoc",
   "generation_timestamp": "2026-07-12T22:49:46+02:00",
   "generator": "xtask repo-contract v1",
-  "git_commit": "be7e9025b4005633051d544b7b63101eca65a42f",
+  "git_commit": "8995f583ad4329c424c83a41c12a2b63288266ee",
   "repo": "sim-tooling",
   "schema": "sim.provenance.v1",
-  "source_commit": "be7e9025b4005633051d544b7b63101eca65a42f",
+  "source_commit": "8995f583ad4329c424c83a41c12a2b63288266ee",
   "source_remote": "https://github.com/sim-nest/sim-tooling",
   "validation_commands": [
     "cargo fmt --all --check",
