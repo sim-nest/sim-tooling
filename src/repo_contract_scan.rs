@@ -110,6 +110,7 @@ pub(crate) fn non_citizen_exemptions(repo: &Path) -> Vec<Value> {
                 "line": index + 1,
                 "crate": crate_for_path(&path, &root_package),
                 "kind": attr_value(&attr, "kind").unwrap_or_else(|| "unknown".to_owned()),
+                "descriptor": attr_value(&attr, "descriptor").unwrap_or_else(|| "unknown".to_owned()),
                 "reason": attr_value(&attr, "reason").unwrap_or_else(|| "unspecified".to_owned()),
             }));
         }
