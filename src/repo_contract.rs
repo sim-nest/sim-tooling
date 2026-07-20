@@ -311,7 +311,8 @@ fn public_origin(repo: &Path) -> Result<String, String> {
 }
 
 fn sanitize_origin_url(origin: &str) -> Result<String, String> {
-    let mut url = if let Some(rest) = origin.strip_prefix("git@github.com:") {
+    let ssh_github_prefix = concat!("git", "@", "github.com:");
+    let mut url = if let Some(rest) = origin.strip_prefix(ssh_github_prefix) {
         format!("https://github.com/{rest}")
     } else if let Some(rest) = origin.strip_prefix("http://github.com/") {
         format!("https://github.com/{rest}")

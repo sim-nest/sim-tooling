@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::Value;
 
-use super::shell::{AtelierShellOptions, atelier_shell};
+use super::shell::{AtelierBackend, AtelierShellOptions, atelier_shell};
 
 #[test]
 fn shell_loads_site_index_navigation_and_repo_status() {
@@ -90,6 +90,88 @@ fn shell_marks_generated_docs_read_only() {
     );
 }
 
+#[test]
+fn source_radar_default_matches_explicit_backend() {
+    let fixture = ShellFixture::new("default-backend");
+    fixture
+        .repo("sim-web")
+        .cargo("sim-web-shell")
+        .readme("Codec lisp agent guard.")
+        .git_clean();
+    fixture.write_manifest(&[repo_row("sim-web", "sim-web", &["sim-web-shell"])]);
+
+    let implicit = fixture.shell(false);
+    let explicit = fixture.shell_with_backend(false, AtelierBackend::SourceRadar);
+    assert_eq!(implicit, explicit);
+    assert!(implicit.get("contract_native").is_none());
+    assert!(!panel_ids(&implicit).contains(&"contract-native".to_owned()));
+    assert!(implicit["startup"].get("backend").is_none());
+}
+
+#[test]
+fn contract_native_backend_adds_cached_evidence() {
+    let fixture = ShellFixture::new("contract-native");
+    fixture
+        .repo("sim-agent-net")
+        .cargo("sim-lib-agent")
+        .readme("Agent contract grammar guard validation.")
+        .git_clean();
+    fixture.write_manifest(&[repo_row(
+        "sim-agent-net",
+        "sim-agent-net",
+        &["sim-lib-agent"],
+    )]);
+
+    let report = fixture.shell_with_backend(false, AtelierBackend::ContractNative);
+    assert_eq!(report["startup"]["backend"], "contract-native");
+    assert!(panel_ids(&report).contains(&"contract-native".to_owned()));
+    assert_eq!(
+        report["contract_native"]["schema"],
+        "sim.atelier.contract-native.v1"
+    );
+    assert_eq!(report["contract_native"]["contract_deck"]["cards"], 4);
+    assert_eq!(report["contract_native"]["projection"]["tokens"], 114);
+    assert_eq!(
+        report["contract_native"]["grammar"]["dialect"],
+        "shapegrammar"
+    );
+    assert_eq!(
+        report["contract_native"]["route_attempts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        strings_at(&report, "/contract_native/guard_denials").is_empty(),
+        "guard denials are object rows, not string rows"
+    );
+    let denials = report["contract_native"]["guard_denials"]
+        .as_array()
+        .unwrap();
+    assert!(
+        denials
+            .iter()
+            .any(|denial| denial["id"].as_str() == Some("meta-workspace-edit"))
+    );
+    assert!(
+        denials
+            .iter()
+            .any(|denial| denial["id"].as_str() == Some("cross-repo-write"))
+    );
+    assert!(
+        denials
+            .iter()
+            .any(|denial| denial["id"].as_str() == Some("github-outward-action"))
+    );
+    assert!(
+        report["contract_native"]["cassette_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("fnv1a64:")
+    );
+}
+
 fn nav_items(report: &Value, kind: &str) -> Vec<String> {
     report["navigation"]
         .as_array()
@@ -100,6 +182,16 @@ fn nav_items(report: &Value, kind: &str) -> Vec<String> {
         .unwrap()
         .iter()
         .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn panel_ids(report: &Value) -> Vec<String> {
+    report["panels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|panel| panel["id"].as_str())
         .map(str::to_owned)
         .collect()
 }
@@ -165,10 +257,15 @@ impl ShellFixture {
     }
 
     fn shell(&self, check: bool) -> Value {
+        self.shell_with_backend(check, AtelierBackend::SourceRadar)
+    }
+
+    fn shell_with_backend(&self, check: bool, backend: AtelierBackend) -> Value {
         atelier_shell(AtelierShellOptions {
             control_root: self.root.clone(),
             repos_manifest: Some(self.root.join("repos.toml")),
             cache_path: Some(self.root.join(".sim/atelier/shell.json")),
+            backend,
             check,
         })
         .unwrap()
@@ -180,6 +277,7 @@ impl ShellFixture {
             control_root: self.root.clone(),
             repos_manifest: Some(self.root.join("repos.toml")),
             cache_path: Some(self.root.join(".sim/atelier/shell.json")),
+            backend: AtelierBackend::SourceRadar,
             check,
         })
         .unwrap_err()

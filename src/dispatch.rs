@@ -85,4 +85,4 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
 }
 
-const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--check]";
+const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]";

@@ -238,8 +238,7 @@ fn rule_remote_policy(
             ));
         }
         if matches!(repo.kind.as_str(), "code" | "frontpage")
-            && lower.contains("puh:13000/sim-nest")
-            && lower.ends_with("(push)")
+            && is_public_mirror_push_remote(&lower)
         {
             findings.push(finding(
                 rule,
@@ -251,6 +250,12 @@ fn rule_remote_policy(
         }
     }
     Ok(findings)
+}
+
+fn is_public_mirror_push_remote(remote: &str) -> bool {
+    remote.ends_with("(push)")
+        && remote.contains("/sim-nest/")
+        && !remote.contains("github.com/sim-nest/")
 }
 
 fn rule_file_size(

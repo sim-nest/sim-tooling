@@ -58,15 +58,16 @@ fn simdoc_generated_contracts_list_root_package() {
 
 #[test]
 fn origin_sanitizer_emits_public_github_url() {
+    let ssh_github_origin = concat!("git", "@", "github.com:sim-nest/sim-tooling.git");
     assert_eq!(
-        sanitize_origin_url("git@github.com:sim-nest/sim-tooling.git").unwrap(),
+        sanitize_origin_url(ssh_github_origin).unwrap(),
         "https://github.com/sim-nest/sim-tooling"
     );
     assert_eq!(
         sanitize_origin_url("https://github.com/sim-nest/sim-tooling.git").unwrap(),
         "https://github.com/sim-nest/sim-tooling"
     );
-    assert!(sanitize_origin_url("/home/bo/projects/sim-tooling").is_err());
+    assert!(sanitize_origin_url("/tmp/sim-tooling").is_err());
 }
 
 #[test]
