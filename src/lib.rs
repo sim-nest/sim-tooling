@@ -13,6 +13,8 @@
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
 //!   crate catalog.
 //! - `citizenize` -- rewrite a crate or path toward the citizen conventions.
+//! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
+//! - `index seed` -- extract private migration seed rows from legacy markdown.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
 //! - `atelier-cassette`, `atelier-capsule`, and `atelier-index` -- check caches.
@@ -40,7 +42,10 @@ mod docencoder;
 mod file_size_gate;
 mod generator_options;
 mod index_anchor_scan;
+mod index_author;
+mod index_doctor;
 mod index_fragment;
+mod index_seed;
 mod index_specimen_scan;
 mod index_surface_scan;
 mod repo_contract;

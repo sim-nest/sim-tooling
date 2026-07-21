@@ -186,6 +186,7 @@ pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
     for path in [
         "Cargo.toml",
         CONTRACT_CUT_PATH,
+        "features.toml",
         "docs/generated/citizens.md",
     ] {
         let path = repo.join(path);
@@ -473,6 +474,7 @@ mod tests {
         fs::create_dir_all(root.join("crates/sim-fixture/src")).unwrap();
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
         fs::write(root.join("Cargo.lock"), "# local ignored lockfile\n").unwrap();
+        fs::write(root.join("features.toml"), "schema = \"sim.features\"\n").unwrap();
         fs::write(root.join("src/lib.rs"), "").unwrap();
         fs::write(root.join("src/nested/tool.rs"), "").unwrap();
         fs::write(root.join("crates/sim-fixture/src/lib.rs"), "").unwrap();
@@ -488,6 +490,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&"Cargo.toml".to_owned()));
+        assert!(paths.contains(&"features.toml".to_owned()));
         assert!(paths.contains(&"src/lib.rs".to_owned()));
         assert!(paths.contains(&"src/nested/tool.rs".to_owned()));
         assert!(paths.contains(&"crates/sim-fixture/src/lib.rs".to_owned()));

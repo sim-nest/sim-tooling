@@ -41,6 +41,9 @@ pub(crate) fn index_doc(
     doc.specimens = specimens;
     doc.drafts = discovered.drafts;
     doc.edges = edges;
+    if let Some(overlay) = crate::index_author::load_optional(repo)? {
+        doc = crate::index_author::merge_authored(doc, overlay)?;
+    }
     check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
     Ok(doc)
 }
@@ -401,6 +404,46 @@ mod tests {
                 .iter()
                 .any(|edge| edge.rel == "contains" && edge.to == "crate/xtask")
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fragment_merges_authored_features_toml() {
+        let root = temp_root("sim-tooling-index-fragment-authored");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn run() {}\n").unwrap();
+        fs::write(
+            root.join("features.toml"),
+            r#"
+schema = "sim.features"
+
+[[feature]]
+id = "feature/sim-tooling-index-fragment-authored/root-package"
+title = "Root package"
+summary = "Describe the root package through discovered ids."
+owner = "crate/xtask"
+claims_anchors = ["anchor/crate/xtask"]
+
+[[route]]
+id = "route/root-package"
+task = "Find the root package"
+steps = [
+  { feature = "feature/sim-tooling-index-fragment-authored/root-package", why = "It owns the row." },
+]
+"#,
+        )
+        .unwrap();
+
+        let sx = artifact(&root, &[package("xtask", "")], &[]).expect("fragment artifact");
+        let doc = IndexCodec
+            .decode(IndexForm::Sx, &sx)
+            .expect("codec/index decodes fragment");
+
+        assert!(doc.features.iter().any(|feature| {
+            feature.id.as_str() == "feature/sim-tooling-index-fragment-authored/root-package"
+        }));
+        assert_eq!(doc.routes.len(), 1);
 
         fs::remove_dir_all(root).unwrap();
     }

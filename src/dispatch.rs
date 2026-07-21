@@ -1,6 +1,6 @@
 use crate::{
-    atelier, citizenize, crate_catalog, file_size_gate, generator_options, repo_contract, simdoc,
-    validation_matrix,
+    atelier, citizenize, crate_catalog, file_size_gate, generator_options, index_doctor,
+    index_seed, repo_contract, simdoc, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -33,6 +33,14 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "check-file-sizes") {
         return file_size_gate::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "doctor")
+    {
+        return index_doctor::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "seed")
+    {
+        return index_seed::run(args);
     }
 
     match args.as_slice() {
@@ -85,4 +93,4 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
 }
 
-const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]";
+const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|index doctor --repo <path> --missing --out <path>|index seed --from <markdown> --out .sim/index/<name>.seed.toml|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]";
