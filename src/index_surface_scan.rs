@@ -12,7 +12,7 @@ use sim_index_core::{
 };
 
 use crate::{
-    index_anchor_scan::{non_test_source_text, quoted_values},
+    index_anchor_scan::{is_simple_symbol_tail, non_test_source_text, quoted_values},
     index_fragment::{
         codec_language, insert_subject, is_test_source, package_rust_files, rel_path, repo_name,
         slug_path, subject_id,
@@ -284,6 +284,9 @@ fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
         let text = non_test_source_text(&text);
         for symbol in quoted_values(&text) {
             if let Some(verb) = symbol.strip_prefix("cli/main/") {
+                if !is_simple_symbol_tail(verb) {
+                    continue;
+                }
                 let verb = slug_path(verb);
                 if !verb.is_empty() {
                     verbs.insert(verb);

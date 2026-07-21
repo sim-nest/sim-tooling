@@ -247,6 +247,9 @@ fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
         let text = non_test_source_text(&text);
         for symbol in quoted_values(&text) {
             if let Some(verb) = symbol.strip_prefix("cli/main/") {
+                if !is_simple_symbol_tail(verb) {
+                    continue;
+                }
                 let verb = slug_path(verb);
                 if !verb.is_empty() {
                     verbs.insert(verb);
@@ -351,7 +354,27 @@ fn is_export_symbol(symbol: &str) -> bool {
         "wire:",
     ];
 
-    PREFIXES.iter().any(|prefix| symbol.starts_with(prefix))
+    PREFIXES
+        .iter()
+        .find_map(|prefix| symbol.strip_prefix(prefix))
+        .is_some_and(is_simple_symbol_tail)
+}
+
+pub(crate) fn is_simple_symbol_tail(tail: &str) -> bool {
+    !tail.is_empty()
+        && tail.split('/').all(|part| !part.is_empty())
+        && tail.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'a'..=b'z'
+                    | b'A'..=b'Z'
+                    | b'0'..=b'9'
+                    | b'-'
+                    | b'_'
+                    | b'.'
+                    | b'/'
+            )
+        })
 }
 
 pub(crate) fn quoted_values(text: &str) -> Vec<String> {
@@ -457,6 +480,7 @@ mod tests {
              const HIDDEN: u8 = 0;\n\
              const CLI: &str = \"cli/main/demo\";\n\
              const EXPORT: &str = \"surface/demo\";\n\
+             const DIAGNOSTIC: &str = \"agent/attach expects a slot name\";\n\
              const PATH: &str = \"docs/generated/repo-contract.json\";\n",
         )
         .unwrap();
@@ -476,6 +500,7 @@ mod tests {
         assert!(ids.contains("anchor/card/browse/catalog"));
         assert!(ids.contains("anchor/cli/demo"));
         assert!(ids.contains("anchor/export/sim-demo/surface/demo"));
+        assert!(!ids.contains("anchor/export/sim-demo/agent/attach-expects-a-slot-name"));
         assert!(!ids.contains("anchor/export/sim-demo/docs/generated/repo-contract.json"));
         assert!(ids.contains("anchor/rustdoc/sim-demo/public-thing"));
         assert!(ids.contains("anchor/rustdoc/sim-demo/run"));
