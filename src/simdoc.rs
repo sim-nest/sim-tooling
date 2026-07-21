@@ -139,7 +139,14 @@ fn run_recipe_gate(root: &Path) -> Result<(), String> {
 fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
     let repo = repo_name(root);
     let contract_files = contract_artifacts(root)?.files;
+    let index_fragment_source = contract_files
+        .get("sim-index-fragment.sx")
+        .ok_or("repo-contract generator did not produce sim-index-fragment.sx")?;
+    let index_doc = crate::simdoc_index::decode_fragment(index_fragment_source)?;
     let spine = CardSpine::for_repo(root)?;
+    let recipe_paths = recipe_paths(&spine);
+    let human_readme =
+        crate::simdoc_index::render_human_readme(root, &repo, &recipe_paths, &index_doc)?;
     let state = CardSpineState::read(root)?;
     let reencode = state
         .as_ref()
@@ -159,7 +166,7 @@ fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
     let files = vec![
         planner.file(DocPosition::AgentCards, "docs/agents/cards.jsonl"),
         planner.file(DocPosition::CardIndex, "docs/agents/card-index.json"),
-        planner.file(DocPosition::HumanReadme, "docs/humans/README.md"),
+        GeneratedFile::new("docs/humans/README.md", human_readme),
         GeneratedFile::new(
             "docs/diagrams/src/README.md",
             format!("# Diagram Sources\n\nPlace editable diagram sources for `{repo}` here.\n"),
@@ -178,6 +185,15 @@ fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
         generated_contract_file(&contract_files, "sim-index-fragment.sx")?,
     ];
     Ok(ExpectedFiles { spine, files })
+}
+
+fn recipe_paths(spine: &CardSpine) -> Vec<String> {
+    spine
+        .cards
+        .iter()
+        .filter(|card| card.kind == "recipe")
+        .filter_map(|card| card.data.get("path").cloned())
+        .collect()
 }
 
 fn generated_contract_file(

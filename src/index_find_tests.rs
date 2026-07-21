@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use sim_index_core::{
     CanonicalFeatureKey, DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord, IndexDoc,
     SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
@@ -8,47 +6,19 @@ use sim_index_core::{
 use super::*;
 
 #[test]
-fn render_emits_named_pages_and_cards() {
-    let doc = fixture_doc();
-    let files = expected_files(&doc).unwrap();
-    let names = files
-        .iter()
-        .map(|file| file.name.clone())
-        .collect::<BTreeSet<_>>();
+fn find_matches_feature_summary() {
+    let rows = find_rows(&fixture_doc(), "routing");
 
-    for name in [
-        "overview.md",
-        "features.md",
-        "features/feature--demo.md",
-        "user.md",
-        "code.md",
-        "frameworks.md",
-        "surfaces.md",
-        "languages.md",
-        "packages.md",
-        "specimens.md",
-        "routes.md",
-        "index.json",
-        "index.cards.jsonl",
-    ] {
-        assert!(names.contains(name), "missing {name}");
-    }
-    assert!(
-        files
-            .iter()
-            .find(|file| file.name == "index.cards.jsonl")
-            .unwrap()
-            .contents
-            .contains("\"kind\":\"feature\"")
-    );
-    assert!(
-        files
-            .iter()
-            .find(|file| file.name == "index.cards.jsonl")
-            .unwrap()
-            .contents
-            .contains("\"kind\":\"surface\"")
-    );
+    assert_eq!(rows[0]["kind"], "feature");
+    assert_eq!(rows[0]["id"], "feature/demo");
+}
+
+#[test]
+fn find_matches_surface_rows() {
+    let rows = find_rows(&fixture_doc(), "view-edit");
+
+    assert_eq!(rows[0]["kind"], "surface");
+    assert_eq!(rows[0]["id"], "view-edit/demo");
 }
 
 fn fixture_doc() -> IndexDoc {

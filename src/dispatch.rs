@@ -1,7 +1,7 @@
 use crate::{
     atelier, citizenize, crate_catalog, file_size_gate, generator_options, index_check,
-    index_doctor, index_merge, index_overlap, index_render, index_seed, repo_contract, simdoc,
-    validation_matrix,
+    index_doctor, index_find, index_merge, index_overlap, index_render, index_seed, repo_contract,
+    simdoc, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -53,7 +53,7 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
     if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "find")
     {
-        return index_render::run_find(args);
+        return index_find::run(args);
     }
     if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "overlap")
     {
