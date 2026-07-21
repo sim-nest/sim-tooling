@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sim_codec_index::{IndexCodec, IndexForm};
 
 use super::*;
 
@@ -37,6 +38,12 @@ fn simdoc_generated_contracts_list_root_package() {
     let provenance = generated_json(&artifacts, "provenance.json");
     let rustdoc_index = generated_json(&artifacts, "rustdoc-index.json");
     let repo_contract = generated_json(&artifacts, "repo-contract.json");
+    let index_fragment = IndexCodec
+        .decode(
+            IndexForm::Sx,
+            artifacts.files.get("sim-index-fragment.sx").unwrap(),
+        )
+        .unwrap();
 
     assert_eq!(feature_map["packages"][0]["package"], "xtask");
     assert_eq!(provenance["schema"], "sim.provenance.v1");
@@ -54,6 +61,27 @@ fn simdoc_generated_contracts_list_root_package() {
     assert_eq!(repo_contract["packages"][0]["name"], "xtask");
     assert_eq!(repo_contract["packages"][0]["manifest"], "Cargo.toml");
     assert_eq!(repo_contract["packages"][0]["root"], "");
+    assert!(
+        index_fragment
+            .subjects
+            .iter()
+            .any(|subject| subject.id.as_str() == "repo/sim-tooling")
+    );
+    assert!(
+        index_fragment
+            .subjects
+            .iter()
+            .any(|subject| subject.id.as_str() == "crate/xtask")
+    );
+    assert!(
+        index_fragment
+            .subjects
+            .iter()
+            .any(|subject| subject.id.as_str() == "doc-set/sim-tooling/generated")
+    );
+    assert!(index_fragment.edges.iter().any(|edge| {
+        edge.from == "repo/sim-tooling" && edge.rel == "contains" && edge.to == "crate/xtask"
+    }));
 }
 
 #[test]

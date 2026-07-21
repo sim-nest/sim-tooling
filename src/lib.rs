@@ -39,6 +39,7 @@ mod dispatch;
 mod docencoder;
 mod file_size_gate;
 mod generator_options;
+mod index_fragment;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;

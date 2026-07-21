@@ -12,8 +12,9 @@ use sim_cookbook::fnv1a64_hex;
 
 use crate::{
     generator_options::find_repo_root,
+    index_fragment,
     repo_contract_cut::SplitCut,
-    repo_contract_render::artifacts,
+    repo_contract_render::{ArtifactInputs, artifacts},
     repo_contract_scan::{
         card_index, citizen_classes, input_files, non_citizen_exemptions, recipe_books,
     },
@@ -97,15 +98,17 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
     let recipes = recipe_books(repo, &package_groups);
     let cards = card_index(repo, &package_groups);
     let provenance = provenance(repo)?;
-    let files = artifacts(
-        &packages,
-        &cut,
-        &citizens,
-        &exemptions,
-        &recipes,
-        &cards,
-        &provenance,
-    )?;
+    let index_fragment = index_fragment::artifact(repo, &packages)?;
+    let files = artifacts(ArtifactInputs {
+        packages: &packages,
+        cut: &cut,
+        citizens: &citizens,
+        exemptions: &exemptions,
+        recipes: &recipes,
+        cards: &cards,
+        provenance: &provenance,
+        index_fragment: &index_fragment,
+    })?;
 
     Ok(ContractArtifacts {
         package_count: packages.len(),

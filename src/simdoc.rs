@@ -175,6 +175,7 @@ fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
         generated_contract_file(&contract_files, "rustdoc-index.json")?,
         generated_contract_file(&contract_files, "card-index.json")?,
         generated_contract_file(&contract_files, "feature-map.json")?,
+        generated_contract_file(&contract_files, "sim-index-fragment.sx")?,
     ];
     Ok(ExpectedFiles { spine, files })
 }
