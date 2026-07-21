@@ -3,17 +3,18 @@
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use sim_index_core::IndexDoc;
+use sim_index_core::{IndexDoc, RouteStep};
 
 use crate::index_render::load_doc;
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = FindOptions::parse(&args)?;
     let doc = load_doc(&options.input)?;
-    let matches = find_rows(&doc, &options.query);
+    let matches = find_rows_filtered(&doc, &options.query, options.audience.as_deref());
     if options.json {
         let text = serde_json::to_string_pretty(&json!({
             "query": options.query,
+            "audience": options.audience,
             "match_count": matches.len(),
             "matches": matches,
         }))
@@ -32,6 +33,7 @@ struct FindOptions {
     input: PathBuf,
     query: String,
     json: bool,
+    audience: Option<String>,
 }
 
 impl FindOptions {
@@ -44,6 +46,7 @@ impl FindOptions {
         }
         let mut input = None;
         let mut json = false;
+        let mut audience = None;
         let mut query = Vec::new();
         let mut index = 3;
         while index < args.len() {
@@ -53,6 +56,14 @@ impl FindOptions {
                     input = Some(PathBuf::from(
                         args.get(index).ok_or("--input requires a path")?,
                     ));
+                }
+                "--audience" => {
+                    index += 1;
+                    let value = args.get(index).ok_or("--audience requires a value")?;
+                    if value.trim().is_empty() {
+                        return Err("--audience requires a non-empty value".to_owned());
+                    }
+                    audience = Some(value.to_owned());
                 }
                 "--query" => {
                     index += 1;
@@ -82,44 +93,54 @@ impl FindOptions {
                 .ok_or_else(|| format!("index find requires --input; {}", find_usage(program)))?,
             query,
             json,
+            audience,
         })
     }
 }
 
 fn find_usage(program: &str) -> String {
-    format!("usage: {program} index find --input <index.sx> [--json] <query>")
+    format!("usage: {program} index find --input <index.sx> [--json] [--audience <name>] <query>")
 }
 
-pub(crate) fn find_rows(doc: &IndexDoc, query: &str) -> Vec<Value> {
+pub(crate) fn find_rows_filtered(
+    doc: &IndexDoc,
+    query: &str,
+    audience: Option<&str>,
+) -> Vec<Value> {
     let needle = query.to_ascii_lowercase();
     let mut rows = Vec::new();
-    for subject in &doc.subjects {
-        if matches_query(
-            &needle,
-            &[subject.id.as_str(), &subject.kind, &subject.title],
-        ) {
-            rows.push(json!({
-                "kind": "subject",
-                "id": subject.id.as_str(),
-                "title": subject.title,
-                "summary": subject.kind,
-            }));
+    if audience.is_none() {
+        for subject in &doc.subjects {
+            if matches_query(
+                &needle,
+                &[subject.id.as_str(), &subject.kind, &subject.title],
+            ) {
+                rows.push(json!({
+                    "kind": "subject",
+                    "id": subject.id.as_str(),
+                    "title": subject.title,
+                    "summary": subject.kind,
+                }));
+            }
         }
-    }
-    for surface in &doc.surfaces {
-        if matches_query(
-            &needle,
-            &[surface.id.as_str(), surface.subject.as_str(), &surface.kind],
-        ) {
-            rows.push(json!({
-                "kind": "surface",
-                "id": surface.id.as_str(),
-                "title": surface.id.as_str(),
-                "summary": surface.kind,
-            }));
+        for surface in &doc.surfaces {
+            if matches_query(
+                &needle,
+                &[surface.id.as_str(), surface.subject.as_str(), &surface.kind],
+            ) {
+                rows.push(json!({
+                    "kind": "surface",
+                    "id": surface.id.as_str(),
+                    "title": surface.id.as_str(),
+                    "summary": surface.kind,
+                }));
+            }
         }
     }
     for feature in &doc.features {
+        if !feature_matches_audience(doc, feature.id.as_str(), audience) {
+            continue;
+        }
         if matches_query(
             &needle,
             &[
@@ -139,6 +160,9 @@ pub(crate) fn find_rows(doc: &IndexDoc, query: &str) -> Vec<Value> {
         }
     }
     for specimen in &doc.specimens {
+        if !specimen_matches_audience(doc, specimen.id.as_str(), audience) {
+            continue;
+        }
         if matches_query(
             &needle,
             &[
@@ -157,6 +181,9 @@ pub(crate) fn find_rows(doc: &IndexDoc, query: &str) -> Vec<Value> {
         }
     }
     for route in &doc.routes {
+        if !route_matches_audience(route.audiences.iter().map(String::as_str), audience) {
+            continue;
+        }
         let route_text = route
             .steps
             .iter()
@@ -185,6 +212,42 @@ pub(crate) fn find_rows(doc: &IndexDoc, query: &str) -> Vec<Value> {
             ))
     });
     rows
+}
+
+fn feature_matches_audience(doc: &IndexDoc, feature_id: &str, audience: Option<&str>) -> bool {
+    let Some(audience) = audience else {
+        return true;
+    };
+    doc.routes.iter().any(|route| {
+        route.audiences.iter().any(|item| item == audience)
+            && route.steps.iter().any(|step| match step {
+                RouteStep::Feature { id, .. } => id.as_str() == feature_id,
+                RouteStep::Specimen { .. } => false,
+            })
+    })
+}
+
+fn specimen_matches_audience(doc: &IndexDoc, specimen_id: &str, audience: Option<&str>) -> bool {
+    let Some(audience) = audience else {
+        return true;
+    };
+    doc.routes.iter().any(|route| {
+        route.audiences.iter().any(|item| item == audience)
+            && route.steps.iter().any(|step| match step {
+                RouteStep::Feature { .. } => false,
+                RouteStep::Specimen { id, .. } => id.as_str() == specimen_id,
+            })
+    })
+}
+
+fn route_matches_audience<'a>(
+    audiences: impl Iterator<Item = &'a str>,
+    audience: Option<&str>,
+) -> bool {
+    match audience {
+        Some(expected) => audiences.into_iter().any(|item| item == expected),
+        None => true,
+    }
 }
 
 fn matches_query(needle: &str, fields: &[&str]) -> bool {

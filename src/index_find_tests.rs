@@ -1,13 +1,13 @@
 use sim_index_core::{
     CanonicalFeatureKey, DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord, IndexDoc,
-    SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
+    RouteId, RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
 };
 
 use super::*;
 
 #[test]
 fn find_matches_feature_summary() {
-    let rows = find_rows(&fixture_doc(), "routing");
+    let rows = find_rows_filtered(&fixture_doc(), "routing", None);
 
     assert_eq!(rows[0]["kind"], "feature");
     assert_eq!(rows[0]["id"], "feature/demo");
@@ -15,10 +15,24 @@ fn find_matches_feature_summary() {
 
 #[test]
 fn find_matches_surface_rows() {
-    let rows = find_rows(&fixture_doc(), "view-edit");
+    let rows = find_rows_filtered(&fixture_doc(), "view-edit", None);
 
     assert_eq!(rows[0]["kind"], "surface");
     assert_eq!(rows[0]["id"], "view-edit/demo");
+}
+
+#[test]
+fn audience_filter_keeps_features_reached_by_matching_routes() {
+    let rows = find_rows_filtered(&fixture_doc(), "demo", Some("framework"));
+    let ids = rows
+        .iter()
+        .map(|row| row["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+
+    assert!(ids.contains(&"feature/demo"));
+    assert!(ids.contains(&"route/use-demo-framework"));
+    assert!(!ids.contains(&"crate/demo"));
+    assert!(!ids.contains(&"view-edit/demo"));
 }
 
 fn fixture_doc() -> IndexDoc {
@@ -50,7 +64,16 @@ fn fixture_doc() -> IndexDoc {
         }],
         drafts: Vec::new(),
         features: Vec::new(),
-        routes: Vec::new(),
+        routes: vec![RouteRecord {
+            id: RouteId::new("route/use-demo-framework"),
+            title: "Use the demo framework".to_owned(),
+            audiences: vec!["framework".to_owned()],
+            steps: vec![RouteStep::Feature {
+                id: FeatureId::new("feature/demo"),
+                why: "The demo feature is the framework entry point.".to_owned(),
+            }],
+            doc_anchor: None,
+        }],
         edges: Vec::new(),
     };
     doc.features.push(FeatureRecord {

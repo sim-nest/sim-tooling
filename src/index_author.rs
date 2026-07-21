@@ -48,10 +48,36 @@ pub(crate) fn merge_authored(
         }
         doc.features.push(materialize_draft(authored.draft));
     }
+    remove_covered_drafts(&mut doc);
     doc.routes.extend(overlay.routes);
     doc.edges.extend(support_edges);
     check_index_doc(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
     Ok(doc)
+}
+
+fn remove_covered_drafts(doc: &mut IndexDoc) {
+    let mut anchors = BTreeSet::new();
+    let mut surfaces = BTreeSet::new();
+    let mut specimens = BTreeSet::new();
+    for feature in &doc.features {
+        anchors.extend(feature.anchors.iter().map(|id| id.to_string()));
+        surfaces.extend(feature.surfaces.iter().map(|id| id.to_string()));
+        specimens.extend(feature.specimens.iter().map(|id| id.to_string()));
+    }
+    doc.drafts.retain(|draft| {
+        !draft
+            .claims_anchors
+            .iter()
+            .any(|id| anchors.contains(id.as_str()))
+            && !draft
+                .claims_surfaces
+                .iter()
+                .any(|id| surfaces.contains(id.as_str()))
+            && !draft
+                .claims_specimens
+                .iter()
+                .any(|id| specimens.contains(id.as_str()))
+    });
 }
 
 fn parse_file(path: &Path) -> Result<AuthoredOverlay, String> {
@@ -439,6 +465,43 @@ claims_specimens = ["recipe/sim-run/missing"]
         let err = merge_authored(test_doc(), overlay).unwrap_err();
 
         assert!(err.contains("unresolved discovered id: rejected"));
+    }
+
+    #[test]
+    fn authored_feature_suppresses_matching_draft() {
+        let overlay = parse_overlay(
+            r#"
+schema = "sim.features"
+
+[[feature]]
+id = "feature/sim-run/repl"
+title = "REPL"
+summary = "Interactive command loop."
+owner = "crate/sim-lib-repl"
+claims_surfaces = ["cli/repl"]
+"#,
+        )
+        .expect("parse overlay");
+        let mut doc = test_doc();
+        doc.drafts.push(FeatureDraft {
+            id: FeatureId::new("feature/cli/repl"),
+            subject: SubjectId::new("crate/sim-lib-repl"),
+            title: "REPL draft".to_owned(),
+            summary: "Discovered REPL draft.".to_owned(),
+            claims_anchors: Vec::new(),
+            claims_surfaces: vec![SurfaceId::new("cli/repl")],
+            claims_specimens: Vec::new(),
+            literal_anchors: Vec::new(),
+            literal_surfaces: Vec::new(),
+            literal_specimens: Vec::new(),
+            grammar_contracts: Vec::new(),
+            doc_anchor: None,
+        });
+
+        let merged = merge_authored(doc, overlay).expect("merge overlay");
+
+        assert!(merged.drafts.is_empty());
+        assert_eq!(merged.features.len(), 1);
     }
 
     fn test_doc() -> IndexDoc {

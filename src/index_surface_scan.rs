@@ -33,7 +33,7 @@ pub(crate) struct DiscoveredFacts {
 pub(crate) fn discovered(
     repo: &Path,
     packages: &[PackageContract],
-    anchors: &[DiscoveredAnchor],
+    _anchors: &[DiscoveredAnchor],
 ) -> DiscoveredFacts {
     let repo_subject = subject_id("repo", &repo_name(repo));
     let doc_set_subject = subject_id("doc-set", &format!("{}/generated", repo_name(repo)));
@@ -62,7 +62,6 @@ pub(crate) fn discovered(
             &mut surface_rows,
             &mut grammar_anchors,
             &mut drafts,
-            anchors,
         );
     }
 
@@ -147,7 +146,6 @@ fn discover_codec_surfaces(
     surfaces: &mut BTreeMap<String, DiscoveredSurface>,
     anchors: &mut BTreeMap<String, DiscoveredAnchor>,
     drafts: &mut BTreeMap<String, FeatureDraft>,
-    existing_anchors: &[DiscoveredAnchor],
 ) {
     let Some(language) = codec_language(package) else {
         return;
@@ -169,7 +167,6 @@ fn discover_codec_surfaces(
         surfaces,
         anchors,
         drafts,
-        existing_anchors,
     );
     if is_wire_codec(&language) {
         insert_grammar_surface(
@@ -179,7 +176,6 @@ fn discover_codec_surfaces(
             surfaces,
             anchors,
             drafts,
-            existing_anchors,
         );
     }
 }
@@ -191,7 +187,6 @@ fn insert_grammar_surface(
     surfaces: &mut BTreeMap<String, DiscoveredSurface>,
     anchors: &mut BTreeMap<String, DiscoveredAnchor>,
     drafts: &mut BTreeMap<String, FeatureDraft>,
-    existing_anchors: &[DiscoveredAnchor],
 ) {
     let surface_id = insert_surface(surfaces, kind, language, subject, kind);
     let anchor_id = AnchorId::new(format!("anchor/grammar/{kind}/{}", slug_path(language)));
@@ -202,16 +197,6 @@ fn insert_grammar_surface(
             subject: subject.clone(),
             kind: "grammar-contract".to_owned(),
         });
-    let mut claims_anchors = vec![anchor_id.clone()];
-    if let Some(export_anchor) = existing_anchors
-        .iter()
-        .find(|anchor| anchor.subject == *subject || anchor.id.as_str().contains(language))
-    {
-        claims_anchors.push(export_anchor.id.clone());
-    }
-    claims_anchors.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-    claims_anchors.dedup();
-
     let draft_id = format!("feature/{kind}/{}", slug_path(language));
     drafts
         .entry(draft_id.clone())
@@ -220,7 +205,7 @@ fn insert_grammar_surface(
             subject: subject.clone(),
             title: format!("{language} {kind} surface"),
             summary: format!("{language} {kind} grammar surface discovered from codec package"),
-            claims_anchors,
+            claims_anchors: vec![anchor_id.clone()],
             claims_surfaces: vec![surface_id.clone()],
             claims_specimens: Vec::<SpecimenId>::new(),
             literal_anchors: Vec::new(),
@@ -353,6 +338,7 @@ fn package_sources_contain(repo: &Path, package: &PackageContract, needle: &str)
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         env, fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -407,6 +393,46 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "syntax/demo"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn syntax_and_wire_drafts_do_not_share_claims() {
+        let root = temp_root("sim-tooling-surface-scan-wire");
+        fs::create_dir_all(root.join("crates/sim-codec-binary/src")).unwrap();
+        fs::write(root.join("crates/sim-codec-binary/src/lib.rs"), "").unwrap();
+        let packages = vec![package("sim-codec-binary", "crates/sim-codec-binary")];
+        let anchors = vec![DiscoveredAnchor {
+            id: AnchorId::new("anchor/card/cookbook/codec/binary"),
+            subject: SubjectId::new("crate/sim-codec-binary"),
+            kind: "cookbook-recipe".to_owned(),
+        }];
+
+        let facts = discovered(&root, &packages, &anchors);
+        let mut claim_counts = BTreeMap::<String, usize>::new();
+        for draft in &facts.drafts {
+            for anchor in &draft.claims_anchors {
+                *claim_counts
+                    .entry(format!("anchor:{}", anchor.as_str()))
+                    .or_default() += 1;
+            }
+            for surface in &draft.claims_surfaces {
+                *claim_counts
+                    .entry(format!("surface:{}", surface.as_str()))
+                    .or_default() += 1;
+            }
+        }
+
+        assert_eq!(facts.drafts.len(), 2);
+        assert!(
+            !claim_counts.contains_key("anchor:anchor/card/cookbook/codec/binary"),
+            "generated grammar drafts should not claim unrelated discovered anchors"
+        );
+        assert!(
+            claim_counts.values().all(|count| *count == 1),
+            "syntax and wire drafts should have distinct claims: {claim_counts:?}"
         );
 
         fs::remove_dir_all(root).unwrap();

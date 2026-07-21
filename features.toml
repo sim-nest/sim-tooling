@@ -1,5 +1,8 @@
 schema = "sim.features"
 
+[enforcement.audience]
+framework = "strict"
+
 [enforcement.route]
 major_entrypoints = "advisory"
 frameworks = "advisory"

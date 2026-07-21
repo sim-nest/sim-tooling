@@ -54,6 +54,7 @@ mod index_merge;
 mod index_overlap;
 mod index_render;
 mod index_render_features;
+mod index_render_frameworks;
 mod index_route;
 mod index_rules;
 mod index_seed;

@@ -102,10 +102,10 @@
     "generated_by": "cargo run -p xtask -- simdoc",
     "generation_timestamp": "2026-07-12T22:49:46+02:00",
     "generator": "xtask repo-contract v1",
-    "git_commit": "9d888d6bc9a1a04f1961ca512d3f2bfcabf98be2",
+    "git_commit": "99fe558126b7a271dc797dfe2c5b617e6c7064d4",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "9d888d6bc9a1a04f1961ca512d3f2bfcabf98be2",
+    "source_commit": "99fe558126b7a271dc797dfe2c5b617e6c7064d4",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -118,9 +118,9 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "ff9ff9ebdc1308f9",
+    "workspace_hash": "aa1e6970a88dec6b",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 85,
+    "workspace_hash_input_count": 86,
     "workspace_hash_inputs": [
       "Cargo.toml",
       "features.toml",
@@ -188,6 +188,7 @@
       "src/index_overlap.rs",
       "src/index_render.rs",
       "src/index_render_features.rs",
+      "src/index_render_frameworks.rs",
       "src/index_render_tests.rs",
       "src/index_route.rs",
       "src/index_rules.rs",

@@ -34,7 +34,7 @@ pub(crate) fn render_human_readme(
     render_surface_rows(&mut out, doc);
     render_recipe_rows(&mut out, recipes);
     render_worked_examples(&mut out, root, doc)?;
-    Ok(out)
+    Ok(with_single_terminal_newline(out))
 }
 
 fn render_index_backlinks(out: &mut String, repo: &str, doc: &IndexDoc) {
@@ -200,6 +200,13 @@ fn cell(value: &str) -> String {
     value.replace(['\n', '\r'], " ").replace('|', "\\|")
 }
 
+fn with_single_terminal_newline(mut value: String) -> String {
+    let trimmed = value.trim_end().len();
+    value.truncate(trimmed);
+    value.push('\n');
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -233,6 +240,7 @@ mod tests {
         assert!(page.contains("`repo/sim-demo`"));
         assert!(page.contains("## Worked Examples"));
         assert!(page.contains("```toml\ntitle = \"Open\"\n```"));
+        assert!(!page.ends_with("\n\n"));
 
         fs::remove_dir_all(root).unwrap();
     }
