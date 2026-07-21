@@ -30,7 +30,10 @@ pub(crate) fn index_doc(
     packages: &[PackageContract],
     cards: &[Value],
 ) -> Result<IndexDoc, String> {
-    let (subjects, edges) = package_subjects(repo, packages);
+    let (mut subjects, mut edges) = package_subjects(repo, packages);
+    let (card_subjects, card_edges) = card_owner_subjects(repo, cards);
+    subjects.extend(card_subjects);
+    edges.extend(card_edges);
     let anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
     let discovered = crate::index_surface_scan::discovered(repo, packages, &anchors);
     let specimens = crate::index_specimen_scan::discovered(repo, packages);
@@ -79,6 +82,16 @@ pub(crate) fn package_subjects(
         let crate_id = subject_id("crate", &package.name);
         insert_subject(&mut subjects, crate_id.clone(), "crate", &package.name);
         insert_edge(&mut edges, &repo_id, "contains", &crate_id);
+        if has_explicit_crate_alias(package) {
+            let alias_id = subject_id("crate", &package.crate_name);
+            insert_subject(
+                &mut subjects,
+                alias_id.clone(),
+                "crate",
+                &package.crate_name,
+            );
+            insert_edge(&mut edges, &repo_id, "contains", &alias_id);
+        }
 
         for runtime_lib in runtime_libs(repo, package) {
             let lib_id = subject_id("runtime-lib", &format!("{}/{runtime_lib}", package.name));
@@ -98,6 +111,34 @@ pub(crate) fn package_subjects(
             );
             insert_edge(&mut edges, &language_id, "contains", &grammar_id);
         }
+    }
+
+    let edges = edges
+        .into_iter()
+        .map(|(from, rel, to)| IndexEdge::new(from, rel, to))
+        .collect();
+    (subjects.into_values().collect(), edges)
+}
+
+fn has_explicit_crate_alias(package: &PackageContract) -> bool {
+    package.crate_name != package.name && package.crate_name != package.name.replace('-', "_")
+}
+
+fn card_owner_subjects(repo: &Path, cards: &[Value]) -> (Vec<SubjectRecord>, Vec<IndexEdge>) {
+    let repo_id = subject_id("repo", &repo_name(repo));
+    let mut subjects = BTreeMap::new();
+    let mut edges = BTreeSet::new();
+
+    for card in cards {
+        let Some(owner) = card["owner"].as_str() else {
+            continue;
+        };
+        if owner == "workspace" {
+            continue;
+        }
+        let owner_id = subject_id("crate", owner);
+        insert_subject(&mut subjects, owner_id.clone(), "crate", owner);
+        insert_edge(&mut edges, &repo_id, "contains", &owner_id);
     }
 
     let edges = edges
@@ -385,6 +426,59 @@ mod tests {
         assert!(edge_ids.contains(&("language/demo", "contains", "grammar/demo")));
 
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn package_subjects_include_explicit_crate_aliases() {
+        let root = temp_root("sim-tooling-index-fragment-crate-alias");
+        let package = PackageContract {
+            crate_name: "sim".to_owned(),
+            ..package("sim-nest", "")
+        };
+
+        let (subjects, edges) = package_subjects(&root, &[package]);
+        let ids = subjects
+            .iter()
+            .map(|subject| subject.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let edge_ids = edges
+            .iter()
+            .map(|edge| (edge.from.as_str(), edge.rel.as_str(), edge.to.as_str()))
+            .collect::<BTreeSet<_>>();
+
+        assert!(ids.contains("crate/sim-nest"));
+        assert!(ids.contains("crate/sim"));
+        assert!(
+            edge_ids
+                .iter()
+                .any(|(_, rel, to)| *rel == "contains" && *to == "crate/sim")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn card_owner_subjects_cover_non_workspace_card_owners() {
+        let root = temp_root("sim-tooling-index-fragment-card-owner");
+        let cards = vec![json!({
+            "id": "cookbook/stream-jack-provider",
+            "kind": "cookbook-recipe",
+            "owner": "sim-lib-stream-jack-provider"
+        })];
+
+        let sx = artifact(&root, &[], &cards).expect("fragment artifact");
+        let doc = IndexCodec
+            .decode(IndexForm::Sx, &sx)
+            .expect("codec/index decodes fragment");
+        let ids = doc
+            .subjects
+            .iter()
+            .map(|subject| subject.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(ids.contains("crate/sim-lib-stream-jack-provider"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
