@@ -16,6 +16,7 @@ use sim_kernel::EncodePosition;
 
 use crate::{
     index_render_features::{feature_files, feature_index_page, feature_page_path},
+    index_rules::route_coverage_gaps,
     index_source::SourceResolver,
 };
 
@@ -455,21 +456,62 @@ fn routes_page(doc: &IndexDoc) -> String {
         out.push_str("No route rows are present.\n");
         return out;
     }
-    out.push_str("| Route | Title | Steps |\n| --- | --- | --- |\n");
-    for route in &doc.routes {
-        out.push_str(&format!(
-            "| `{}` | {} | {} |\n",
-            route.id,
-            cell(&route.title),
-            route
-                .steps
-                .iter()
-                .map(route_step_label)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+    for audience in ["user", "code", "framework"] {
+        let routes = doc
+            .routes
+            .iter()
+            .filter(|route| route.audiences.iter().any(|item| item == audience))
+            .collect::<Vec<_>>();
+        if routes.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("## {} routes\n\n", title_case(audience)));
+        push_route_table(&mut out, routes);
+    }
+    let unclassified = doc
+        .routes
+        .iter()
+        .filter(|route| route.audiences.is_empty())
+        .collect::<Vec<_>>();
+    if !unclassified.is_empty() {
+        out.push_str("## Unclassified routes\n\n");
+        push_route_table(&mut out, unclassified);
+    }
+    let gaps = route_coverage_gaps(doc);
+    if !gaps.is_empty() {
+        out.push_str("## Coverage Gaps\n\n");
+        out.push_str("| Category | Id | Reason |\n| --- | --- | --- |\n");
+        for gap in gaps {
+            out.push_str(&format!(
+                "| `{}` | `{}` | {} |\n",
+                gap.category,
+                gap.id,
+                cell(&gap.reason)
+            ));
+        }
     }
     out
+}
+
+fn push_route_table(out: &mut String, routes: Vec<&RouteRecord>) {
+    out.push_str("| Route | Title | Audiences | Steps |\n| --- | --- | --- | --- |\n");
+    for route in routes {
+        out.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            route.id,
+            cell(&route.title),
+            cell(&route.audiences.join(", ")),
+            cell(
+                &route
+                    .steps
+                    .iter()
+                    .map(route_step_label)
+                    .collect::<Vec<_>>()
+                    .join("<br>")
+            )
+        ));
+    }
+    out.push('\n');
 }
 
 fn page(title: &str) -> String {
@@ -506,9 +548,10 @@ fn looks_language(value: &str) -> bool {
 }
 
 fn route_step_label(step: &RouteStep) -> String {
-    match step {
-        RouteStep::Feature(id) => format!("`{id}`"),
-        RouteStep::Specimen(id) => format!("`{id}`"),
+    if step.why().is_empty() {
+        format!("`{}`", step.id())
+    } else {
+        format!("`{}` - {}", step.id(), step.why())
     }
 }
 
@@ -603,19 +646,29 @@ fn route_card(route: &RouteRecord) -> Value {
         "kind": "route",
         "id": route.id.as_str(),
         "title": route.title,
-        "steps": route.steps.iter().map(route_step_id).collect::<Vec<_>>(),
+        "audiences": route.audiences,
+        "steps": route.steps.iter().map(route_step_card).collect::<Vec<_>>(),
     })
 }
 
-fn route_step_id(step: &RouteStep) -> String {
-    match step {
-        RouteStep::Feature(id) => id.to_string(),
-        RouteStep::Specimen(id) => id.to_string(),
-    }
+fn route_step_card(step: &RouteStep) -> Value {
+    json!({
+        "kind": step.kind(),
+        "id": step.id(),
+        "why": step.why(),
+    })
 }
 
 fn cell(value: &str) -> String {
     value.replace(['\n', '\r'], " ").replace('|', "\\|")
+}
+
+fn title_case(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn with_newline(mut value: String) -> String {

@@ -142,10 +142,14 @@ fn print_report(report: &CoverageReport) {
     for item in &report.advisory_missing {
         println!("index-check: advisory {} {}", item.kind.as_str(), item.id);
     }
+    for gap in &report.route_gaps {
+        println!("index-check: advisory route {} {}", gap.category, gap.id);
+    }
     println!(
-        "index-check: ok (covered {}, advisory_missing {})",
+        "index-check: ok (covered {}, advisory_missing {}, route_gaps {})",
         report.covered,
-        report.advisory_missing.len()
+        report.advisory_missing.len(),
+        report.route_gaps.len()
     );
 }
 

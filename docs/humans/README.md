@@ -15,7 +15,9 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 
 ## Feature Rows
 
-No feature rows are present in this repository fragment.
+| Feature | Subject | Specimens | Summary |
+| --- | --- | ---: | --- |
+| `feature/sim-tooling/generated-docs` | `crate/xtask` | 0 | Generate repo contracts, feature maps, card indexes, and index fragments through xtask. |
 
 ## Surfaces
 

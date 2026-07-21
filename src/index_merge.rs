@@ -489,16 +489,19 @@ fn rewrite_route(record: &RouteRecord, maps: &IdMaps) -> RouteRecord {
     RouteRecord {
         id: RouteId::new(map(&maps.routes, record.id.as_str())),
         title: record.title.clone(),
+        audiences: record.audiences.clone(),
         steps: record
             .steps
             .iter()
             .map(|step| match step {
-                RouteStep::Feature(id) => {
-                    RouteStep::Feature(FeatureId::new(map(&maps.features, id.as_str())))
-                }
-                RouteStep::Specimen(id) => {
-                    RouteStep::Specimen(SpecimenId::new(map(&maps.specimens, id.as_str())))
-                }
+                RouteStep::Feature { id, why } => RouteStep::Feature {
+                    id: FeatureId::new(map(&maps.features, id.as_str())),
+                    why: why.clone(),
+                },
+                RouteStep::Specimen { id, why } => RouteStep::Specimen {
+                    id: SpecimenId::new(map(&maps.specimens, id.as_str())),
+                    why: why.clone(),
+                },
             })
             .collect(),
         doc_anchor: record

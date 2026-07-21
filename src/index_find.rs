@@ -157,7 +157,15 @@ pub(crate) fn find_rows(doc: &IndexDoc, query: &str) -> Vec<Value> {
         }
     }
     for route in &doc.routes {
-        if matches_query(&needle, &[route.id.as_str(), &route.title]) {
+        let route_text = route
+            .steps
+            .iter()
+            .flat_map(|step| [step.id(), step.why()])
+            .collect::<Vec<_>>();
+        let mut fields = vec![route.id.as_str(), &route.title];
+        fields.extend(route.audiences.iter().map(String::as_str));
+        fields.extend(route_text);
+        if matches_query(&needle, &fields) {
             rows.push(json!({
                 "kind": "route",
                 "id": route.id.as_str(),

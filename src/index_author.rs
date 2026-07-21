@@ -155,13 +155,14 @@ fn route_from_table(table: &Table, index: usize) -> Result<RouteRecord, String> 
         &["id", "title", "task", "audiences", "steps", "doc_anchor"],
         &label,
     )?;
-    let _audiences = optional_string_list(table, "audiences", &label)?;
+    let audiences = optional_string_list(table, "audiences", &label)?;
     let title = optional_string(table, "title", &label)?
         .or(optional_string(table, "task", &label)?)
         .ok_or_else(|| format!("{label}.task is required"))?;
     Ok(RouteRecord {
         id: RouteId::new(required_string(table, "id", &label)?),
         title,
+        audiences,
         steps: steps_from_value(
             table
                 .get("steps")
@@ -185,14 +186,19 @@ fn steps_from_value(value: &Value, label: &str) -> Result<Vec<RouteStep>, String
                 .as_table()
                 .ok_or_else(|| format!("{step_label} must be an inline table"))?;
             reject_unexpected_keys(table, &["feature", "specimen", "why"], &step_label)?;
-            if let Some(why) = optional_string(table, "why", &step_label)? {
-                ensure_ascii(&format!("{step_label}.why"), &why)?;
-            }
+            let why = required_string(table, "why", &step_label)?;
+            ensure_ascii(&format!("{step_label}.why"), &why)?;
             let feature = optional_string(table, "feature", &step_label)?;
             let specimen = optional_string(table, "specimen", &step_label)?;
             match (feature, specimen) {
-                (Some(id), None) => Ok(RouteStep::Feature(FeatureId::new(id))),
-                (None, Some(id)) => Ok(RouteStep::Specimen(SpecimenId::new(id))),
+                (Some(id), None) => Ok(RouteStep::Feature {
+                    id: FeatureId::new(id),
+                    why,
+                }),
+                (None, Some(id)) => Ok(RouteStep::Specimen {
+                    id: SpecimenId::new(id),
+                    why,
+                }),
                 (Some(_), Some(_)) => Err(format!(
                     "{step_label} must not target both feature and specimen"
                 )),

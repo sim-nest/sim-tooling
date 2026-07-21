@@ -1,0 +1,32 @@
+schema = "sim.features"
+
+[enforcement.route]
+major_entrypoints = "advisory"
+frameworks = "advisory"
+
+[[feature]]
+id = "feature/sim-tooling/generated-docs"
+title = "Generated documentation lanes"
+summary = "Generate repo contracts, feature maps, card indexes, and index fragments through xtask."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use this row when adding a generated doc lane or checking generated index artifacts."
+claims_anchors = [
+  "anchor/cli/xtask",
+  "anchor/doc/generated/card-index",
+  "anchor/doc/generated/feature-map",
+  "anchor/doc/generated/repo-contract",
+  "anchor/doc/generated/sim-index-fragment",
+]
+claims_surfaces = [
+  "docs/sim-tooling/generated",
+  "cli/xtask",
+]
+
+[[route]]
+id = "route/add-generated-doc"
+task = "Add a generated doc"
+audiences = ["code", "framework"]
+steps = [
+  { feature = "feature/sim-tooling/generated-docs", why = "The xtask documentation row owns generated doc lanes and index fragments." },
+]

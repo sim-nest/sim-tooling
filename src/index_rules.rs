@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use sim_index_core::{IndexDoc, SubjectId};
+use sim_index_core::{FeatureRecord, IndexDoc, SubjectId};
 use toml::{Table, Value};
 
 const FEATURES_FILE: &str = "features.toml";
@@ -142,6 +142,10 @@ impl Strictness {
             }
         }
     }
+
+    fn requires_route(&self, category: &str) -> bool {
+        self.strict_routes.contains(category) || self.strict_routes.contains("all")
+    }
 }
 
 fn strict_entries(table: &Table, out: &mut BTreeSet<String>) -> Result<(), String> {
@@ -168,6 +172,14 @@ fn strict_entries(table: &Table, out: &mut BTreeSet<String>) -> Result<(), Strin
 pub(crate) struct CoverageReport {
     pub(crate) covered: usize,
     pub(crate) advisory_missing: Vec<ClaimableItem>,
+    pub(crate) route_gaps: Vec<RouteGap>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RouteGap {
+    pub(crate) category: String,
+    pub(crate) id: String,
+    pub(crate) reason: String,
 }
 
 pub(crate) fn check_coverage(
@@ -202,10 +214,106 @@ pub(crate) fn check_coverage(
             _ => unreachable!("duplicate claims are rejected before coverage"),
         }
     }
+    let route_gaps = route_coverage_gaps(doc);
+    for gap in &route_gaps {
+        if strictness.requires_route(&gap.category) {
+            return Err(format!("unrouted {}: {}", gap.category, gap.id));
+        }
+    }
+
     Ok(CoverageReport {
         covered,
         advisory_missing,
+        route_gaps,
     })
+}
+
+pub(crate) fn route_coverage_gaps(doc: &IndexDoc) -> Vec<RouteGap> {
+    let targets = doc
+        .routes
+        .iter()
+        .flat_map(|route| route.steps.iter().map(|step| step.id().to_owned()))
+        .collect::<BTreeSet<_>>();
+    let mut gaps = Vec::new();
+    for feature in &doc.features {
+        if targets.contains(feature.id.as_str()) {
+            continue;
+        }
+        if is_major_entrypoint(doc, feature) {
+            gaps.push(RouteGap {
+                category: "major_entrypoints".to_owned(),
+                id: feature.id.to_string(),
+                reason: "feature claims a CLI entry point but no route step reaches it".to_owned(),
+            });
+        }
+        if is_framework_feature(doc, feature) {
+            gaps.push(RouteGap {
+                category: "frameworks".to_owned(),
+                id: feature.id.to_string(),
+                reason: "feature exposes framework-facing runtime or surface facts but no route step reaches it"
+                    .to_owned(),
+            });
+        }
+    }
+    gaps.sort_by(|left, right| {
+        left.category
+            .cmp(&right.category)
+            .then(left.id.cmp(&right.id))
+    });
+    gaps
+}
+
+fn is_major_entrypoint(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+    feature.surfaces.iter().any(|id| {
+        doc.surfaces
+            .iter()
+            .any(|surface| surface.id.as_str() == id.as_str() && surface.kind == "cli")
+    })
+}
+
+fn is_framework_feature(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+    feature_claims_runtime_subject(doc, feature)
+        || feature
+            .surfaces
+            .iter()
+            .filter_map(|id| {
+                doc.surfaces
+                    .iter()
+                    .find(|surface| surface.id.as_str() == id.as_str())
+            })
+            .any(|surface| {
+                matches!(
+                    surface.kind.as_str(),
+                    "view" | "view-edit" | "model-exchange" | "site"
+                ) || subject_kind(doc, surface.subject.as_str()) == Some("runtime-lib")
+            })
+        || feature
+            .anchors
+            .iter()
+            .filter_map(|id| {
+                doc.anchors
+                    .iter()
+                    .find(|anchor| anchor.id.as_str() == id.as_str())
+            })
+            .any(|anchor| subject_kind(doc, anchor.subject.as_str()) == Some("runtime-lib"))
+        || text_mentions_framework(&feature.title)
+        || text_mentions_framework(&feature.summary)
+}
+
+fn feature_claims_runtime_subject(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+    subject_kind(doc, feature.subject.as_str()) == Some("runtime-lib")
+}
+
+fn subject_kind<'a>(doc: &'a IndexDoc, id: &str) -> Option<&'a str> {
+    doc.subjects
+        .iter()
+        .find(|subject| subject.id.as_str() == id)
+        .map(|subject| subject.kind.as_str())
+}
+
+fn text_mentions_framework(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("framework") || value.contains("runtime-lib")
 }
 
 pub(crate) fn missing_draft_rows(doc: &IndexDoc) -> Vec<MissingDraftRow> {
