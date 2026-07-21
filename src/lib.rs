@@ -41,6 +41,7 @@ mod file_size_gate;
 mod generator_options;
 mod index_anchor_scan;
 mod index_fragment;
+mod index_specimen_scan;
 mod index_surface_scan;
 mod repo_contract;
 mod repo_contract_cut;

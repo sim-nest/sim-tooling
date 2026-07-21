@@ -33,10 +33,12 @@ pub(crate) fn index_doc(
     let (subjects, edges) = package_subjects(repo, packages);
     let anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
     let discovered = crate::index_surface_scan::discovered(repo, packages, &anchors);
+    let specimens = crate::index_specimen_scan::discovered(repo, packages);
     let mut doc = IndexDoc::public(GENERATOR);
     doc.subjects = merge_subjects(subjects, discovered.subjects);
     doc.anchors = anchors.into_iter().chain(discovered.anchors).collect();
     doc.surfaces = discovered.surfaces;
+    doc.specimens = specimens;
     doc.drafts = discovered.drafts;
     doc.edges = edges;
     check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
