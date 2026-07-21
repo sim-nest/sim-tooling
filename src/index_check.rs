@@ -64,10 +64,21 @@ impl CheckOptions {
         }
 
         Ok(Self {
-            repo: repo.unwrap_or_else(|| PathBuf::from(".")),
+            repo: normalize_repo(repo.unwrap_or_else(|| PathBuf::from(".")))?,
             strict,
         })
     }
+}
+
+fn normalize_repo(repo: PathBuf) -> Result<PathBuf, String> {
+    let path = if repo.is_absolute() {
+        repo
+    } else {
+        std::env::current_dir()
+            .map_err(|err| format!("read current directory: {err}"))?
+            .join(repo)
+    };
+    fs::canonicalize(&path).map_err(|err| format!("canonicalize repo {}: {err}", path.display()))
 }
 
 fn usage(program: &str) -> String {
