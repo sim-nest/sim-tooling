@@ -14,7 +14,8 @@ use sim_index_core::{
 use crate::{
     index_anchor_scan::{non_test_source_text, quoted_values},
     index_fragment::{
-        codec_language, insert_subject, package_rust_files, repo_name, slug_path, subject_id,
+        codec_language, insert_subject, is_test_source, package_rust_files, rel_path, repo_name,
+        slug_path, subject_id,
     },
     repo_contract::PackageContract,
 };
@@ -273,6 +274,10 @@ fn is_wire_codec(language: &str) -> bool {
 fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
     let mut verbs = BTreeSet::new();
     for path in package_rust_files(repo, package) {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            continue;
+        }
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
@@ -292,6 +297,10 @@ fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
 fn surface_presets(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
     let mut presets = BTreeSet::new();
     for path in package_rust_files(repo, package) {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            continue;
+        }
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
@@ -328,6 +337,10 @@ fn is_surface_preset(value: &str) -> bool {
 
 fn package_sources_contain(repo: &Path, package: &PackageContract, needle: &str) -> bool {
     package_rust_files(repo, package).into_iter().any(|path| {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            return false;
+        }
         fs::read_to_string(path)
             .map(|text| non_test_source_text(&text).contains(needle))
             .unwrap_or(false)

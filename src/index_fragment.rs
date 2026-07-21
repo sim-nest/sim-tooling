@@ -238,7 +238,7 @@ fn should_descend(path: &Path) -> bool {
     )
 }
 
-fn is_test_source(rel: &str) -> bool {
+pub(crate) fn is_test_source(rel: &str) -> bool {
     rel.contains("/tests/")
         || rel.ends_with("/tests.rs")
         || rel.ends_with("_tests.rs")

@@ -10,7 +10,9 @@ use serde_json::Value;
 use sim_index_core::{AnchorId, DiscoveredAnchor, SubjectId};
 
 use crate::{
-    index_fragment::{package_rust_files, rel_path, repo_name, slug_ident, slug_path, subject_id},
+    index_fragment::{
+        is_test_source, package_rust_files, rel_path, repo_name, slug_ident, slug_path, subject_id,
+    },
     repo_contract::PackageContract,
 };
 
@@ -124,6 +126,10 @@ fn insert_export_anchors(
 ) {
     let mut exports = BTreeSet::new();
     for path in package_rust_files(repo, package) {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            continue;
+        }
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
@@ -153,13 +159,16 @@ fn insert_rustdoc_anchors(
 ) {
     let mut items = BTreeSet::new();
     for path in package_rust_files(repo, package) {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            continue;
+        }
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
         let Ok(file) = syn::parse_file(&text) else {
             continue;
         };
-        let rel = rel_path(repo, &path);
         collect_public_items(&file.items, "", &mut items);
         if rel.ends_with("/lib.rs") || rel == "src/lib.rs" {
             items.insert("crate-root".to_owned());
@@ -228,6 +237,10 @@ fn join_path(prefix: &str, name: &str) -> String {
 fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
     let mut verbs = BTreeSet::new();
     for path in package_rust_files(repo, package) {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            continue;
+        }
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
@@ -247,6 +260,10 @@ fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
 fn runtime_lib_names(repo: &Path, package: &PackageContract) -> Vec<String> {
     let mut libs = BTreeSet::new();
     for path in package_rust_files(repo, package) {
+        let rel = rel_path(repo, &path);
+        if is_test_source(&rel) {
+            continue;
+        }
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
