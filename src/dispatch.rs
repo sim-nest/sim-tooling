@@ -1,6 +1,7 @@
 use crate::{
     atelier, citizenize, crate_catalog, file_size_gate, generator_options, index_check,
-    index_doctor, index_seed, repo_contract, simdoc, validation_matrix,
+    index_doctor, index_merge, index_overlap, index_render, index_seed, repo_contract, simdoc,
+    validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -41,6 +42,22 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "seed")
     {
         return index_seed::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "merge")
+    {
+        return index_merge::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "render")
+    {
+        return index_render::run_render(args);
+    }
+    if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "find")
+    {
+        return index_render::run_find(args);
+    }
+    if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "overlap")
+    {
+        return index_overlap::run(args);
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "index-check") {
         return index_check::run(args);
@@ -96,4 +113,4 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
 }
 
-const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|index doctor --repo <path> --missing --out <path>|index seed --from <markdown> --out .sim/index/<name>.seed.toml|index-check --repo <path> [--strict <category:value,...>]|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]";
+const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|index doctor --repo <path> --missing --out <path>|index seed --from <markdown> --out .sim/index/<name>.seed.toml|index merge --fragment <path>... --out <path> [--check]|index render --input <index.sx> --out <dir> [--check]|index find --input <index.sx> [--json] <query>|index overlap --input <index.sx> [--clusters <clusters.json>] [--json]|index-check --repo <path> [--strict <category:value,...>]|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]";
