@@ -98,7 +98,7 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
     let recipes = recipe_books(repo, &package_groups);
     let cards = card_index(repo, &package_groups);
     let provenance = provenance(repo)?;
-    let index_fragment = index_fragment::artifact(repo, &packages)?;
+    let index_fragment = index_fragment::artifact(repo, &packages, &cards)?;
     let files = artifacts(ArtifactInputs {
         packages: &packages,
         cut: &cut,

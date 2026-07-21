@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde_json::Value;
 use sim_codec_index::{IndexCodec, IndexForm};
 use sim_index_core::{IndexDoc, IndexEdge, SubjectId, SubjectRecord, check_index_doc};
 use sim_kernel::EncodePosition;
@@ -13,20 +14,41 @@ use sim_kernel::EncodePosition;
 use crate::repo_contract::{GENERATOR, PackageContract};
 
 /// Builds the generated `sim-index-fragment.sx` contract artifact.
-pub(crate) fn artifact(repo: &Path, packages: &[PackageContract]) -> Result<String, String> {
-    let doc = index_doc(repo, packages)?;
+pub(crate) fn artifact(
+    repo: &Path,
+    packages: &[PackageContract],
+    cards: &[Value],
+) -> Result<String, String> {
+    let doc = index_doc(repo, packages, cards)?;
     IndexCodec
         .encode(&doc, EncodePosition::Data, IndexForm::Sx)
         .map_err(|err| format!("encode sim-index-fragment.sx: {err}"))
 }
 
-pub(crate) fn index_doc(repo: &Path, packages: &[PackageContract]) -> Result<IndexDoc, String> {
+pub(crate) fn index_doc(
+    repo: &Path,
+    packages: &[PackageContract],
+    cards: &[Value],
+) -> Result<IndexDoc, String> {
     let (subjects, edges) = package_subjects(repo, packages);
+    let anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
+    let discovered = crate::index_surface_scan::discovered(repo, packages, &anchors);
     let mut doc = IndexDoc::public(GENERATOR);
-    doc.subjects = subjects;
+    doc.subjects = merge_subjects(subjects, discovered.subjects);
+    doc.anchors = anchors.into_iter().chain(discovered.anchors).collect();
+    doc.surfaces = discovered.surfaces;
+    doc.drafts = discovered.drafts;
     doc.edges = edges;
     check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
     Ok(doc)
+}
+
+fn merge_subjects(left: Vec<SubjectRecord>, right: Vec<SubjectRecord>) -> Vec<SubjectRecord> {
+    let mut subjects = BTreeMap::new();
+    for subject in left.into_iter().chain(right) {
+        subjects.entry(subject.id.to_string()).or_insert(subject);
+    }
+    subjects.into_values().collect()
 }
 
 pub(crate) fn package_subjects(
@@ -80,7 +102,7 @@ pub(crate) fn package_subjects(
     (subjects.into_values().collect(), edges)
 }
 
-fn insert_subject(
+pub(crate) fn insert_subject(
     subjects: &mut BTreeMap<String, SubjectRecord>,
     id: SubjectId,
     kind: &str,
@@ -102,7 +124,7 @@ fn insert_edge(
     edges.insert((from.to_string(), rel.to_owned(), to.to_string()));
 }
 
-fn subject_id(kind: &str, tail: &str) -> SubjectId {
+pub(crate) fn subject_id(kind: &str, tail: &str) -> SubjectId {
     SubjectId::new(format!("{kind}/{}", slug_path(tail)))
 }
 
@@ -181,7 +203,7 @@ fn impl_type_ident(ty: &syn::Type) -> Option<String> {
         .map(|segment| segment.ident.to_string())
 }
 
-fn package_rust_files(repo: &Path, package: &PackageContract) -> Vec<PathBuf> {
+pub(crate) fn package_rust_files(repo: &Path, package: &PackageContract) -> Vec<PathBuf> {
     let src = if package.root.is_empty() {
         repo.join("src")
     } else {
@@ -223,7 +245,7 @@ fn is_test_source(rel: &str) -> bool {
         || rel.contains("/test_support/")
 }
 
-fn codec_language(package: &PackageContract) -> Option<String> {
+pub(crate) fn codec_language(package: &PackageContract) -> Option<String> {
     package
         .name
         .strip_prefix("sim-codec-")
@@ -231,7 +253,7 @@ fn codec_language(package: &PackageContract) -> Option<String> {
         .map(slug_path)
 }
 
-fn slug_path(input: &str) -> String {
+pub(crate) fn slug_path(input: &str) -> String {
     input
         .split('/')
         .map(slug_ident)
@@ -240,7 +262,7 @@ fn slug_path(input: &str) -> String {
         .join("/")
 }
 
-fn slug_ident(input: &str) -> String {
+pub(crate) fn slug_ident(input: &str) -> String {
     let mut out = String::new();
     let mut previous_dash = false;
     let mut previous_lower_or_digit = false;
@@ -286,14 +308,14 @@ fn slug_ident(input: &str) -> String {
     out.trim_matches('-').to_owned()
 }
 
-fn repo_name(repo: &Path) -> String {
+pub(crate) fn repo_name(repo: &Path) -> String {
     repo.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("workspace")
         .to_owned()
 }
 
-fn rel_path(repo: &Path, path: &Path) -> String {
+pub(crate) fn rel_path(repo: &Path, path: &Path) -> String {
     path.strip_prefix(repo)
         .unwrap_or(path)
         .to_string_lossy()
@@ -365,7 +387,7 @@ mod tests {
         let root = temp_root("sim-tooling-index-fragment-roundtrip");
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(root.join("src/lib.rs"), "pub fn run() {}\n").unwrap();
-        let sx = artifact(&root, &[package("xtask", "")]).expect("fragment artifact");
+        let sx = artifact(&root, &[package("xtask", "")], &[]).expect("fragment artifact");
         let doc = IndexCodec
             .decode(IndexForm::Sx, &sx)
             .expect("codec/index decodes fragment");
