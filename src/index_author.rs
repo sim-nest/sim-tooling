@@ -67,7 +67,7 @@ pub(crate) fn parse_overlay(source: &str) -> Result<AuthoredOverlay, String> {
     let root = value
         .as_table()
         .ok_or("features overlay must be a TOML table")?;
-    reject_unexpected_keys(root, &["schema", "feature", "route"], "root")?;
+    reject_unexpected_keys(root, &["schema", "feature", "route", "enforcement"], "root")?;
     let schema = required_string(root, "schema", "root")?;
     if schema != "sim.features" {
         return Err(format!(

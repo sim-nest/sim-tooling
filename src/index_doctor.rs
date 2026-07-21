@@ -1,15 +1,17 @@
 //! Maintenance commands for SIM Index feature overlay gaps.
 
 use std::{
-    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
 
 use sim_codec_index::{IndexCodec, IndexForm};
-use sim_index_core::{IndexDoc, SubjectId};
+use sim_index_core::IndexDoc;
 
-use crate::index_fragment::{repo_name, slug_path};
+use crate::{
+    index_fragment::{repo_name, slug_path},
+    index_rules::{MissingDraftRow, missing_draft_rows},
+};
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = DoctorOptions::parse(&args)?;
@@ -95,86 +97,6 @@ fn load_fragment(repo: &Path) -> Result<IndexDoc, String> {
         .map_err(|err| format!("decode generated index fragment {}: {err}", path.display()))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct MissingDraftRow {
-    kind: &'static str,
-    id: String,
-    owner: SubjectId,
-}
-
-fn missing_draft_rows(doc: &IndexDoc) -> Vec<MissingDraftRow> {
-    let claimed_anchors = doc
-        .features
-        .iter()
-        .flat_map(|feature| feature.anchors.iter().map(|id| id.as_str()))
-        .chain(
-            doc.drafts
-                .iter()
-                .flat_map(|draft| draft.claims_anchors.iter().map(|id| id.as_str())),
-        )
-        .collect::<BTreeSet<_>>();
-    let claimed_surfaces = doc
-        .features
-        .iter()
-        .flat_map(|feature| feature.surfaces.iter().map(|id| id.as_str()))
-        .chain(
-            doc.drafts
-                .iter()
-                .flat_map(|draft| draft.claims_surfaces.iter().map(|id| id.as_str())),
-        )
-        .collect::<BTreeSet<_>>();
-    let claimed_specimens = doc
-        .features
-        .iter()
-        .flat_map(|feature| feature.specimens.iter().map(|id| id.as_str()))
-        .chain(
-            doc.drafts
-                .iter()
-                .flat_map(|draft| draft.claims_specimens.iter().map(|id| id.as_str())),
-        )
-        .collect::<BTreeSet<_>>();
-
-    let mut rows = Vec::new();
-    rows.extend(
-        doc.anchors
-            .iter()
-            .filter(|row| !claimed_anchors.contains(row.id.as_str()))
-            .map(|row| MissingDraftRow {
-                kind: "anchor",
-                id: row.id.to_string(),
-                owner: row.subject.clone(),
-            }),
-    );
-    rows.extend(
-        doc.surfaces
-            .iter()
-            .filter(|row| !claimed_surfaces.contains(row.id.as_str()))
-            .map(|row| MissingDraftRow {
-                kind: "surface",
-                id: row.id.to_string(),
-                owner: row.subject.clone(),
-            }),
-    );
-    rows.extend(
-        doc.specimens
-            .iter()
-            .filter(|row| row.runnable && row.checked)
-            .filter(|row| !claimed_specimens.contains(row.id.as_str()))
-            .map(|row| MissingDraftRow {
-                kind: "specimen",
-                id: row.id.to_string(),
-                owner: row.subject.clone(),
-            }),
-    );
-    rows.sort_by(|left, right| {
-        left.kind
-            .cmp(right.kind)
-            .then(left.id.cmp(&right.id))
-            .then(left.owner.as_str().cmp(right.owner.as_str()))
-    });
-    rows
-}
-
 fn render_missing_features(repo: &Path, rows: &[MissingDraftRow]) -> String {
     let repo = slug_path(&repo_name(repo));
     let mut out = String::from(
@@ -244,7 +166,7 @@ fn push_quoted(out: &mut String, value: &str) {
 mod tests {
     use sim_index_core::{
         AnchorId, DiscoveredAnchor, DiscoveredSpecimen, DiscoveredSurface, FeatureId,
-        FeatureRecord, SubjectRecord, SurfaceId, Visibility, check_index_doc,
+        FeatureRecord, SubjectId, SubjectRecord, SurfaceId, Visibility, check_index_doc,
         key::CanonicalFeatureKey,
     };
 
