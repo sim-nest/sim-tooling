@@ -69,6 +69,10 @@ pub(super) fn radar_json(panel: &str, report: &RadarReport) -> Value {
                     "file": hint.path,
                     "line": hint.line,
                 },
+                "graph_id": hint.graph_id,
+                "graph_kind": hint.graph_kind,
+                "related_ids": hint.related_ids,
+                "panels": hint.panels,
                 "capabilities": hint.capabilities,
                 "preferred_codec": hint.preferred_codec,
             })
@@ -120,6 +124,13 @@ fn navigation_json(index: &Value, guard: &AtelierGuardReport) -> Value {
         nav_section("capability", chunk_strings(&chunks, "capabilities")),
         nav_section("codec", chunk_strings(&chunks, "codecs")),
         nav_section("recipe", recipe_paths(&units)),
+        nav_section("feature", unit_graph_ids(&units, "feature")),
+        nav_section("package", unit_graph_ids(&units, "package")),
+        nav_section("surface", unit_graph_ids(&units, "surface")),
+        nav_section("language", unit_graph_ids(&units, "language")),
+        nav_section("grammar", unit_graph_ids(&units, "grammar")),
+        nav_section("specimen", unit_graph_ids(&units, "specimen")),
+        nav_section("route", unit_graph_ids(&units, "route")),
         nav_section("agent-role", agent_roles(&chunks)),
         nav_section(
             "guard-rule",
@@ -159,6 +170,30 @@ fn panel_json(contract_native: bool) -> Value {
                 "id": "retrieval-radar",
                 "title": "Retrieval Radar",
                 "source": "sim-lib-rank hints",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "already-exists",
+                "title": "Already exists",
+                "source": "SIM Index feature and package graph",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "reuse-route",
+                "title": "Reuse route",
+                "source": "SIM Index route graph",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "run-this-example",
+                "title": "Run this example",
+                "source": "checked SIM Index specimens",
                 "editable": false,
             })
         },
@@ -287,6 +322,14 @@ fn recipe_paths(units: &[Value]) -> Vec<String> {
         .iter()
         .filter(|unit| unit["kind"].as_str() == Some("recipe"))
         .filter_map(|unit| unit["path"].as_str().map(str::to_owned))
+        .collect()
+}
+
+fn unit_graph_ids(units: &[Value], kind: &str) -> Vec<String> {
+    units
+        .iter()
+        .filter(|unit| unit["kind"].as_str() == Some(kind))
+        .filter_map(|unit| unit["graph_id"].as_str().map(str::to_owned))
         .collect()
 }
 

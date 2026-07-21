@@ -160,6 +160,9 @@ fn source_unit(
         path: path.to_owned(),
         line,
         text: format!("signature: fn {name}\ndocs:\n{name} docs.\n"),
+        graph_id: None,
+        related_ids: Vec::new(),
+        panels: Vec::new(),
     }
 }
 

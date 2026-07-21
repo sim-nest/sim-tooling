@@ -68,6 +68,10 @@ pub(super) struct RadarHint {
     pub(super) capabilities: Vec<String>,
     pub(super) preferred_codec: Option<String>,
     pub(super) rust: Option<Value>,
+    pub(super) graph_id: Option<String>,
+    pub(super) graph_kind: Option<String>,
+    pub(super) related_ids: Vec<String>,
+    pub(super) panels: Vec<String>,
     pub(super) confidence: f64,
 }
 
@@ -85,6 +89,10 @@ struct RadarChunk {
     codecs: Vec<String>,
     agent_roles: Vec<String>,
     rust: Option<Value>,
+    graph_id: Option<String>,
+    graph_kind: Option<String>,
+    related_ids: Vec<String>,
+    panels: Vec<String>,
     live: bool,
 }
 
@@ -182,6 +190,12 @@ fn parse_chunks(
             codecs: string_array(&chunk["codecs"]),
             agent_roles: infer_agent_roles(&text),
             rust: chunk.get("rust").cloned(),
+            graph_id: chunk["graph_id"].as_str().map(str::to_owned),
+            graph_kind: chunk["graph_id"]
+                .as_str()
+                .map(|_| kind_from_chunk(chunk, &text)),
+            related_ids: string_array(&chunk["related_ids"]),
+            panels: string_array(&chunk["panels"]),
             live: live_span(control_root, repo_roots, repo, path, line),
         });
     }
@@ -205,6 +219,13 @@ fn live_span(
         return false;
     };
     root.join(path).is_file()
+}
+
+fn kind_from_chunk(chunk: &Value, text: &str) -> String {
+    chunk["kind"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| chunk_title(chunk, text))
 }
 
 fn chunk_title(chunk: &Value, text: &str) -> String {

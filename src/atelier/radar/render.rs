@@ -23,6 +23,10 @@ fn hint_json(hint: &RadarHint) -> Value {
             "file": hint.path,
             "line": hint.line,
         },
+        "graph_id": hint.graph_id,
+        "graph_kind": hint.graph_kind,
+        "related_ids": hint.related_ids,
+        "panels": hint.panels,
         "capabilities": hint.capabilities,
         "preferred_codec": hint.preferred_codec,
         "confidence": hint.confidence,
@@ -50,6 +54,12 @@ pub(super) fn print_text_report(report: &RadarReport) {
         );
         println!("   {}", hint.title);
         println!("   chunk: {}", hint.chunk_id);
+        if let Some(graph_id) = &hint.graph_id {
+            println!("   graph: {graph_id}");
+        }
+        if !hint.panels.is_empty() {
+            println!("   panels: {}", hint.panels.join(", "));
+        }
         if !hint.capabilities.is_empty() {
             println!("   capabilities: {}", hint.capabilities.join(", "));
         }

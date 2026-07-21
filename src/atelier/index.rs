@@ -5,6 +5,7 @@ use sim_cookbook::fnv1a64_hex;
 
 use super::{
     index_doc::{f1_recursive_chunks, line_for_offset},
+    index_graph_units::collect_index_graph_units,
     index_manifest::{RepoEntry, read_repos_manifest},
     index_units::{SourceUnit, collect_units},
     io::{check_cache, display_io, write_cache},
@@ -110,6 +111,10 @@ pub(super) fn atelier_index(options: AtelierIndexOptions) -> Result<AtelierIndex
             Err(err) => diagnostics.push(diagnostic("unit-collection-failed", &repo.name, err)),
         }
     }
+    match collect_index_graph_units(&repos) {
+        Ok(graph_units) => units.extend(graph_units),
+        Err(err) => diagnostics.push(diagnostic("index-graph-unavailable", "sim-say", err)),
+    }
     units.sort_by(|left, right| left.id.cmp(&right.id));
     let rust = build_rust_intelligence(&repos, &units);
     diagnostics.extend(rust.diagnostics().iter().cloned());
@@ -193,6 +198,11 @@ fn chunks_for_units(
             if let Some(fact) = rust.fact_for_unit(&unit.id) {
                 value["rust"] = fact.json();
             }
+            if let Some(graph_id) = &unit.graph_id {
+                value["graph_id"] = json!(graph_id);
+                value["related_ids"] = json!(unit.related_ids);
+                value["panels"] = json!(unit.panels);
+            }
             chunks.push(value);
         }
     }
@@ -230,7 +240,7 @@ fn repo_json(repo: &RepoEntry) -> Value {
 }
 
 fn unit_json(unit: &SourceUnit) -> Value {
-    json!({
+    let mut value = json!({
         "id": unit.id,
         "repo": unit.repo,
         "crate": unit.crate_name,
@@ -238,7 +248,13 @@ fn unit_json(unit: &SourceUnit) -> Value {
         "path": unit.path,
         "line": unit.line,
         "text_hash": content_hash(&unit.text),
-    })
+    });
+    if let Some(graph_id) = &unit.graph_id {
+        value["graph_id"] = json!(graph_id);
+        value["related_ids"] = json!(unit.related_ids);
+        value["panels"] = json!(unit.panels);
+    }
+    value
 }
 
 fn diagnostic(

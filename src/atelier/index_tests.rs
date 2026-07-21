@@ -5,6 +5,13 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sim_codec_index::{IndexCodec, IndexForm};
+use sim_index_core::{
+    AnchorId, DiscoveredAnchor, DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord,
+    IndexDoc, RouteId, RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId,
+    key::CanonicalFeatureKey,
+};
+use sim_kernel::EncodePosition;
 
 use super::index::{AtelierIndexOptions, atelier_index};
 
@@ -211,10 +218,115 @@ fn index_attaches_rust_facts_to_rust_chunks() {
     assert_eq!(index["rust"]["items"].as_array().unwrap().len(), 1);
 }
 
+#[test]
+fn index_imports_sim_index_graph_units() {
+    let fixture = IndexFixture::new("sim-index-graph");
+    fixture.write_manifest(&[repo_row(
+        "sim-say",
+        "frontpage",
+        "sim-say",
+        false,
+        &[],
+        &[],
+        "aaaa",
+    )]);
+    fixture.repo("sim-say").index_sx(&fixture_doc()).git_clean();
+
+    let index = fixture.index();
+    let units = index["units"].as_array().unwrap();
+    assert!(graph_unit(units, "feature/demo/parser", "feature").is_some());
+    assert!(graph_unit(units, "crate/demo", "package").is_some());
+    assert!(graph_unit(units, "surface/demo/parser", "surface").is_some());
+    assert!(graph_unit(units, "grammar/demo-parser", "grammar").is_some());
+    assert!(graph_unit(units, "recipe/demo/parser", "specimen").is_some());
+    assert!(graph_unit(units, "route/demo/parser", "route").is_some());
+
+    let chunks = index["chunks"].as_array().unwrap();
+    let route = chunks
+        .iter()
+        .find(|chunk| chunk["graph_id"] == "route/demo/parser")
+        .expect("route chunk");
+    assert!(
+        string_array(&route["panels"]).contains(&"reuse-route".to_owned()),
+        "route chunks advertise the reuse route panel"
+    );
+}
+
 fn has_diagnostic(diagnostics: &[Value], kind: &str, repo: &str) -> bool {
     diagnostics
         .iter()
         .any(|item| item["kind"] == kind && item["repo"] == repo)
+}
+
+fn graph_unit<'a>(units: &'a [Value], id: &str, kind: &str) -> Option<&'a Value> {
+    units
+        .iter()
+        .find(|unit| unit["graph_id"] == id && unit["kind"] == kind)
+}
+
+fn fixture_doc() -> IndexDoc {
+    let mut doc = IndexDoc::public("atelier-index-test");
+    doc.subjects.push(SubjectRecord {
+        id: SubjectId::new("crate/demo"),
+        kind: "crate".to_owned(),
+        title: "demo".to_owned(),
+    });
+    doc.anchors.push(DiscoveredAnchor {
+        id: AnchorId::new("anchor/demo/parser-decoder"),
+        subject: SubjectId::new("crate/demo"),
+        kind: "decoder".to_owned(),
+    });
+    doc.surfaces.push(DiscoveredSurface {
+        id: SurfaceId::new("surface/demo/parser"),
+        subject: SubjectId::new("crate/demo"),
+        kind: "syntax".to_owned(),
+    });
+    doc.specimens.push(DiscoveredSpecimen {
+        id: SpecimenId::new("recipe/demo/parser"),
+        subject: SubjectId::new("crate/demo"),
+        kind: "recipe".to_owned(),
+        path: "recipes/parser/recipe.toml".to_owned(),
+        language: Some("toml".to_owned()),
+        runnable: true,
+        checked: true,
+        checked_by: Some("xtask check-recipes".to_owned()),
+        doc_anchor: None,
+    });
+    doc.features.push(FeatureRecord {
+        id: FeatureId::new("feature/demo/parser"),
+        key: CanonicalFeatureKey::new("crate/demo/feature-demo-parser"),
+        subject: SubjectId::new("crate/demo"),
+        title: "Demo parser".to_owned(),
+        summary: "Parse a demo language.".to_owned(),
+        anchors: vec![AnchorId::new("anchor/demo/parser-decoder")],
+        surfaces: vec![SurfaceId::new("surface/demo/parser")],
+        specimens: vec![SpecimenId::new("recipe/demo/parser")],
+        grammar_contracts: vec![sim_index_core::GrammarContract {
+            id: "grammar/demo-parser".to_owned(),
+            decoder: Some(AnchorId::new("anchor/demo/parser-decoder")),
+            encoder: None,
+            surface: Some(SurfaceId::new("surface/demo/parser")),
+            round_trip: true,
+        }],
+        doc_anchor: None,
+    });
+    doc.routes.push(RouteRecord {
+        id: RouteId::new("route/demo/parser"),
+        title: "Parse a demo language".to_owned(),
+        audiences: vec!["code".to_owned(), "framework".to_owned()],
+        steps: vec![
+            RouteStep::Feature {
+                id: FeatureId::new("feature/demo/parser"),
+                why: "The parser feature is already present.".to_owned(),
+            },
+            RouteStep::Specimen {
+                id: SpecimenId::new("recipe/demo/parser"),
+                why: "Run the checked parser recipe.".to_owned(),
+            },
+        ],
+        doc_anchor: None,
+    });
+    doc
 }
 
 fn chunk_ids(index: &Value) -> Vec<String> {
@@ -224,6 +336,19 @@ fn chunk_ids(index: &Value) -> Vec<String> {
         .iter()
         .map(|chunk| chunk["id"].as_str().unwrap().to_owned())
         .collect()
+}
+
+fn string_array(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn repo_row(
@@ -339,6 +464,16 @@ impl RepoFixture {
         let path = self.root.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
+        self.clone()
+    }
+
+    fn index_sx(&self, doc: &IndexDoc) -> Self {
+        let path = self.root.join("docs/index/index.sx");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let source = IndexCodec
+            .encode(doc, EncodePosition::Data, IndexForm::Json)
+            .unwrap();
+        fs::write(path, source).unwrap();
         self.clone()
     }
 

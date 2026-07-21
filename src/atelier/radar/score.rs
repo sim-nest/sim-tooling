@@ -24,7 +24,8 @@ pub(super) fn rank_hints(
         .filter(|chunk| chunk.live)
         .map(|chunk| {
             (
-                cosine(&query_embedding, &embedding(&chunk.search_text())),
+                cosine(&query_embedding, &embedding(&chunk.search_text()))
+                    + graph_boost(chunk, query),
                 chunk,
             )
         })
@@ -51,6 +52,10 @@ pub(super) fn rank_hints(
                 .clone()
                 .or_else(|| chunk.codecs.first().cloned()),
             rust: chunk.rust.clone(),
+            graph_id: chunk.graph_id.clone(),
+            graph_kind: chunk.graph_kind.clone(),
+            related_ids: chunk.related_ids.clone(),
+            panels: chunk.panels.clone(),
             confidence: confidence_from_score(score),
         })
         .collect();
@@ -72,6 +77,8 @@ impl RadarChunk {
         let codecs = self.codecs.join(" ");
         let roles = self.agent_roles.join(" ");
         let rust_text = rust_search_text(&self.rust);
+        let related_ids = self.related_ids.join(" ");
+        let panels = self.panels.join(" ");
         [
             self.title.as_str(),
             self.kind.as_str(),
@@ -81,6 +88,10 @@ impl RadarChunk {
             codecs.as_str(),
             roles.as_str(),
             rust_text.as_str(),
+            self.graph_id.as_deref().unwrap_or_default(),
+            self.graph_kind.as_deref().unwrap_or_default(),
+            related_ids.as_str(),
+            panels.as_str(),
         ]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -106,6 +117,112 @@ impl RadarQuery {
         .join(" ")
     }
 }
+
+fn graph_boost(chunk: &RadarChunk, query: &RadarQuery) -> f32 {
+    let mut boost = 0.0;
+    let query_text = query.search_text().to_ascii_lowercase();
+    let terms = search_terms(&query_text);
+    let topical_terms = topical_terms(&terms);
+    if let Some(graph_id) = &chunk.graph_id {
+        let id = graph_id.to_ascii_lowercase();
+        if query_text.contains(&id) || terms.iter().any(|term| term == &id) {
+            boost += 2.0;
+        }
+        let id_matches = terms.iter().filter(|term| id.contains(*term)).count();
+        boost += (id_matches as f32 * 0.4).min(1.2);
+    }
+    let text = chunk.text.to_ascii_lowercase();
+    let topical_matches = topical_terms
+        .iter()
+        .filter(|term| text.contains(*term))
+        .count();
+    if let Some(kind) = &chunk.graph_kind {
+        match kind.as_str() {
+            "grammar" if terms.iter().any(|term| term == "grammar") && topical_matches > 0 => {
+                boost += 1.6;
+            }
+            "grammar" => boost += 0.2,
+            "route" if topical_matches > 0 => boost += 0.9,
+            "route" => boost += 0.3,
+            "feature" if topical_matches > 0 => boost += 0.8,
+            "feature" => boost += 0.3,
+            "specimen" if topical_matches > 0 => boost += 0.35,
+            "specimen" => boost += 0.1,
+            "package" => boost += 0.25,
+            _ => {}
+        }
+    }
+    let text_matches = terms.iter().filter(|term| text.contains(*term)).count();
+    boost += (text_matches as f32 * 0.2).min(0.8);
+    if chunk.panels.iter().any(|panel| panel == "run-this-example") {
+        boost += 0.15;
+    }
+    if chunk.panels.iter().any(|panel| panel == "reuse-route") {
+        boost += 0.4;
+    }
+    if terms.iter().any(|term| term == "framework")
+        && chunk
+            .text
+            .to_ascii_lowercase()
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|term| term == "framework")
+    {
+        boost += 0.4;
+    }
+    if chunk.related_ids.iter().any(|id| {
+        terms
+            .iter()
+            .any(|term| id.to_ascii_lowercase().contains(term))
+    }) {
+        boost += 0.3;
+    }
+    boost
+}
+
+fn search_terms(text: &str) -> Vec<String> {
+    let mut terms = text
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '/' && ch != '-')
+        .filter(|term| term.len() > 1)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let singulars = terms
+        .iter()
+        .filter_map(|term| term.strip_suffix('s').filter(|stem| stem.len() > 2))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    terms.extend(singulars);
+    terms
+}
+
+fn topical_terms(terms: &[String]) -> Vec<String> {
+    terms
+        .iter()
+        .filter(|term| !GRAPH_KIND_WORDS.contains(&term.as_str()))
+        .cloned()
+        .collect()
+}
+
+const GRAPH_KIND_WORDS: &[&str] = &[
+    "a",
+    "an",
+    "and",
+    "code",
+    "example",
+    "feature",
+    "for",
+    "framework",
+    "grammar",
+    "language",
+    "package",
+    "route",
+    "run",
+    "specimen",
+    "surface",
+    "the",
+    "this",
+    "to",
+    "user",
+];
 
 fn embedding(text: &str) -> [f32; EMBED_DIM] {
     let mut vector = [0.0; EMBED_DIM];

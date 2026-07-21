@@ -44,12 +44,15 @@ fn shell_loads_site_index_navigation_and_repo_status() {
         nav_items(&report, "guard-rule").contains(&"generated-docs-clean".to_owned()),
         "guard rules are navigable"
     );
+    assert!(panel_ids(&report).contains(&"already-exists".to_owned()));
+    assert!(panel_ids(&report).contains(&"reuse-route".to_owned()));
+    assert!(panel_ids(&report).contains(&"run-this-example".to_owned()));
     assert_eq!(strings_at(&report, "/startup/dirty_repos"), vec!["sim-sdk"]);
     assert_eq!(
         strings_at(&report, "/startup/missing_siblings"),
         vec!["sim-missing"]
     );
-    assert!(report["radar"].as_array().unwrap().len() >= 5);
+    assert!(report["radar"].as_array().unwrap().len() >= 8);
 }
 
 #[test]
