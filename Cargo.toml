@@ -26,15 +26,15 @@ unsafe_code = "forbid"
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 sim-cookbook = "0.1.3"
 sim-codec-index = { version = "0.1.0", git = "https://github.com/sim-nest/sim-codecs", rev = "950d8c3cadccdbe9d2d9bfe8c90b67d1bbd358b1" }
 sim-codec-json = "0.1.2"
 sim-index-core = { version = "0.1.0", git = "https://github.com/sim-nest/sim-foundation", rev = "d11442dccfb66699bb644f7c1074be19449112c8" }
 sim-kernel = "0.1.0"
 sim-lib-net-core = "0.1.4"
-syn = { version = "2", features = ["full"] }
-toml = "0.8"
+syn = { version = "3", features = ["full"] }
+toml = "1.1"
 
 [lints]
 workspace = true
