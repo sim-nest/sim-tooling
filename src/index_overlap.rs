@@ -1,35 +1,46 @@
 //! Advisory duplicate-implementation bridge over the merged SIM Index graph.
 
 use std::{
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
 };
 
 use serde_json::{Value, json};
-use sim_index_core::IndexDoc;
+use sim_index_core::{FeatureRecord, IndexDoc, SubjectId};
 
-use crate::index_render::load_doc;
+use crate::{
+    index_overlap_report::{
+        CloneCluster, OverlapMember, SourceClassification, read_overlap_report,
+    },
+    index_render::load_doc,
+    index_source::SourceResolver,
+};
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = OverlapOptions::parse(&args)?;
+    let report = read_overlap_report(options.clusters.as_ref(), options.strict)?;
     let doc = load_doc(&options.input)?;
-    let clusters = options
-        .clusters
-        .as_ref()
-        .map(|path| read_clusters(path))
-        .transpose()?
-        .unwrap_or_default();
-    let findings = overlap_findings(&doc, &clusters);
-    if options.strict && !findings.is_empty() {
-        return Err(strict_error(&findings));
+    let sources = SourceResolver::from_options(
+        options.control_root.as_deref(),
+        options.repos_manifest.as_deref(),
+    )?;
+    let findings = overlap_findings(&doc, &sources, &report.clusters);
+    let strict_findings = findings
+        .iter()
+        .filter(|finding| finding.strict)
+        .collect::<Vec<_>>();
+    if options.strict && !strict_findings.is_empty() {
+        return Err(strict_error(&strict_findings));
     }
     if options.json {
         let text = serde_json::to_string_pretty(&json!({
             "advisory": !options.strict,
             "strict": options.strict,
-            "cluster_count": clusters.len(),
+            "report_complete": report.complete,
+            "roots_scanned": report.roots_scanned,
+            "cluster_count": report.clusters.len(),
             "finding_count": findings.len(),
+            "strict_finding_count": strict_findings.len(),
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
         }))
         .map_err(|err| format!("serialize overlap findings: {err}"))?;
@@ -37,14 +48,11 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     } else if findings.is_empty() {
         println!(
             "index overlap: advisory ok ({} cluster(s), 0 missing feature relations)",
-            clusters.len()
+            report.clusters.len()
         );
     } else {
         for finding in &findings {
-            println!(
-                "index overlap: advisory {} {} <-> {} missing-relating-edge",
-                finding.cluster, finding.left, finding.right
-            );
+            println!("{}", finding.to_text(options.strict));
         }
     }
     Ok(())
@@ -54,6 +62,8 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
 struct OverlapOptions {
     input: PathBuf,
     clusters: Option<PathBuf>,
+    control_root: Option<PathBuf>,
+    repos_manifest: Option<PathBuf>,
     json: bool,
     strict: bool,
 }
@@ -68,6 +78,8 @@ impl OverlapOptions {
         }
         let mut input = None;
         let mut clusters = None;
+        let mut control_root = None;
+        let mut repos_manifest = None;
         let mut json = false;
         let mut strict = false;
         let mut index = 3;
@@ -83,6 +95,18 @@ impl OverlapOptions {
                     index += 1;
                     clusters = Some(PathBuf::from(
                         args.get(index).ok_or("--clusters requires a path")?,
+                    ));
+                }
+                "--control-root" => {
+                    index += 1;
+                    control_root = Some(PathBuf::from(
+                        args.get(index).ok_or("--control-root requires a path")?,
+                    ));
+                }
+                "--repos-manifest" => {
+                    index += 1;
+                    repos_manifest = Some(PathBuf::from(
+                        args.get(index).ok_or("--repos-manifest requires a path")?,
                     ));
                 }
                 "--json" => json = true,
@@ -101,6 +125,8 @@ impl OverlapOptions {
             input: input
                 .ok_or_else(|| format!("index overlap requires --input; {}", usage(program)))?,
             clusters,
+            control_root,
+            repos_manifest,
             json,
             strict,
         })
@@ -109,86 +135,195 @@ impl OverlapOptions {
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} index overlap --input <index.sx> [--clusters <clusters.json>] [--json] [--strict]"
+        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
     )
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CloneCluster {
-    id: String,
-    members: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Finding {
     cluster: String,
-    left: String,
-    right: String,
+    member: Option<MemberRef>,
+    left: Option<String>,
+    right: Option<String>,
+    source_classification: Option<String>,
+    graph_relation: Option<String>,
+    reason: String,
+    detail: String,
+    strict: bool,
 }
 
 impl Finding {
+    fn source_member(
+        cluster: &CloneCluster,
+        member: &OverlapMember,
+        reason: &str,
+        detail: String,
+    ) -> Self {
+        Self {
+            cluster: cluster.id.clone(),
+            member: Some(MemberRef::from_member(member)),
+            left: None,
+            right: None,
+            source_classification: Some(member.classification.as_str().to_owned()),
+            graph_relation: None,
+            reason: reason.to_owned(),
+            detail,
+            strict: true,
+        }
+    }
+
+    fn missing_relation(cluster: &CloneCluster, left: String, right: String) -> Self {
+        Self {
+            cluster: cluster.id.clone(),
+            member: None,
+            left: Some(left),
+            right: Some(right),
+            source_classification: Some("classified".to_owned()),
+            graph_relation: Some("missing-relating-edge".to_owned()),
+            reason: "missing-relating-edge".to_owned(),
+            detail: format!(
+                "classified members for {} should relate through {}",
+                cluster.owner, cluster.replacement
+            ),
+            strict: true,
+        }
+    }
+
     fn to_json(&self) -> Value {
         json!({
             "cluster": self.cluster,
-            "features": [self.left, self.right],
-            "reason": "missing-relating-edge",
+            "member": self.member.as_ref().map(MemberRef::to_json),
+            "features": match (&self.left, &self.right) {
+                (Some(left), Some(right)) => json!([left, right]),
+                _ => Value::Null,
+            },
+            "source_classification": self.source_classification,
+            "graph_relation": self.graph_relation,
+            "reason": self.reason,
+            "detail": self.detail,
+            "strict": self.strict,
+        })
+    }
+
+    fn to_text(&self, strict: bool) -> String {
+        let mode = if strict { "strict" } else { "advisory" };
+        match (&self.member, &self.left, &self.right) {
+            (Some(member), _, _) => format!(
+                "index overlap: {mode} {} {}:{} {} {}: {}",
+                self.cluster,
+                member.repo_path(),
+                member.line,
+                member.classification,
+                self.reason,
+                self.detail
+            ),
+            (_, Some(left), Some(right)) => format!(
+                "index overlap: {mode} {} {} <-> {} {}",
+                self.cluster, left, right, self.reason
+            ),
+            _ => format!("index overlap: {mode} {} {}", self.cluster, self.reason),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemberRef {
+    repo: String,
+    path: String,
+    line: u64,
+    symbol: String,
+    classification: String,
+    owner: String,
+    replacement: String,
+}
+
+impl MemberRef {
+    fn from_member(member: &OverlapMember) -> Self {
+        Self {
+            repo: member.repo.clone(),
+            path: member.path.clone(),
+            line: member.line,
+            symbol: member.symbol.clone(),
+            classification: member.classification.as_str().to_owned(),
+            owner: member.owner.clone(),
+            replacement: member.replacement.clone(),
+        }
+    }
+
+    fn repo_path(&self) -> String {
+        format!("{}/{}", self.repo, self.path)
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "repo": self.repo,
+            "path": self.path,
+            "line": self.line,
+            "symbol": self.symbol,
+            "classification": self.classification,
+            "owner": self.owner,
+            "replacement": self.replacement,
         })
     }
 }
 
-fn read_clusters(path: &Path) -> Result<Vec<CloneCluster>, String> {
-    let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
-    let value: Value =
-        serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
-    let Some(clusters) = value.get("clusters").and_then(Value::as_array) else {
-        return Err(format!("{} missing clusters array", path.display()));
-    };
-    clusters
-        .iter()
-        .enumerate()
-        .map(|(index, cluster)| {
-            let id = cluster
-                .get("id")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("cluster/{index}"));
-            let members = cluster
-                .get("members")
-                .or_else(|| cluster.get("items"))
-                .and_then(Value::as_array)
-                .ok_or_else(|| format!("{id} missing members array"))?
-                .iter()
-                .map(member_id)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(CloneCluster { id, members })
-        })
-        .collect()
-}
-
-fn member_id(value: &Value) -> Result<String, String> {
-    if let Some(text) = value.as_str() {
-        return Ok(text.to_owned());
-    }
-    value
-        .get("id")
-        .or_else(|| value.get("path"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| format!("cluster member must be a string or object with id/path: {value}"))
-}
-
-fn overlap_findings(doc: &IndexDoc, clusters: &[CloneCluster]) -> Vec<Finding> {
+fn overlap_findings(
+    doc: &IndexDoc,
+    sources: &SourceResolver,
+    clusters: &[CloneCluster],
+) -> Vec<Finding> {
+    let owners = OwnerIndex::from_doc(doc);
     let mut findings = Vec::new();
     for cluster in clusters {
-        let features = cluster_features(doc, cluster);
-        for (left_index, left) in features.iter().enumerate() {
-            for right in features.iter().skip(left_index + 1) {
+        let mut accepted_features = BTreeSet::<String>::new();
+        for member in &cluster.members {
+            if member.classification == SourceClassification::Regression {
+                findings.push(Finding::source_member(
+                    cluster,
+                    member,
+                    "source-regression",
+                    "owned source family still has a hard regression".to_owned(),
+                ));
+                continue;
+            }
+            match member_features(doc, &owners, sources, member) {
+                Ok(features) if features.is_empty() => {
+                    if should_allow_unmapped_keep(member) {
+                        continue;
+                    }
+                    findings.push(Finding::source_member(
+                        cluster,
+                        member,
+                        "unmapped-source-member",
+                        "member resolved to a subject with no owning or claimed feature".to_owned(),
+                    ));
+                }
+                Ok(features) => {
+                    if member.classification.requires_graph_relation() {
+                        accepted_features.extend(features);
+                    }
+                }
+                Err(err) => {
+                    if should_allow_unmapped_keep(member) {
+                        continue;
+                    }
+                    let reason = if err.contains("multiple") {
+                        "ambiguous-source-member"
+                    } else {
+                        "unmapped-source-member"
+                    };
+                    findings.push(Finding::source_member(cluster, member, reason, err));
+                }
+            }
+        }
+        for (left_index, left) in accepted_features.iter().enumerate() {
+            for right in accepted_features.iter().skip(left_index + 1) {
                 if !has_relating_edge(doc, left, right) {
-                    findings.push(Finding {
-                        cluster: cluster.id.clone(),
-                        left: left.clone(),
-                        right: right.clone(),
-                    });
+                    findings.push(Finding::missing_relation(
+                        cluster,
+                        left.clone(),
+                        right.clone(),
+                    ));
                 }
             }
         }
@@ -196,35 +331,127 @@ fn overlap_findings(doc: &IndexDoc, clusters: &[CloneCluster]) -> Vec<Finding> {
     findings
 }
 
-fn strict_error(findings: &[Finding]) -> String {
-    findings
-        .iter()
-        .map(|finding| {
-            format!(
-                "unreconciled clone cluster {}: {} <-> {} missing-relating-edge",
-                finding.cluster, finding.left, finding.right
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
+fn member_features(
+    doc: &IndexDoc,
+    owners: &OwnerIndex,
+    sources: &SourceResolver,
+    member: &OverlapMember,
+) -> Result<BTreeSet<String>, String> {
+    let subject = member_subject(doc, sources, member)?;
+    Ok(features_for_subject(doc, owners, &subject))
 }
 
-fn cluster_features(doc: &IndexDoc, cluster: &CloneCluster) -> Vec<String> {
-    let mut features = BTreeSet::new();
-    for member in &cluster.members {
-        for feature in &doc.features {
-            if feature.id.as_str() == member || feature.subject.as_str() == member {
-                features.insert(feature.id.to_string());
-            }
-            if feature.anchors.iter().any(|id| id.as_str() == member)
-                || feature.surfaces.iter().any(|id| id.as_str() == member)
-                || feature.specimens.iter().any(|id| id.as_str() == member)
-            {
-                features.insert(feature.id.to_string());
-            }
+fn member_subject(
+    doc: &IndexDoc,
+    sources: &SourceResolver,
+    member: &OverlapMember,
+) -> Result<SubjectId, String> {
+    let package = sources.package_for(&member.repo, &member.path)?;
+    resolve_merged_crate_subject(doc, &member.repo, &package)
+}
+
+fn resolve_merged_crate_subject(
+    doc: &IndexDoc,
+    repo: &str,
+    package: &str,
+) -> Result<SubjectId, String> {
+    let candidates = [
+        format!("crate/{package}"),
+        format!("local/{repo}/crate/{package}"),
+    ];
+    let matches = candidates
+        .iter()
+        .filter(|candidate| {
+            doc.subjects
+                .iter()
+                .any(|subject| subject.id.as_str() == candidate.as_str())
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [subject] => Ok(SubjectId::new((*subject).clone())),
+        [] => Err(format!(
+            "no merged crate subject for repo {repo} package {package}"
+        )),
+        subjects => Err(format!(
+            "multiple merged crate subjects for repo {repo} package {package}: {}",
+            subjects
+                .iter()
+                .map(|subject| subject.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnerIndex {
+    anchors: BTreeMap<String, String>,
+    surfaces: BTreeMap<String, String>,
+    specimens: BTreeMap<String, String>,
+}
+
+impl OwnerIndex {
+    fn from_doc(doc: &IndexDoc) -> Self {
+        Self {
+            anchors: doc
+                .anchors
+                .iter()
+                .map(|record| (record.id.to_string(), record.subject.to_string()))
+                .collect(),
+            surfaces: doc
+                .surfaces
+                .iter()
+                .map(|record| (record.id.to_string(), record.subject.to_string()))
+                .collect(),
+            specimens: doc
+                .specimens
+                .iter()
+                .map(|record| (record.id.to_string(), record.subject.to_string()))
+                .collect(),
         }
     }
-    features.into_iter().collect()
+}
+
+fn features_for_subject(
+    doc: &IndexDoc,
+    owners: &OwnerIndex,
+    subject: &SubjectId,
+) -> BTreeSet<String> {
+    doc.features
+        .iter()
+        .filter(|feature| feature_mentions_subject(feature, owners, subject.as_str()))
+        .map(|feature| feature.id.to_string())
+        .collect()
+}
+
+fn feature_mentions_subject(feature: &FeatureRecord, owners: &OwnerIndex, subject: &str) -> bool {
+    feature.subject.as_str() == subject
+        || feature.anchors.iter().any(|id| {
+            owners
+                .anchors
+                .get(id.as_str())
+                .is_some_and(|owner| owner == subject)
+        })
+        || feature.surfaces.iter().any(|id| {
+            owners
+                .surfaces
+                .get(id.as_str())
+                .is_some_and(|owner| owner == subject)
+        })
+        || feature.specimens.iter().any(|id| {
+            owners
+                .specimens
+                .get(id.as_str())
+                .is_some_and(|owner| owner == subject)
+        })
+}
+
+fn should_allow_unmapped_keep(member: &OverlapMember) -> bool {
+    matches!(
+        member.classification,
+        SourceClassification::Keep | SourceClassification::Delegated
+    ) && matches!(member.repo.as_str(), "sim-kernel" | "sim-private")
+        && !member.reason.as_deref().unwrap_or("").trim().is_empty()
 }
 
 fn has_relating_edge(doc: &IndexDoc, left: &str, right: &str) -> bool {
@@ -234,81 +461,34 @@ fn has_relating_edge(doc: &IndexDoc, left: &str, right: &str) -> bool {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use sim_index_core::{
-        CanonicalFeatureKey, FeatureId, FeatureRecord, IndexDoc, IndexEdge, SubjectId,
-        SubjectRecord,
-    };
-
-    use super::*;
-
-    #[test]
-    fn missing_feature_relation_is_reported() {
-        let doc = doc_with_features(false);
-        let clusters = vec![CloneCluster {
-            id: "cluster/helpers".to_owned(),
-            members: vec!["feature/one".to_owned(), "feature/two".to_owned()],
-        }];
-
-        let findings = overlap_findings(&doc, &clusters);
-
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].cluster, "cluster/helpers");
-    }
-
-    #[test]
-    fn existing_relation_satisfies_cluster() {
-        let doc = doc_with_features(true);
-        let clusters = vec![CloneCluster {
-            id: "cluster/helpers".to_owned(),
-            members: vec!["feature/one".to_owned(), "feature/two".to_owned()],
-        }];
-
-        assert!(overlap_findings(&doc, &clusters).is_empty());
-    }
-
-    #[test]
-    fn strict_error_names_unreconciled_cluster() {
-        let findings = vec![Finding {
-            cluster: "cluster/helpers".to_owned(),
-            left: "feature/one".to_owned(),
-            right: "feature/two".to_owned(),
-        }];
-
-        let err = strict_error(&findings);
-
-        assert!(err.contains("unreconciled clone cluster cluster/helpers"));
-        assert!(err.contains("feature/one <-> feature/two"));
-    }
-
-    fn doc_with_features(with_edge: bool) -> IndexDoc {
-        let mut doc = IndexDoc::public("test");
-        for id in ["crate/one", "crate/two"] {
-            doc.subjects.push(SubjectRecord {
-                id: SubjectId::new(id),
-                kind: "crate".to_owned(),
-                title: id.to_owned(),
-            });
-        }
-        for (feature, subject) in [("feature/one", "crate/one"), ("feature/two", "crate/two")] {
-            doc.features.push(FeatureRecord {
-                id: FeatureId::new(feature),
-                key: CanonicalFeatureKey::new(format!("{subject}/feature")),
-                subject: SubjectId::new(subject),
-                title: feature.to_owned(),
-                summary: "A feature.".to_owned(),
-                anchors: Vec::new(),
-                surfaces: Vec::new(),
-                specimens: Vec::new(),
-                grammar_contracts: Vec::new(),
-                doc_anchor: None,
-            });
-        }
-        if with_edge {
-            doc.edges
-                .push(IndexEdge::new("feature/one", "supports", "feature/two"));
-        }
-        doc
-    }
+fn strict_error(findings: &[&Finding]) -> String {
+    findings
+        .iter()
+        .map(
+            |finding| match (&finding.member, &finding.left, &finding.right) {
+                (Some(member), _, _) => format!(
+                    "unreconciled clone cluster {}: {}:{} {} {} ({})",
+                    finding.cluster,
+                    member.repo_path(),
+                    member.line,
+                    member.classification,
+                    finding.reason,
+                    finding.detail
+                ),
+                (_, Some(left), Some(right)) => format!(
+                    "unreconciled clone cluster {}: {} <-> {} {}",
+                    finding.cluster, left, right, finding.reason
+                ),
+                _ => format!(
+                    "unreconciled clone cluster {}: {}",
+                    finding.cluster, finding.reason
+                ),
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("; ")
 }
+
+#[cfg(test)]
+#[path = "index_overlap_tests.rs"]
+mod tests;

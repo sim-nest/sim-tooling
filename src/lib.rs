@@ -54,6 +54,7 @@ mod index_fixpoint;
 mod index_fragment;
 mod index_merge;
 mod index_overlap;
+mod index_overlap_report;
 mod index_render;
 mod index_render_features;
 mod index_render_frameworks;
