@@ -446,7 +446,7 @@ fn root_package_name(repo: &Path) -> String {
 fn should_descend(path: &Path) -> bool {
     !matches!(
         path.file_name().and_then(|name| name.to_str()),
-        Some(".git" | "target" | ".meta-workspace")
+        Some(".git" | "target" | ".meta-workspace" | "sim-tooling")
     )
 }
 
@@ -472,12 +472,19 @@ mod tests {
         let root = temp_root("sim-tooling-input-files");
         fs::create_dir_all(root.join("src/nested")).unwrap();
         fs::create_dir_all(root.join("crates/sim-fixture/src")).unwrap();
+        fs::create_dir_all(root.join("sim-tooling/src")).unwrap();
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
         fs::write(root.join("Cargo.lock"), "# local ignored lockfile\n").unwrap();
         fs::write(root.join("features.toml"), "schema = \"sim.features\"\n").unwrap();
         fs::write(root.join("src/lib.rs"), "").unwrap();
         fs::write(root.join("src/nested/tool.rs"), "").unwrap();
         fs::write(root.join("crates/sim-fixture/src/lib.rs"), "").unwrap();
+        fs::write(
+            root.join("sim-tooling/Cargo.toml"),
+            "[package]\nname = \"sim-tooling\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("sim-tooling/src/lib.rs"), "").unwrap();
 
         let paths = input_files(&root)
             .into_iter()
@@ -495,6 +502,8 @@ mod tests {
         assert!(paths.contains(&"src/nested/tool.rs".to_owned()));
         assert!(paths.contains(&"crates/sim-fixture/src/lib.rs".to_owned()));
         assert!(!paths.contains(&"Cargo.lock".to_owned()));
+        assert!(!paths.contains(&"sim-tooling/Cargo.toml".to_owned()));
+        assert!(!paths.contains(&"sim-tooling/src/lib.rs".to_owned()));
 
         fs::remove_dir_all(root).unwrap();
     }
