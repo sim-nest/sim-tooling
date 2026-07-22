@@ -73,10 +73,6 @@ impl SourceClassification {
             Self::Regression => "regression",
         }
     }
-
-    pub(crate) fn requires_graph_relation(self) -> bool {
-        matches!(self, Self::Keep | Self::Delegated)
-    }
 }
 
 pub(crate) fn read_overlap_report(

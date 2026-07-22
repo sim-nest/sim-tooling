@@ -6,8 +6,8 @@ use std::{
 
 use serde_json::json;
 use sim_index_core::{
-    AnchorId, CanonicalFeatureKey, DiscoveredAnchor, FeatureId, FeatureRecord, IndexDoc, IndexEdge,
-    SubjectId, SubjectRecord,
+    AnchorId, CanonicalFeatureKey, DiscoveredAnchor, FeatureId, FeatureRecord, IndexDoc, SubjectId,
+    SubjectRecord,
 };
 
 use crate::index_overlap_report::read_overlap_report;
@@ -76,7 +76,7 @@ fn strict_mode_requires_complete_cluster_report() {
 }
 
 #[test]
-fn source_members_resolve_through_repo_contracts_and_local_subjects() {
+fn classified_source_members_resolve_without_graph_findings() {
     let fixture = OverlapFixture::new("sim-tooling-overlap-source-members");
     let report_path = fixture.report(&json!({
         "schema": "sim.overlap-report/v1",
@@ -98,14 +98,10 @@ fn source_members_resolve_through_repo_contracts_and_local_subjects() {
 
     let findings = overlap_findings(&fixture.doc(false), &sources, &report.clusters);
 
-    assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].reason, "missing-relating-edge");
-    assert_eq!(findings[0].left.as_deref(), Some("feature/sim-one/shared"));
-    assert_eq!(findings[0].right.as_deref(), Some("feature/sim-two/shared"));
-
-    let reconciled = overlap_findings(&fixture.doc(true), &sources, &report.clusters);
-
-    assert!(reconciled.is_empty());
+    assert!(
+        findings.is_empty(),
+        "classified source rows are consumed after the fail-closed source report"
+    );
     fixture.cleanup();
 }
 
@@ -344,7 +340,7 @@ local_path = \"sim-two\"
         path
     }
 
-    fn doc(&self, with_edge: bool) -> IndexDoc {
+    fn doc(&self, _with_edge: bool) -> IndexDoc {
         let mut doc = IndexDoc::public("test");
         for repo in ["sim-one", "sim-two"] {
             let subject = format!("local/{repo}/crate/shared");
@@ -366,13 +362,6 @@ local_path = \"sim-two\"
                 grammar_contracts: Vec::new(),
                 doc_anchor: None,
             });
-        }
-        if with_edge {
-            doc.edges.push(IndexEdge::new(
-                "feature/sim-one/shared",
-                "supports",
-                "feature/sim-two/shared",
-            ));
         }
         doc
     }

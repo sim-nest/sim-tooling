@@ -1,4 +1,4 @@
-//! Advisory duplicate-implementation bridge over the merged SIM Index graph.
+//! Duplicate-implementation source report bridge over the merged SIM Index graph.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -46,8 +46,9 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         .map_err(|err| format!("serialize overlap findings: {err}"))?;
         println!("{text}");
     } else if findings.is_empty() {
+        let mode = if options.strict { "strict" } else { "advisory" };
         println!(
-            "index overlap: advisory ok ({} cluster(s), 0 missing feature relations)",
+            "index overlap: {mode} ok ({} cluster(s), 0 findings)",
             report.clusters.len()
         );
     } else {
@@ -173,23 +174,6 @@ impl Finding {
         }
     }
 
-    fn missing_relation(cluster: &CloneCluster, left: String, right: String) -> Self {
-        Self {
-            cluster: cluster.id.clone(),
-            member: None,
-            left: Some(left),
-            right: Some(right),
-            source_classification: Some("classified".to_owned()),
-            graph_relation: Some("missing-relating-edge".to_owned()),
-            reason: "missing-relating-edge".to_owned(),
-            detail: format!(
-                "classified members for {} should relate through {}",
-                cluster.owner, cluster.replacement
-            ),
-            strict: true,
-        }
-    }
-
     fn to_json(&self) -> Value {
         json!({
             "cluster": self.cluster,
@@ -280,7 +264,6 @@ fn overlap_findings(
     let owners = OwnerIndex::from_doc(doc);
     let mut findings = Vec::new();
     for cluster in clusters {
-        let mut accepted_features = BTreeSet::<String>::new();
         for member in &cluster.members {
             if member.classification == SourceClassification::Regression {
                 findings.push(Finding::source_member(
@@ -311,11 +294,7 @@ fn overlap_findings(
                         strict,
                     ));
                 }
-                Ok(features) => {
-                    if member.classification.requires_graph_relation() {
-                        accepted_features.extend(features);
-                    }
-                }
+                Ok(_) => {}
                 Err(err) => {
                     if should_allow_unmapped_keep(member) {
                         continue;
@@ -326,17 +305,6 @@ fn overlap_findings(
                         "unmapped-source-member"
                     };
                     findings.push(Finding::source_member(cluster, member, reason, err, true));
-                }
-            }
-        }
-        for (left_index, left) in accepted_features.iter().enumerate() {
-            for right in accepted_features.iter().skip(left_index + 1) {
-                if !has_relating_edge(doc, left, right) {
-                    findings.push(Finding::missing_relation(
-                        cluster,
-                        left.clone(),
-                        right.clone(),
-                    ));
                 }
             }
         }
@@ -465,13 +433,6 @@ fn should_allow_unmapped_keep(member: &OverlapMember) -> bool {
         SourceClassification::Keep | SourceClassification::Delegated
     ) && matches!(member.repo.as_str(), "sim-kernel" | "sim-private")
         && !member.reason.as_deref().unwrap_or("").trim().is_empty()
-}
-
-fn has_relating_edge(doc: &IndexDoc, left: &str, right: &str) -> bool {
-    doc.edges.iter().any(|edge| {
-        matches!(edge.rel.as_str(), "supports" | "presents" | "replaces")
-            && ((edge.from == left && edge.to == right) || (edge.from == right && edge.to == left))
-    })
 }
 
 fn strict_error(findings: &[&Finding]) -> String {

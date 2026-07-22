@@ -45,10 +45,10 @@ claims_specimens = [
 [[feature]]
 id = "feature/sim-index/core"
 title = "SIM Index core"
-summary = "Generate, query, route, and prove the SIM Index graph as a checked constellation surface."
+summary = "Generate, query, route, prove, and check duplicate implementation overlap in the SIM Index graph as a checked constellation surface."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row when checking whether a feature exists, tracing routes, or proving the generated index is current."
+guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, reviewing overlap, or proving the generated index is current."
 claims_anchors = [
   "anchor/cli/xtask",
 ]
@@ -70,9 +70,9 @@ steps = [
 
 [[route]]
 id = "route/find-whether-feature-exists"
-task = "Find whether a feature exists"
+task = "Find whether a feature exists or reuse existing code"
 audiences = ["user", "code", "framework"]
 steps = [
-  { feature = "feature/sim-index/core", why = "The SIM Index core row owns generated graph queries and strict fixpoint checks." },
+  { feature = "feature/sim-index/core", why = "The SIM Index core row owns generated graph queries, strict fixpoint checks, overlap checks, and duplicate implementation prevention." },
   { specimen = "spec-test/sim-tooling/src/index_fixpoint_tests", why = "The checked fixpoint test proves the index can index and validate itself." },
 ]
