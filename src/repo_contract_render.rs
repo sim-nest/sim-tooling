@@ -9,66 +9,79 @@ use crate::{
     repo_contract_cut::SplitCut,
 };
 
+pub(crate) struct ArtifactInputs<'a> {
+    pub(crate) packages: &'a [PackageContract],
+    pub(crate) cut: &'a SplitCut,
+    pub(crate) citizens: &'a [Value],
+    pub(crate) exemptions: &'a [Value],
+    pub(crate) recipes: &'a [Value],
+    pub(crate) cards: &'a [Value],
+    pub(crate) provenance: &'a Value,
+    pub(crate) index_fragment: &'a str,
+}
+
 pub(crate) fn artifacts(
-    packages: &[PackageContract],
-    cut: &SplitCut,
-    citizens: &[Value],
-    exemptions: &[Value],
-    recipes: &[Value],
-    cards: &[Value],
-    provenance: &Value,
+    input: ArtifactInputs<'_>,
 ) -> Result<BTreeMap<&'static str, String>, String> {
     let mut map = BTreeMap::new();
     map.insert(
         "repo-contract.json",
         pretty(json!({
             "generator": GENERATOR,
-            "package_count": packages.len(),
-            "group_count": cut.groups.len(),
-            "card_count": cards.len(),
-            "citizen_count": citizens.len(),
-            "non_citizen_exemption_count": exemptions.len(),
-            "recipe_book_count": recipes.len(),
-            "groups": cut.groups,
-            "group_order": cut.group_order,
-            "packages": packages.iter().map(package_json).collect::<Vec<_>>(),
-            "cards": cards,
-            "citizens": citizens,
-            "non_citizen_exemptions": exemptions,
-            "recipes": recipes,
-            "provenance": provenance,
+            "package_count": input.packages.len(),
+            "group_count": input.cut.groups.len(),
+            "card_count": input.cards.len(),
+            "citizen_count": input.citizens.len(),
+            "non_citizen_exemption_count": input.exemptions.len(),
+            "recipe_book_count": input.recipes.len(),
+            "groups": input.cut.groups,
+            "group_order": input.cut.group_order,
+            "packages": input.packages.iter().map(package_json).collect::<Vec<_>>(),
+            "cards": input.cards,
+            "citizens": input.citizens,
+            "non_citizen_exemptions": input.exemptions,
+            "recipes": input.recipes,
+            "provenance": input.provenance,
         }))?,
     );
     map.insert(
         "repo-contract.md",
-        repo_contract_markdown(packages, cut, citizens, exemptions, recipes, cards),
+        repo_contract_markdown(
+            input.packages,
+            input.cut,
+            input.citizens,
+            input.exemptions,
+            input.recipes,
+            input.cards,
+        ),
     );
-    map.insert("provenance.json", pretty(provenance.clone())?);
+    map.insert("provenance.json", pretty(input.provenance.clone())?);
     map.insert(
         "rustdoc-index.json",
         pretty(json!({
             "generator": GENERATOR,
-            "packages": packages.iter().map(rustdoc_json).collect::<Vec<_>>(),
+            "packages": input.packages.iter().map(rustdoc_json).collect::<Vec<_>>(),
         }))?,
     );
-    map.insert("rustdoc-index.md", rustdoc_markdown(packages));
+    map.insert("rustdoc-index.md", rustdoc_markdown(input.packages));
     map.insert(
         "card-index.json",
         pretty(json!({
             "generator": GENERATOR,
-            "card_count": cards.len(),
-            "cards": cards,
+            "card_count": input.cards.len(),
+            "cards": input.cards,
         }))?,
     );
-    map.insert("card-index.md", card_markdown(cards));
+    map.insert("card-index.md", card_markdown(input.cards));
     map.insert(
         "feature-map.json",
         pretty(json!({
             "generator": GENERATOR,
-            "packages": packages.iter().map(feature_json).collect::<Vec<_>>(),
+            "packages": input.packages.iter().map(feature_json).collect::<Vec<_>>(),
         }))?,
     );
-    map.insert("feature-map.md", feature_markdown(packages));
+    map.insert("feature-map.md", feature_markdown(input.packages));
+    map.insert("sim-index-fragment.sx", input.index_fragment.to_owned());
     Ok(map)
 }
 

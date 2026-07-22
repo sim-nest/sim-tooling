@@ -11,7 +11,7 @@ use crate::atelier::{
     tools::AtelierToolsReport,
 };
 
-use super::SCHEMA;
+use super::{AtelierBackend, SCHEMA};
 
 pub(super) fn shell_json(
     site: &AtelierSiteReport,
@@ -19,17 +19,20 @@ pub(super) fn shell_json(
     tools: &AtelierToolsReport,
     guard: &AtelierGuardReport,
     radar: Vec<Value>,
+    backend: AtelierBackend,
+    contract_native: Option<Value>,
 ) -> Value {
-    json!({
+    let contract_native_enabled = contract_native.is_some();
+    let mut shell = json!({
         "schema": SCHEMA,
-        "startup": startup_json(index),
+        "startup": startup_json(index, backend),
         "site": site.site.to_json(),
         "index": {
             "cache": index.cache_file.to_string_lossy(),
             "diagnostics": index.index["diagnostics"].clone(),
         },
         "navigation": navigation_json(&index.index, guard),
-        "panels": panel_json(),
+        "panels": panel_json(contract_native_enabled),
         "radar": radar,
         "firewall": {
             "rules": guard.rules.iter().map(rule_json).collect::<Vec<_>>(),
@@ -42,7 +45,14 @@ pub(super) fn shell_json(
         },
         "scenarios": eval::scenario_json(),
         "editor_policy": editor_policy_json(),
-    })
+    });
+    if let Some(contract_native) = contract_native {
+        shell
+            .as_object_mut()
+            .expect("shell JSON is an object")
+            .insert("contract_native".to_owned(), contract_native);
+    }
+    shell
 }
 
 pub(super) fn radar_json(panel: &str, report: &RadarReport) -> Value {
@@ -59,6 +69,10 @@ pub(super) fn radar_json(panel: &str, report: &RadarReport) -> Value {
                     "file": hint.path,
                     "line": hint.line,
                 },
+                "graph_id": hint.graph_id,
+                "graph_kind": hint.graph_kind,
+                "related_ids": hint.related_ids,
+                "panels": hint.panels,
                 "capabilities": hint.capabilities,
                 "preferred_codec": hint.preferred_codec,
             })
@@ -75,9 +89,9 @@ pub(super) fn pretty_json(value: &Value) -> Result<String, String> {
         .map_err(|err| format!("render atelier shell json: {err}"))
 }
 
-fn startup_json(index: &AtelierIndexReport) -> Value {
+fn startup_json(index: &AtelierIndexReport, backend: AtelierBackend) -> Value {
     let repos = index.index["repos"].as_array().cloned().unwrap_or_default();
-    json!({
+    let mut startup = json!({
         "cache": {
             "site": "current",
             "index": "current",
@@ -89,7 +103,14 @@ fn startup_json(index: &AtelierIndexReport) -> Value {
             &["missing", "missing-cargo-toml", "not-git"],
         ),
         "validation": repos.iter().filter_map(validation_json).collect::<Vec<_>>(),
-    })
+    });
+    if backend != AtelierBackend::SourceRadar {
+        startup
+            .as_object_mut()
+            .expect("startup JSON is an object")
+            .insert("backend".to_owned(), json!(backend.as_str()));
+    }
+    startup
 }
 
 fn navigation_json(index: &Value, guard: &AtelierGuardReport) -> Value {
@@ -103,6 +124,13 @@ fn navigation_json(index: &Value, guard: &AtelierGuardReport) -> Value {
         nav_section("capability", chunk_strings(&chunks, "capabilities")),
         nav_section("codec", chunk_strings(&chunks, "codecs")),
         nav_section("recipe", recipe_paths(&units)),
+        nav_section("feature", unit_graph_ids(&units, "feature")),
+        nav_section("package", unit_graph_ids(&units, "package")),
+        nav_section("surface", unit_graph_ids(&units, "surface")),
+        nav_section("language", unit_graph_ids(&units, "language")),
+        nav_section("grammar", unit_graph_ids(&units, "grammar")),
+        nav_section("specimen", unit_graph_ids(&units, "specimen")),
+        nav_section("route", unit_graph_ids(&units, "route")),
         nav_section("agent-role", agent_roles(&chunks)),
         nav_section(
             "guard-rule",
@@ -111,39 +139,82 @@ fn navigation_json(index: &Value, guard: &AtelierGuardReport) -> Value {
     ])
 }
 
-fn panel_json() -> Value {
-    json!([
+fn panel_json(contract_native: bool) -> Value {
+    let mut panels = vec![
         {
-            "id": "rust-source",
-            "title": "Rust source",
-            "source": "Rust intelligence bridge",
-            "editable": true,
+            json!({
+                "id": "rust-source",
+                "title": "Rust source",
+                "source": "Rust intelligence bridge",
+                "editable": true,
+            })
         },
         {
-            "id": "codec-prism",
-            "title": "Codec Prism",
-            "source": "sim-lib-view-codec",
-            "editable": true,
+            json!({
+                "id": "codec-prism",
+                "title": "Codec Prism",
+                "source": "sim-lib-view-codec",
+                "editable": true,
+            })
         },
         {
-            "id": "docs-recipes",
-            "title": "Docs and recipes",
-            "source": "README, rustdoc source, recipes/",
-            "editable": true,
+            json!({
+                "id": "docs-recipes",
+                "title": "Docs and recipes",
+                "source": "README, rustdoc source, recipes/",
+                "editable": true,
+            })
         },
         {
-            "id": "retrieval-radar",
-            "title": "Retrieval Radar",
-            "source": "sim-lib-rank hints",
+            json!({
+                "id": "retrieval-radar",
+                "title": "Retrieval Radar",
+                "source": "sim-lib-rank hints",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "already-exists",
+                "title": "Already exists",
+                "source": "SIM Index feature and package graph",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "reuse-route",
+                "title": "Reuse route",
+                "source": "SIM Index route graph",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "run-this-example",
+                "title": "Run this example",
+                "source": "checked SIM Index specimens",
+                "editable": false,
+            })
+        },
+        {
+            json!({
+                "id": "guideline-firewall",
+                "title": "Guideline Firewall",
+                "source": "GuidelineRule catalog",
+                "editable": false,
+            })
+        },
+    ];
+    if contract_native {
+        panels.push(json!({
+            "id": "contract-native",
+            "title": "Contract-native",
+            "source": "FORGE contract deck cache",
             "editable": false,
-        },
-        {
-            "id": "guideline-firewall",
-            "title": "Guideline Firewall",
-            "source": "GuidelineRule catalog",
-            "editable": false,
-        },
-    ])
+        }));
+    }
+    json!(panels)
 }
 
 fn editor_policy_json() -> Value {
@@ -251,6 +322,14 @@ fn recipe_paths(units: &[Value]) -> Vec<String> {
         .iter()
         .filter(|unit| unit["kind"].as_str() == Some("recipe"))
         .filter_map(|unit| unit["path"].as_str().map(str::to_owned))
+        .collect()
+}
+
+fn unit_graph_ids(units: &[Value], kind: &str) -> Vec<String> {
+    units
+        .iter()
+        .filter(|unit| unit["kind"].as_str() == Some(kind))
+        .filter_map(|unit| unit["graph_id"].as_str().map(str::to_owned))
         .collect()
 }
 

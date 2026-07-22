@@ -145,7 +145,7 @@ fn public_mirror_push_remote_is_rejected() {
     fixture.git_push_remote(
         "sim-tooling",
         "origin",
-        "http://puh:13000/sim-nest/sim-tooling.git",
+        "https://mirror.example.invalid/sim-nest/sim-tooling.git",
     );
     fixture.write_manifest(&[fixture.repo_row("sim-tooling", "code", true, "src", false)]);
 

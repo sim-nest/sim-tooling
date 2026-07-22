@@ -12,8 +12,9 @@ use sim_cookbook::fnv1a64_hex;
 
 use crate::{
     generator_options::find_repo_root,
+    index_fragment,
     repo_contract_cut::SplitCut,
-    repo_contract_render::artifacts,
+    repo_contract_render::{ArtifactInputs, artifacts},
     repo_contract_scan::{
         card_index, citizen_classes, input_files, non_citizen_exemptions, recipe_books,
     },
@@ -97,15 +98,17 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
     let recipes = recipe_books(repo, &package_groups);
     let cards = card_index(repo, &package_groups);
     let provenance = provenance(repo)?;
-    let files = artifacts(
-        &packages,
-        &cut,
-        &citizens,
-        &exemptions,
-        &recipes,
-        &cards,
-        &provenance,
-    )?;
+    let index_fragment = index_fragment::artifact(repo, &packages, &cards)?;
+    let files = artifacts(ArtifactInputs {
+        packages: &packages,
+        cut: &cut,
+        citizens: &citizens,
+        exemptions: &exemptions,
+        recipes: &recipes,
+        cards: &cards,
+        provenance: &provenance,
+        index_fragment: &index_fragment,
+    })?;
 
     Ok(ContractArtifacts {
         package_count: packages.len(),
@@ -246,7 +249,18 @@ fn provenance(repo: &Path) -> Result<Value, String> {
         .iter()
         .map(|path| rel_path(repo, path))
         .collect::<Result<Vec<_>, _>>()?;
+    let workspace_hash = stable_hash(repo, &inputs);
+    let source_commit = preserved_source_commit(&preserved, &workspace_hash)
+        .or_else(|| git_output(repo, &["rev-parse", "HEAD"]))
+        .ok_or_else(|| "git rev-parse HEAD did not return a commit".to_owned())?;
+    let source_remote = public_origin(repo)?;
     Ok(json!({
+        "schema": "sim.provenance.v1",
+        "repo": repo_name(repo),
+        "source_commit": source_commit,
+        "source_remote": source_remote,
+        "generated_by": "cargo run -p xtask -- simdoc",
+        "api_docs": "target/doc/",
         "generator": GENERATOR,
         "generation_timestamp": preserved
             .get("generation_timestamp")
@@ -254,12 +268,8 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             .map(str::to_owned)
             .or_else(|| git_output(repo, &["show", "-s", "--format=%cI", "HEAD"]))
             .unwrap_or_else(|| "unknown".to_owned()),
-        "git_commit": preserved
-            .get("git_commit")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| git_output(repo, &["rev-parse", "HEAD"])),
-        "workspace_hash": stable_hash(repo, &inputs),
+        "git_commit": source_commit,
+        "workspace_hash": workspace_hash,
         "workspace_hash_algorithm": "fnv1a64",
         "workspace_hash_input_count": input_paths.len(),
         "workspace_hash_inputs": input_paths,
@@ -275,6 +285,53 @@ fn provenance(repo: &Path) -> Result<Value, String> {
             "cargo run -p xtask -- crate-catalog --check --repo ."
         ],
     }))
+}
+
+fn preserved_source_commit(preserved: &Value, workspace_hash: &str) -> Option<String> {
+    let preserved_hash = preserved.get("workspace_hash").and_then(Value::as_str)?;
+    if preserved_hash != workspace_hash {
+        return None;
+    }
+    preserved
+        .get("source_commit")
+        .or_else(|| preserved.get("git_commit"))
+        .and_then(Value::as_str)
+        .filter(|commit| !commit.is_empty())
+        .map(str::to_owned)
+}
+
+fn repo_name(repo: &Path) -> String {
+    repo.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("REPO_NAME")
+        .to_owned()
+}
+
+fn public_origin(repo: &Path) -> Result<String, String> {
+    let origin = git_output(repo, &["config", "--get", "remote.origin.url"])
+        .ok_or_else(|| "git remote origin url is not configured".to_owned())?;
+    sanitize_origin_url(&origin)
+}
+
+fn sanitize_origin_url(origin: &str) -> Result<String, String> {
+    let ssh_github_prefix = concat!("git", "@", "github.com:");
+    let mut url = if let Some(rest) = origin.strip_prefix(ssh_github_prefix) {
+        format!("https://github.com/{rest}")
+    } else if let Some(rest) = origin.strip_prefix("http://github.com/") {
+        format!("https://github.com/{rest}")
+    } else {
+        origin.to_owned()
+    };
+    if let Some(rest) = url.strip_suffix(".git") {
+        url = rest.to_owned();
+    }
+    if url.starts_with("https://github.com/") && !url.contains('\\') {
+        Ok(url)
+    } else {
+        Err(format!(
+            "remote origin is not a public GitHub URL: {origin}"
+        ))
+    }
 }
 
 fn preserved_provenance(repo: &Path) -> Value {
@@ -520,62 +577,5 @@ fn stable_hash(repo: &Path, paths: &[PathBuf]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        env, fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use super::*;
-
-    #[test]
-    fn stable_hash_uses_repo_relative_paths() {
-        let left = temp_root("sim-tooling-hash-left");
-        let right = temp_root("sim-tooling-hash-right");
-        fs::create_dir_all(left.join("src")).unwrap();
-        fs::create_dir_all(right.join("src")).unwrap();
-        fs::write(left.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
-        fs::write(right.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
-
-        let left_hash = stable_hash(&left, &[left.join("src/lib.rs")]);
-        let right_hash = stable_hash(&right, &[right.join("src/lib.rs")]);
-
-        assert_eq!(left_hash, right_hash);
-
-        fs::remove_dir_all(left).unwrap();
-        fs::remove_dir_all(right).unwrap();
-    }
-
-    #[test]
-    fn simdoc_generated_contracts_list_root_package() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let artifacts = contract_artifacts(root).unwrap();
-
-        assert_eq!(artifacts.package_count, 1);
-
-        let feature_map = generated_json(&artifacts, "feature-map.json");
-        let rustdoc_index = generated_json(&artifacts, "rustdoc-index.json");
-        let repo_contract = generated_json(&artifacts, "repo-contract.json");
-
-        assert_eq!(feature_map["packages"][0]["package"], "xtask");
-        assert_eq!(rustdoc_index["packages"][0]["package"], "xtask");
-        assert_eq!(repo_contract["packages"][0]["name"], "xtask");
-        assert_eq!(repo_contract["packages"][0]["manifest"], "Cargo.toml");
-        assert_eq!(repo_contract["packages"][0]["root"], "");
-    }
-
-    fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {
-        serde_json::from_str(artifacts.files.get(name).unwrap()).unwrap()
-    }
-
-    fn temp_root(name: &str) -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
-}
+#[path = "repo_contract_tests.rs"]
+mod tests;

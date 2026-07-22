@@ -17,6 +17,9 @@ pub(super) struct SourceUnit {
     pub(super) path: String,
     pub(super) line: usize,
     pub(super) text: String,
+    pub(super) graph_id: Option<String>,
+    pub(super) related_ids: Vec<String>,
+    pub(super) panels: Vec<String>,
 }
 
 pub(super) fn collect_units(repo: &RepoEntry) -> Result<Vec<SourceUnit>, String> {
@@ -59,6 +62,9 @@ fn repo_manifest_unit(repo: &RepoEntry) -> SourceUnit {
         path: "repos.toml".to_owned(),
         line: 1,
         text,
+        graph_id: None,
+        related_ids: Vec::new(),
+        panels: Vec::new(),
     }
 }
 
@@ -142,6 +148,9 @@ fn push_file_unit(
         path: display,
         line: 1,
         text,
+        graph_id: None,
+        related_ids: Vec::new(),
+        panels: Vec::new(),
     });
     Ok(())
 }
@@ -170,6 +179,9 @@ fn push_rust_file_units(
             path: display.clone(),
             line: 1,
             text: module_docs.join("\n"),
+            graph_id: None,
+            related_ids: Vec::new(),
+            panels: Vec::new(),
         });
     }
 
@@ -197,6 +209,9 @@ fn push_rust_file_units(
             path: display.clone(),
             line,
             text: unit_text,
+            graph_id: None,
+            related_ids: Vec::new(),
+            panels: Vec::new(),
         });
     }
     Ok(())

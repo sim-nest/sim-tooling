@@ -139,6 +139,70 @@ fn radar_drops_stale_spans_and_sets_stale_flag() {
     assert_eq!(report.stale_chunk_ids, vec!["stale"]);
 }
 
+#[test]
+fn radar_returns_index_graph_rows_for_bridge_packet_guidance() {
+    let fixture = RadarFixture::new("graph");
+    fixture.repo_file("sim-alpha", "docs/index/index.sx", "graph\n");
+    fixture.write_index(vec![
+        graph_chunk(
+            "feature/sim-codecs/bridge-packet-codec",
+            "feature",
+            "Bridge packet codec grammar already exists and carries a runnable specimen.",
+            &["already-exists", "run-this-example"],
+            &["grammar/bridge-packet", "recipe/sim-codecs/bridge-packet"],
+        ),
+        graph_chunk(
+            "grammar/bridge-packet",
+            "grammar",
+            "Grammar for bridge packets with closed round-trip evidence.",
+            &["already-exists"],
+            &["feature/sim-codecs/bridge-packet-codec"],
+        ),
+        graph_chunk(
+            "recipe/sim-codecs/bridge-packet",
+            "specimen",
+            "Run this example for bridge packet grammar.",
+            &["run-this-example"],
+            &["feature/sim-codecs/bridge-packet-codec"],
+        ),
+        graph_chunk(
+            "route/add-model-facing-packet-workflow",
+            "route",
+            "Reuse route for bridge packet model workflows.",
+            &["reuse-route"],
+            &["feature/sim-codecs/bridge-packet-codec"],
+        ),
+    ]);
+
+    let report = fixture.radar(RadarQuery {
+        text: "grammar for bridge packets".to_owned(),
+        limit: 4,
+        ..RadarQuery::default()
+    });
+    let graph_ids = report
+        .hints
+        .iter()
+        .filter_map(|hint| hint.graph_id.as_deref())
+        .collect::<Vec<_>>();
+
+    assert!(graph_ids.contains(&"feature/sim-codecs/bridge-packet-codec"));
+    assert!(graph_ids.contains(&"grammar/bridge-packet"));
+    assert!(graph_ids.contains(&"recipe/sim-codecs/bridge-packet"));
+    assert!(graph_ids.contains(&"route/add-model-facing-packet-workflow"));
+    assert!(
+        report
+            .hints
+            .iter()
+            .any(|hint| hint.panels.contains(&"reuse-route".to_owned()))
+    );
+    assert!(
+        report
+            .hints
+            .iter()
+            .any(|hint| hint.panels.contains(&"run-this-example".to_owned()))
+    );
+}
+
 // Test fixture builder: many fields map 1:1 to chunk metadata; grouping them into
 // a struct would obscure the per-field test inputs.
 #[allow(clippy::too_many_arguments)]
@@ -170,6 +234,31 @@ fn chunk(
         "pin": "aaaa",
         "chunker": "sim-codec-doc/doc/chunk-recursive",
     })
+}
+
+fn graph_chunk(
+    graph_id: &str,
+    kind: &str,
+    text: &str,
+    panels: &[&str],
+    related_ids: &[&str],
+) -> serde_json::Value {
+    let mut value = chunk(
+        graph_id,
+        "sim-alpha",
+        None,
+        kind,
+        "docs/index/index.sx",
+        1,
+        text,
+        &[],
+        &[],
+    );
+    value["graph_id"] = json!(graph_id);
+    value["graph_kind"] = json!(kind);
+    value["panels"] = json!(panels);
+    value["related_ids"] = json!(related_ids);
+    value
 }
 
 #[allow(clippy::too_many_arguments)]

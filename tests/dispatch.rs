@@ -1,3 +1,5 @@
+use std::{fs, path::PathBuf};
+
 #[test]
 fn simdoc_extra_flags_reach_simdoc_parser() {
     let args = vec![
@@ -12,12 +14,46 @@ fn simdoc_extra_flags_reach_simdoc_parser() {
 
 #[test]
 fn generator_commands_accept_explicit_repo_root() {
+    let repo = source_checkout_root().to_string_lossy().into_owned();
     for args in [
-        vec!["xtask", "repo-contract", "--check", "--repo", "."],
-        vec!["xtask", "validation-matrix", "--check", "--repo", "."],
-        vec!["xtask", "crate-catalog", "--check", "--repo", "."],
+        vec![
+            "xtask".to_owned(),
+            "repo-contract".to_owned(),
+            "--check".to_owned(),
+            "--repo".to_owned(),
+            repo.clone(),
+        ],
+        vec![
+            "xtask".to_owned(),
+            "validation-matrix".to_owned(),
+            "--check".to_owned(),
+            "--repo".to_owned(),
+            repo.clone(),
+        ],
+        vec![
+            "xtask".to_owned(),
+            "crate-catalog".to_owned(),
+            "--check".to_owned(),
+            "--repo".to_owned(),
+            repo.clone(),
+        ],
     ] {
-        let args = args.into_iter().map(str::to_owned).collect();
-        xtask::run(args).expect("generator command should accept --repo .");
+        xtask::run(args).expect("generator command should accept explicit --repo");
     }
+}
+
+fn source_checkout_root() -> PathBuf {
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = manifest_root.join("src");
+    if let Ok(target) = fs::read_link(&src) {
+        let target = if target.is_absolute() {
+            target
+        } else {
+            manifest_root.join(target)
+        };
+        if let Some(root) = target.parent() {
+            return root.to_path_buf();
+        }
+    }
+    manifest_root
 }

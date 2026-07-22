@@ -13,6 +13,12 @@
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
 //!   crate catalog.
 //! - `citizenize` -- rewrite a crate or path toward the citizen conventions.
+//! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
+//! - `index seed` -- extract private migration seed rows from legacy markdown.
+//! - `index merge`, `index fixpoint`, `index render`, `index find`,
+//!   `index route`, `index overlap`, and `index snapshot` -- build, query, and
+//!   stage the public constellation index.
+//! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
 //! - `atelier-cassette`, `atelier-capsule`, and `atelier-index` -- check caches.
@@ -39,11 +45,31 @@ mod dispatch;
 mod docencoder;
 mod file_size_gate;
 mod generator_options;
+mod index_anchor_scan;
+mod index_author;
+mod index_check;
+mod index_doctor;
+mod index_find;
+mod index_fixpoint;
+mod index_fragment;
+mod index_merge;
+mod index_overlap;
+mod index_render;
+mod index_render_features;
+mod index_render_frameworks;
+mod index_route;
+mod index_rules;
+mod index_seed;
+mod index_snapshot;
+mod index_source;
+mod index_specimen_scan;
+mod index_surface_scan;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
 mod repo_contract_scan;
 mod simdoc;
+mod simdoc_index;
 mod simdoc_rustdoc;
 mod validation_matrix;
 

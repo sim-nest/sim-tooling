@@ -14,6 +14,7 @@ use super::{
 };
 
 mod cli;
+mod contract_native;
 mod render;
 
 const SCHEMA: &str = "sim.atelier.shell.v1";
@@ -27,6 +28,7 @@ pub(super) struct AtelierShellOptions {
     pub(super) control_root: PathBuf,
     pub(super) repos_manifest: Option<PathBuf>,
     pub(super) cache_path: Option<PathBuf>,
+    pub(super) backend: AtelierBackend,
     pub(super) check: bool,
 }
 
@@ -36,7 +38,32 @@ impl Default for AtelierShellOptions {
             control_root: PathBuf::from("."),
             repos_manifest: None,
             cache_path: None,
+            backend: AtelierBackend::SourceRadar,
             check: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum AtelierBackend {
+    #[default]
+    SourceRadar,
+    ContractNative,
+}
+
+impl AtelierBackend {
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "source-radar" => Some(Self::SourceRadar),
+            "contract-native" => Some(Self::ContractNative),
+            _ => None,
+        }
+    }
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceRadar => "source-radar",
+            Self::ContractNative => "contract-native",
         }
     }
 }
@@ -84,7 +111,19 @@ pub(super) fn atelier_shell(options: AtelierShellOptions) -> Result<AtelierShell
         ..AtelierGuardOptions::default()
     })?;
     let radar = radar_panels(&options.control_root, &index.cache_file)?;
-    let shell = render::shell_json(&site, &index, &tools, &guard, radar);
+    let contract_native = match options.backend {
+        AtelierBackend::SourceRadar => None,
+        AtelierBackend::ContractNative => Some(contract_native::report_json(&guard)),
+    };
+    let shell = render::shell_json(
+        &site,
+        &index,
+        &tools,
+        &guard,
+        radar,
+        options.backend,
+        contract_native,
+    );
     let content = render::pretty_json(&shell)?;
     let cache_file = options
         .cache_path
@@ -126,6 +165,30 @@ fn radar_panels(control_root: &Path, index_file: &Path) -> Result<Vec<Value>, St
             "ranked confidence hints",
             None,
             Some("capability"),
+            None,
+            None,
+        ),
+        (
+            "already-exists",
+            "already exists feature package surface language grammar",
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "reuse-route",
+            "reuse route",
+            Some("route"),
+            None,
+            None,
+            None,
+        ),
+        (
+            "run-this-example",
+            "run this example checked runnable specimen",
+            Some("specimen"),
+            None,
             None,
             None,
         ),

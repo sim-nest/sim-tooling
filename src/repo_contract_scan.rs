@@ -110,6 +110,7 @@ pub(crate) fn non_citizen_exemptions(repo: &Path) -> Vec<Value> {
                 "line": index + 1,
                 "crate": crate_for_path(&path, &root_package),
                 "kind": attr_value(&attr, "kind").unwrap_or_else(|| "unknown".to_owned()),
+                "descriptor": attr_value(&attr, "descriptor").unwrap_or_else(|| "unknown".to_owned()),
                 "reason": attr_value(&attr, "reason").unwrap_or_else(|| "unspecified".to_owned()),
             }));
         }
@@ -124,42 +125,60 @@ pub(crate) fn non_citizen_exemptions(repo: &Path) -> Vec<Value> {
 }
 
 pub(crate) fn recipe_books(repo: &Path, package_groups: &BTreeMap<String, String>) -> Vec<Value> {
+    let root_package = root_package_name(repo);
+    let mut sources = Vec::new();
+    let root_book = repo.join("recipes/book.toml");
+    if root_book.is_file() {
+        sources.push((root_book, repo.to_path_buf(), root_package.clone()));
+    }
+
     let mut paths = Vec::new();
     collect_named_files(&repo.join("crates"), "book.toml", &mut paths);
     paths.sort();
-    let mut out = Vec::new();
     for path in paths {
         if !path.to_string_lossy().contains("/recipes/") {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
         let Some(root) = path.parent().and_then(Path::parent) else {
             continue;
         };
-        let package = root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_owned();
-        let book = toml_string_value(&text, "book").unwrap_or_else(|| package.clone());
-        let title = toml_string_value(&text, "title").unwrap_or_else(|| book.clone());
-        let summary = toml_string_value(&text, "summary").unwrap_or_default();
-        let recipes = recipe_entries(repo, root, &book, &package);
-        out.push(json!({
-            "package": package,
-            "group": package_groups.get(root.file_name().and_then(|name| name.to_str()).unwrap_or_default()).cloned().unwrap_or_default(),
-            "book": book,
-            "title": title,
-            "summary": summary,
-            "book_toml": rel_path(repo, &path),
-            "recipe_count": recipes.len(),
-            "recipes": recipes,
-            "card_id": format!("cookbook/{title}", title = toml_string_value(&text, "book").unwrap_or_default()),
-        }));
+        let root = root.to_path_buf();
+        let package = crate_for_path(&path, &root_package);
+        sources.push((path, root, package));
     }
-    out
+
+    sources.sort_by(|left, right| left.0.cmp(&right.0));
+    sources
+        .into_iter()
+        .filter_map(|(path, root, package)| {
+            recipe_book_entry(repo, &path, &root, &package, package_groups)
+        })
+        .collect()
+}
+
+fn recipe_book_entry(
+    repo: &Path,
+    path: &Path,
+    root: &Path,
+    package: &str,
+    package_groups: &BTreeMap<String, String>,
+) -> Option<Value> {
+    let text = fs::read_to_string(path).ok()?;
+    let book = toml_string_value(&text, "book").unwrap_or_else(|| package.to_owned());
+    let title = toml_string_value(&text, "title").unwrap_or_else(|| book.clone());
+    let summary = toml_string_value(&text, "summary").unwrap_or_default();
+    let recipes = recipe_entries(repo, root, &book, package);
+    Some(json!({
+        "package": package,
+        "group": package_groups.get(package).cloned().unwrap_or_default(),
+        "book": book,
+        "title": title,
+        "summary": summary,
+        "book_toml": rel_path(repo, path),
+        "recipe_count": recipes.len(),
+        "recipes": recipes,
+        "card_id": format!("cookbook/{book}"),
+    }))
 }
 
 pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
@@ -167,6 +186,7 @@ pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
     for path in [
         "Cargo.toml",
         CONTRACT_CUT_PATH,
+        "features.toml",
         "docs/generated/citizens.md",
     ] {
         let path = repo.join(path);
@@ -440,6 +460,7 @@ fn rel_path(repo: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         env, fs,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -453,6 +474,7 @@ mod tests {
         fs::create_dir_all(root.join("crates/sim-fixture/src")).unwrap();
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
         fs::write(root.join("Cargo.lock"), "# local ignored lockfile\n").unwrap();
+        fs::write(root.join("features.toml"), "schema = \"sim.features\"\n").unwrap();
         fs::write(root.join("src/lib.rs"), "").unwrap();
         fs::write(root.join("src/nested/tool.rs"), "").unwrap();
         fs::write(root.join("crates/sim-fixture/src/lib.rs"), "").unwrap();
@@ -468,10 +490,51 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&"Cargo.toml".to_owned()));
+        assert!(paths.contains(&"features.toml".to_owned()));
         assert!(paths.contains(&"src/lib.rs".to_owned()));
         assert!(paths.contains(&"src/nested/tool.rs".to_owned()));
         assert!(paths.contains(&"crates/sim-fixture/src/lib.rs".to_owned()));
         assert!(!paths.contains(&"Cargo.lock".to_owned()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recipe_books_include_root_layout_book() {
+        let root = temp_root("sim-tooling-root-recipes");
+        let recipe_dir = root
+            .join("recipes")
+            .join("01-basics")
+            .join("exact-bool-shape");
+        fs::create_dir_all(&recipe_dir).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"sim-root\"\n").unwrap();
+        fs::write(
+            root.join("recipes/book.toml"),
+            "book = \"sim-root\"\ntitle = \"Root recipes\"\nsummary = \"Root cookbook.\"\n",
+        )
+        .unwrap();
+        fs::write(
+            recipe_dir.join("recipe.toml"),
+            "id = \"exact-bool-shape\"\ntitle = \"Exact boolean shape\"\ncodec = \"rust\"\n",
+        )
+        .unwrap();
+
+        let groups = BTreeMap::from([("sim-root".to_owned(), "workspace".to_owned())]);
+        let books = recipe_books(&root, &groups);
+
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0]["package"], "sim-root");
+        assert_eq!(books[0]["group"], "workspace");
+        assert_eq!(books[0]["book_toml"], "recipes/book.toml");
+        assert_eq!(books[0]["recipe_count"], 1);
+        assert_eq!(
+            books[0]["recipes"][0]["recipe_toml"],
+            "recipes/01-basics/exact-bool-shape/recipe.toml"
+        );
+        assert_eq!(
+            books[0]["recipes"][0]["card_id"],
+            "sim-root/01-basics/exact-bool-shape"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

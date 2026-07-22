@@ -121,7 +121,7 @@ pub struct Ready {
     pub name: String,
 }
 
-#[non_citizen(reason = "test handle", kind = "handle")]
+#[non_citizen(reason = "test handle", kind = "handle", descriptor = "test/SocketHandle")]
 pub struct SocketHandle {
     pub id: String,
 }

@@ -12,6 +12,7 @@ mod guard;
 mod guard_scan;
 mod index;
 mod index_doc;
+mod index_graph_units;
 mod index_manifest;
 mod index_units;
 mod io;
