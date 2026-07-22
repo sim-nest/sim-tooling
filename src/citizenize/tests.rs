@@ -30,7 +30,8 @@ pub struct PlainRecord {
     assert!(source.contains("#[derive(Citizen)]"));
     assert!(source.contains("#[citizen(symbol = \"widget/PlainRecord\", version = 1)]"));
     assert!(source.contains("// TODO: validate citizen example fixture for PlainRecord"));
-    assert!(source.contains("#[citizen(list)]\n    pub values: Vec<i64>,"));
+    assert!(source.contains("pub values: Vec<i64>,"));
+    assert!(!source.contains("#[citizen(list)]"));
     assert!(syn::parse_file(&source).is_ok());
 
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
