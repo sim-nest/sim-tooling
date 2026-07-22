@@ -3,8 +3,8 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
 use sim_index_core::{
-    AnchorId, FeatureDraft, FeatureId, IndexDoc, IndexEdge, RouteId, RouteRecord, RouteStep,
-    SpecimenId, SubjectId, SurfaceId, check_index_doc, draft::materialize_draft,
+    AnchorId, FeatureDraft, FeatureId, GrammarContract, IndexDoc, IndexEdge, RouteId, RouteRecord,
+    RouteStep, SpecimenId, SubjectId, SurfaceId, check_index_doc, draft::materialize_draft,
 };
 use toml::{Table, Value};
 
@@ -36,9 +36,11 @@ pub(crate) fn merge_authored(
 ) -> Result<IndexDoc, String> {
     let mut support_edges = Vec::new();
     for authored in overlay.features {
-        reject_literal_claims(&authored.draft)?;
-        resolve_claims(&authored.draft, &doc)?;
-        let feature_id = authored.draft.id.clone();
+        let mut draft = authored.draft;
+        reject_literal_claims(&draft)?;
+        resolve_claims(&draft, &doc)?;
+        preserve_covered_grammar_contracts(&mut draft, &doc);
+        let feature_id = draft.id.clone();
         for supported in authored.supports {
             support_edges.push(IndexEdge::relates(
                 feature_id.clone(),
@@ -46,13 +48,71 @@ pub(crate) fn merge_authored(
                 supported,
             ));
         }
-        doc.features.push(materialize_draft(authored.draft));
+        doc.features.push(materialize_draft(draft));
     }
     remove_covered_drafts(&mut doc);
     doc.routes.extend(overlay.routes);
     doc.edges.extend(support_edges);
     check_index_doc(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
     Ok(doc)
+}
+
+fn preserve_covered_grammar_contracts(draft: &mut FeatureDraft, doc: &IndexDoc) {
+    let mut seen = draft
+        .grammar_contracts
+        .iter()
+        .map(grammar_contract_key)
+        .collect::<BTreeSet<_>>();
+    for generated in &doc.drafts {
+        if !covers_generated_draft(draft, generated) {
+            continue;
+        }
+        for contract in &generated.grammar_contracts {
+            if seen.insert(grammar_contract_key(contract)) {
+                draft.grammar_contracts.push(contract.clone());
+            }
+        }
+    }
+}
+
+fn covers_generated_draft(authored: &FeatureDraft, generated: &FeatureDraft) -> bool {
+    overlaps(
+        authored.claims_anchors.iter().map(|id| id.as_str()),
+        generated.claims_anchors.iter().map(|id| id.as_str()),
+    ) || overlaps(
+        authored.claims_surfaces.iter().map(|id| id.as_str()),
+        generated.claims_surfaces.iter().map(|id| id.as_str()),
+    ) || overlaps(
+        authored.claims_specimens.iter().map(|id| id.as_str()),
+        generated.claims_specimens.iter().map(|id| id.as_str()),
+    )
+}
+
+fn overlaps<'a>(left: impl Iterator<Item = &'a str>, right: impl Iterator<Item = &'a str>) -> bool {
+    let left = left.collect::<BTreeSet<_>>();
+    right.into_iter().any(|item| left.contains(item))
+}
+
+fn grammar_contract_key(contract: &GrammarContract) -> String {
+    let decoder = contract
+        .decoder
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let encoder = contract
+        .encoder
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let surface = contract
+        .surface
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    format!(
+        "{}|{}|{}|{}|{}",
+        contract.id, decoder, encoder, surface, contract.round_trip
+    )
 }
 
 fn remove_covered_drafts(doc: &mut IndexDoc) {
@@ -502,6 +562,53 @@ claims_surfaces = ["cli/repl"]
 
         assert!(merged.drafts.is_empty());
         assert_eq!(merged.features.len(), 1);
+    }
+
+    #[test]
+    fn authored_feature_preserves_generated_grammar_contract() {
+        let overlay = parse_overlay(
+            r#"
+schema = "sim.features"
+
+[[feature]]
+id = "feature/sim-codecs/lisp-syntax"
+title = "Lisp syntax"
+summary = "Read and write Lisp syntax through the codec grammar."
+owner = "crate/sim-lib-repl"
+claims_surfaces = ["cli/repl"]
+"#,
+        )
+        .expect("parse overlay");
+        let mut doc = test_doc();
+        doc.drafts.push(FeatureDraft {
+            id: FeatureId::new("feature/syntax/lisp"),
+            subject: SubjectId::new("crate/sim-lib-repl"),
+            title: "Lisp syntax draft".to_owned(),
+            summary: "Generated grammar draft.".to_owned(),
+            claims_anchors: Vec::new(),
+            claims_surfaces: vec![SurfaceId::new("cli/repl")],
+            claims_specimens: Vec::new(),
+            literal_anchors: Vec::new(),
+            literal_surfaces: Vec::new(),
+            literal_specimens: Vec::new(),
+            grammar_contracts: vec![GrammarContract {
+                id: "grammar/syntax/lisp".to_owned(),
+                decoder: Some(AnchorId::new("anchor/cli/repl")),
+                encoder: Some(AnchorId::new("anchor/cli/repl")),
+                surface: Some(SurfaceId::new("cli/repl")),
+                round_trip: true,
+            }],
+            doc_anchor: None,
+        });
+
+        let merged = merge_authored(doc, overlay).expect("merge overlay");
+
+        assert!(merged.drafts.is_empty());
+        assert_eq!(merged.features[0].grammar_contracts.len(), 1);
+        assert_eq!(
+            merged.features[0].grammar_contracts[0].id,
+            "grammar/syntax/lisp"
+        );
     }
 
     fn test_doc() -> IndexDoc {

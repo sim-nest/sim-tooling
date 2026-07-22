@@ -3,18 +3,24 @@
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use sim_index_core::{IndexDoc, RouteStep};
+use sim_index_core::{FeatureRecord, IndexDoc, RouteRecord, RouteStep};
 
 use crate::index_render::load_doc;
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = FindOptions::parse(&args)?;
     let doc = load_doc(&options.input)?;
-    let matches = find_rows_filtered(&doc, &options.query, options.audience.as_deref());
+    let matches = find_rows_filtered(
+        &doc,
+        &options.query,
+        options.audience.as_deref(),
+        options.surface.as_deref(),
+    );
     if options.json {
         let text = serde_json::to_string_pretty(&json!({
             "query": options.query,
             "audience": options.audience,
+            "surface": options.surface,
             "match_count": matches.len(),
             "matches": matches,
         }))
@@ -34,6 +40,7 @@ struct FindOptions {
     query: String,
     json: bool,
     audience: Option<String>,
+    surface: Option<String>,
 }
 
 impl FindOptions {
@@ -47,6 +54,7 @@ impl FindOptions {
         let mut input = None;
         let mut json = false;
         let mut audience = None;
+        let mut surface = None;
         let mut query = Vec::new();
         let mut index = 3;
         while index < args.len() {
@@ -64,6 +72,14 @@ impl FindOptions {
                         return Err("--audience requires a non-empty value".to_owned());
                     }
                     audience = Some(value.to_owned());
+                }
+                "--surface" => {
+                    index += 1;
+                    let value = args.get(index).ok_or("--surface requires a value")?;
+                    if value.trim().is_empty() {
+                        return Err("--surface requires a non-empty value".to_owned());
+                    }
+                    surface = Some(value.to_owned());
                 }
                 "--query" => {
                     index += 1;
@@ -94,23 +110,30 @@ impl FindOptions {
             query,
             json,
             audience,
+            surface,
         })
     }
 }
 
 fn find_usage(program: &str) -> String {
-    format!("usage: {program} index find --input <index.sx> [--json] [--audience <name>] <query>")
+    format!(
+        "usage: {program} index find --input <index.sx> [--json] [--audience <name>] [--surface <kind-or-id>] <query>"
+    )
 }
 
 pub(crate) fn find_rows_filtered(
     doc: &IndexDoc,
     query: &str,
     audience: Option<&str>,
+    surface: Option<&str>,
 ) -> Vec<Value> {
     let needle = query.to_ascii_lowercase();
     let mut rows = Vec::new();
     if audience.is_none() {
         for subject in &doc.subjects {
+            if !subject_matches_surface(doc, subject.id.as_str(), surface) {
+                continue;
+            }
             if matches_query(
                 &needle,
                 &[subject.id.as_str(), &subject.kind, &subject.title],
@@ -123,16 +146,19 @@ pub(crate) fn find_rows_filtered(
                 }));
             }
         }
-        for surface in &doc.surfaces {
+        for record in &doc.surfaces {
+            if !surface_matches_filter(record.id.as_str(), &record.kind, surface) {
+                continue;
+            }
             if matches_query(
                 &needle,
-                &[surface.id.as_str(), surface.subject.as_str(), &surface.kind],
+                &[record.id.as_str(), record.subject.as_str(), &record.kind],
             ) {
                 rows.push(json!({
                     "kind": "surface",
-                    "id": surface.id.as_str(),
-                    "title": surface.id.as_str(),
-                    "summary": surface.kind,
+                    "id": record.id.as_str(),
+                    "title": record.id.as_str(),
+                    "summary": record.kind,
                 }));
             }
         }
@@ -141,6 +167,15 @@ pub(crate) fn find_rows_filtered(
         if !feature_matches_audience(doc, feature.id.as_str(), audience) {
             continue;
         }
+        if !feature_matches_surface(doc, feature, surface) {
+            continue;
+        }
+        let surface_text = feature
+            .surfaces
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
         if matches_query(
             &needle,
             &[
@@ -149,6 +184,7 @@ pub(crate) fn find_rows_filtered(
                 feature.subject.as_str(),
                 &feature.title,
                 &feature.summary,
+                &surface_text,
             ],
         ) {
             rows.push(json!({
@@ -156,11 +192,17 @@ pub(crate) fn find_rows_filtered(
                 "id": feature.id.as_str(),
                 "title": feature.title,
                 "summary": feature.summary,
+                "owner": feature.subject.as_str(),
+                "surfaces": feature.surfaces.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "specimens": feature.specimens.iter().map(ToString::to_string).collect::<Vec<_>>(),
             }));
         }
     }
     for specimen in &doc.specimens {
         if !specimen_matches_audience(doc, specimen.id.as_str(), audience) {
+            continue;
+        }
+        if !specimen_matches_surface(doc, specimen.id.as_str(), surface) {
             continue;
         }
         if matches_query(
@@ -171,7 +213,8 @@ pub(crate) fn find_rows_filtered(
                 &specimen.kind,
                 &specimen.path,
             ],
-        ) {
+        ) || specimen_linked_feature_matches_query(doc, specimen.id.as_str(), &needle, surface)
+        {
             rows.push(json!({
                 "kind": "specimen",
                 "id": specimen.id.as_str(),
@@ -182,6 +225,9 @@ pub(crate) fn find_rows_filtered(
     }
     for route in &doc.routes {
         if !route_matches_audience(route.audiences.iter().map(String::as_str), audience) {
+            continue;
+        }
+        if !route_matches_surface(doc, route, surface) {
             continue;
         }
         let route_text = route
@@ -212,6 +258,103 @@ pub(crate) fn find_rows_filtered(
             ))
     });
     rows
+}
+
+fn subject_matches_surface(doc: &IndexDoc, subject_id: &str, filter: Option<&str>) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+    if doc.surfaces.iter().any(|surface| {
+        surface.subject.as_str() == subject_id
+            && surface_matches_filter(surface.id.as_str(), &surface.kind, Some(filter))
+    }) {
+        return true;
+    }
+    let Some(grammar_tail) = subject_id.strip_prefix("grammar/") else {
+        return false;
+    };
+    doc.surfaces.iter().any(|surface| {
+        surface_matches_filter(surface.id.as_str(), &surface.kind, Some(filter))
+            && surface.id.as_str().rsplit('/').next() == Some(grammar_tail)
+    })
+}
+
+fn feature_matches_surface(doc: &IndexDoc, feature: &FeatureRecord, filter: Option<&str>) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+    feature.surfaces.iter().any(|id| {
+        doc.surfaces
+            .iter()
+            .find(|surface| surface.id.as_str() == id.as_str())
+            .map(|surface| surface_matches_filter(id.as_str(), &surface.kind, Some(filter)))
+            .unwrap_or_else(|| surface_id_matches_filter(id.as_str(), filter))
+    }) || feature.grammar_contracts.iter().any(|contract| {
+        contract
+            .surface
+            .as_ref()
+            .map(|id| surface_id_matches_filter(id.as_str(), filter))
+            .unwrap_or(false)
+    })
+}
+
+fn specimen_matches_surface(doc: &IndexDoc, specimen_id: &str, filter: Option<&str>) -> bool {
+    filter.is_none()
+        || doc.features.iter().any(|feature| {
+            feature
+                .specimens
+                .iter()
+                .any(|id| id.as_str() == specimen_id)
+                && feature_matches_surface(doc, feature, filter)
+        })
+}
+
+fn route_matches_surface(doc: &IndexDoc, route: &RouteRecord, filter: Option<&str>) -> bool {
+    filter.is_none()
+        || route.steps.iter().any(|step| match step {
+            RouteStep::Feature { id, .. } => doc.features.iter().any(|feature| {
+                feature.id.as_str() == id.as_str() && feature_matches_surface(doc, feature, filter)
+            }),
+            RouteStep::Specimen { id, .. } => specimen_matches_surface(doc, id.as_str(), filter),
+        })
+}
+
+fn specimen_linked_feature_matches_query(
+    doc: &IndexDoc,
+    specimen_id: &str,
+    needle: &str,
+    surface: Option<&str>,
+) -> bool {
+    doc.features.iter().any(|feature| {
+        feature
+            .specimens
+            .iter()
+            .any(|id| id.as_str() == specimen_id)
+            && feature_matches_surface(doc, feature, surface)
+            && matches_query(
+                needle,
+                &[
+                    feature.id.as_str(),
+                    feature.key.as_str(),
+                    feature.subject.as_str(),
+                    &feature.title,
+                    &feature.summary,
+                ],
+            )
+    })
+}
+
+fn surface_matches_filter(id: &str, kind: &str, filter: Option<&str>) -> bool {
+    filter
+        .map(|filter| kind == filter || surface_id_matches_filter(id, filter))
+        .unwrap_or(true)
+}
+
+fn surface_id_matches_filter(id: &str, filter: &str) -> bool {
+    id == filter
+        || id
+            .strip_prefix(filter)
+            .is_some_and(|tail| tail.starts_with('/'))
 }
 
 fn feature_matches_audience(doc: &IndexDoc, feature_id: &str, audience: Option<&str>) -> bool {
