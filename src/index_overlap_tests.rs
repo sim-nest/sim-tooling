@@ -140,6 +140,34 @@ fn mapped_candidate_members_remain_advisory() {
 }
 
 #[test]
+fn mapped_candidate_without_feature_is_advisory_finding() {
+    let fixture = OverlapFixture::new("sim-tooling-overlap-unindexed-candidate");
+    let report_path = fixture.report(&json!({
+        "schema": "sim.overlap-report/v1",
+        "complete": true,
+        "roots_scanned": 1,
+        "clusters": [{
+            "id": "sim-kernel/test-cx",
+            "owner": "crate/sim-kernel",
+            "replacement": "sim_kernel::testing::bare_cx",
+            "members": [candidate_member("sim-one", "crates/shared/src/lib.rs", 27)]
+        }]
+    }));
+    let options = strict_options(Some(report_path));
+    let report = read_overlap_report(options.clusters.as_ref(), options.strict).unwrap();
+    let sources = SourceResolver::from_manifest(&fixture.root, &fixture.repos_manifest).unwrap();
+    let mut doc = fixture.doc(false);
+    doc.features.clear();
+
+    let findings = overlap_findings(&doc, &sources, &report.clusters);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].reason, "unindexed-source-member");
+    assert!(!findings[0].strict);
+    fixture.cleanup();
+}
+
+#[test]
 fn unmapped_and_ambiguous_candidate_members_are_strict_findings() {
     let fixture = OverlapFixture::new("sim-tooling-overlap-unmapped");
     let report_path = fixture.report(&json!({

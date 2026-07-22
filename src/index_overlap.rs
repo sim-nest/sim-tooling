@@ -158,6 +158,7 @@ impl Finding {
         member: &OverlapMember,
         reason: &str,
         detail: String,
+        strict: bool,
     ) -> Self {
         Self {
             cluster: cluster.id.clone(),
@@ -168,7 +169,7 @@ impl Finding {
             graph_relation: None,
             reason: reason.to_owned(),
             detail,
-            strict: true,
+            strict,
         }
     }
 
@@ -206,7 +207,11 @@ impl Finding {
     }
 
     fn to_text(&self, strict: bool) -> String {
-        let mode = if strict { "strict" } else { "advisory" };
+        let mode = if strict && self.strict {
+            "strict"
+        } else {
+            "advisory"
+        };
         match (&self.member, &self.left, &self.right) {
             (Some(member), _, _) => format!(
                 "index overlap: {mode} {} {}:{} {} {}: {}",
@@ -283,6 +288,7 @@ fn overlap_findings(
                     member,
                     "source-regression",
                     "owned source family still has a hard regression".to_owned(),
+                    true,
                 ));
                 continue;
             }
@@ -291,11 +297,18 @@ fn overlap_findings(
                     if should_allow_unmapped_keep(member) {
                         continue;
                     }
+                    let strict = member.classification != SourceClassification::Candidate;
+                    let reason = if strict {
+                        "unmapped-source-member"
+                    } else {
+                        "unindexed-source-member"
+                    };
                     findings.push(Finding::source_member(
                         cluster,
                         member,
-                        "unmapped-source-member",
+                        reason,
                         "member resolved to a subject with no owning or claimed feature".to_owned(),
+                        strict,
                     ));
                 }
                 Ok(features) => {
@@ -312,7 +325,7 @@ fn overlap_findings(
                     } else {
                         "unmapped-source-member"
                     };
-                    findings.push(Finding::source_member(cluster, member, reason, err));
+                    findings.push(Finding::source_member(cluster, member, reason, err, true));
                 }
             }
         }

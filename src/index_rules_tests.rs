@@ -19,14 +19,27 @@ fn strict_selectors_parse_category_values() {
 }
 
 #[test]
-fn strict_selectors_accept_route_and_overlap_shorthand() {
+fn strict_selectors_accept_route_shorthand() {
     let mut strictness = Strictness::default();
     strictness
-        .apply_strict_selectors("route,overlap")
+        .apply_strict_selectors("route")
         .expect("parse selectors");
 
     assert!(strictness.requires_route("major_entrypoints"));
-    assert!(strictness.strict_overlap.contains("all"));
+}
+
+#[test]
+fn strict_selectors_reject_overlap() {
+    let mut strictness = Strictness::default();
+    let shorthand = strictness.apply_strict_selectors("overlap").unwrap_err();
+
+    assert!(shorthand.contains("must use category:value"));
+
+    let explicit = strictness
+        .apply_strict_selectors("overlap:default")
+        .unwrap_err();
+
+    assert!(explicit.contains("unsupported strict selector category"));
 }
 
 #[test]
@@ -49,6 +62,21 @@ view = "advisory"
     assert!(strictness.strict_audiences.contains("user"));
     assert!(strictness.strict_surfaces.contains("cli"));
     assert!(!strictness.strict_audiences.contains("code"));
+}
+
+#[test]
+fn enforcement_table_rejects_per_repo_overlap() {
+    let err = Strictness::parse_features_toml(
+        r#"
+schema = "sim.features"
+
+[enforcement.overlap]
+default = "advisory"
+"#,
+    )
+    .unwrap_err();
+
+    assert!(err.contains("enforcement.overlap is owned by the simctl index wrapper"));
 }
 
 #[test]

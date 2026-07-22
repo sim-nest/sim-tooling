@@ -49,7 +49,6 @@ pub(crate) struct Strictness {
     strict_surfaces: BTreeSet<String>,
     strict_specimens: BTreeSet<String>,
     strict_routes: BTreeSet<String>,
-    strict_overlap: BTreeSet<String>,
 }
 
 impl Strictness {
@@ -83,7 +82,11 @@ impl Strictness {
                 "surface" => strict_entries(table, &mut out.strict_surfaces)?,
                 "specimen" => strict_entries(table, &mut out.strict_specimens)?,
                 "route" => strict_entries(table, &mut out.strict_routes)?,
-                "overlap" => strict_entries(table, &mut out.strict_overlap)?,
+                "overlap" => {
+                    return Err(
+                        "enforcement.overlap is owned by the simctl index wrapper".to_owned()
+                    );
+                }
                 other => return Err(format!("unsupported enforcement category {other:?}")),
             }
         }
@@ -100,10 +103,6 @@ impl Strictness {
                 match selector {
                     "route" => {
                         self.strict_routes.insert("all".to_owned());
-                        continue;
-                    }
-                    "overlap" => {
-                        self.strict_overlap.insert("all".to_owned());
                         continue;
                     }
                     _ => {
@@ -129,9 +128,6 @@ impl Strictness {
                 }
                 "route" => {
                     self.strict_routes.insert(value.to_owned());
-                }
-                "overlap" => {
-                    self.strict_overlap.insert(value.to_owned());
                 }
                 other => return Err(format!("unsupported strict selector category {other:?}")),
             }
