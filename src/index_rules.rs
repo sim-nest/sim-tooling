@@ -132,6 +132,8 @@ impl Strictness {
             ClaimKind::Anchor => {
                 (self.strict_audiences.contains("user") && item.facet == "cli-verb")
                     || (self.strict_audiences.contains("framework") && item.facet == "runtime-lib")
+                    || (self.strict_audiences.contains("code")
+                        && matches!(item.facet.as_str(), "crate" | "runtime-lib" | "export"))
             }
             ClaimKind::Surface => {
                 self.strict_surfaces.contains(&item.facet)
@@ -475,9 +477,9 @@ view = "advisory"
     fn duplicate_claim_across_features_fails() {
         let mut doc = base_doc();
         doc.features
-            .push(feature("feature/demo/one", &["cli/demo"], &[]));
+            .push(feature("feature/demo/one", &["cli/demo"], &[], &[]));
         doc.features
-            .push(feature("feature/demo/two", &["cli/demo"], &[]));
+            .push(feature("feature/demo/two", &["cli/demo"], &[], &[]));
 
         let err = check_coverage(&doc, &Strictness::default()).unwrap_err();
 
@@ -493,6 +495,39 @@ view = "advisory"
         let err = check_coverage(&doc, &strictness).unwrap_err();
 
         assert!(err.contains("unindexed: surface cli/demo"));
+    }
+
+    #[test]
+    fn strict_code_requires_reusable_code_anchors() {
+        let mut doc = base_doc();
+        doc.anchors.push(DiscoveredAnchor {
+            id: AnchorId::new("anchor/crate/demo"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "crate".to_owned(),
+        });
+        doc.anchors.push(DiscoveredAnchor {
+            id: AnchorId::new("anchor/export/demo/runtime/install"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "export".to_owned(),
+        });
+        doc.anchors.push(DiscoveredAnchor {
+            id: AnchorId::new("anchor/rustdoc/demo/helper"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "rustdoc-item".to_owned(),
+        });
+        doc.features.push(feature(
+            "feature/demo/crate",
+            &[],
+            &[],
+            &["anchor/crate/demo"],
+        ));
+        let mut strictness = Strictness::default();
+        strictness.apply_strict_selectors("audience:code").unwrap();
+
+        let err = check_coverage(&doc, &strictness).unwrap_err();
+
+        assert!(err.contains("unindexed: anchor anchor/export/demo/runtime/install"));
+        assert!(!err.contains("anchor/rustdoc/demo/helper"));
     }
 
     #[test]
@@ -545,14 +580,14 @@ view = "advisory"
         }
     }
 
-    fn feature(id: &str, surfaces: &[&str], specimens: &[&str]) -> FeatureRecord {
+    fn feature(id: &str, surfaces: &[&str], specimens: &[&str], anchors: &[&str]) -> FeatureRecord {
         FeatureRecord {
             id: FeatureId::new(id),
             key: CanonicalFeatureKey::new(format!("crate/demo/{}", id.replace('/', "-"))),
             subject: SubjectId::new("crate/demo"),
             title: id.to_owned(),
             summary: "Demo feature.".to_owned(),
-            anchors: Vec::new(),
+            anchors: anchors.iter().map(|id| AnchorId::new(*id)).collect(),
             surfaces: surfaces.iter().map(|id| SurfaceId::new(*id)).collect(),
             specimens: specimens
                 .iter()

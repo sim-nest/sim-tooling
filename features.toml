@@ -3,7 +3,7 @@ schema = "sim.features"
 [enforcement.audience]
 user = "strict"
 framework = "strict"
-code = "advisory"
+code = "strict"
 
 [enforcement.surface]
 cli = "strict"
@@ -21,11 +21,18 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use this row when adding a generated doc lane or checking generated index artifacts."
 claims_anchors = [
+  "anchor/crate/xtask",
   "anchor/cli/xtask",
   "anchor/doc/generated/card-index",
   "anchor/doc/generated/feature-map",
   "anchor/doc/generated/repo-contract",
   "anchor/doc/generated/sim-index-fragment",
+  "anchor/export/xtask/browse/catalog",
+  "anchor/export/xtask/codec-lisp",
+  "anchor/export/xtask/codec/json",
+  "anchor/export/xtask/codec/lisp",
+  "anchor/export/xtask/doc/chunk-recursive",
+  "anchor/export/xtask/registry/catalog",
 ]
 claims_surfaces = [
   "docs/sim-tooling/generated",
