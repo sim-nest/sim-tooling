@@ -7,6 +7,8 @@ use sim_index_core::{
 
 use super::*;
 
+// conformance: generated docs render feature and specimen index pages.
+
 #[test]
 fn render_emits_named_pages_and_cards() {
     let doc = fixture_doc();

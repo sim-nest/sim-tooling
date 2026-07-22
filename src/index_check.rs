@@ -8,7 +8,10 @@ use std::{
 use sim_codec_index::{IndexCodec, IndexForm};
 use sim_index_core::{IndexDoc, check_index_doc};
 
-use crate::index_rules::{CoverageReport, Strictness, check_coverage};
+use crate::{
+    index_author,
+    index_rules::{CoverageReport, Strictness, check_coverage_with_feature_audiences},
+};
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = CheckOptions::parse(&args)?;
@@ -98,7 +101,8 @@ pub(crate) fn index_check(
     let doc = decode_fragment(repo, &source)?;
     check_index_doc(&doc).map_err(|err| format!("invalid index fragment: {err}"))?;
     assert_fragment_fresh(repo, &source)?;
-    let coverage = check_coverage(&doc, strictness)?;
+    let feature_audiences = index_author::feature_audiences(repo)?;
+    let coverage = check_coverage_with_feature_audiences(&doc, strictness, &feature_audiences)?;
     Ok(IndexCheckReport { coverage })
 }
 
@@ -145,11 +149,15 @@ fn print_report(report: &CoverageReport) {
     for gap in &report.route_gaps {
         println!("index-check: advisory route {} {}", gap.category, gap.id);
     }
+    for id in &report.feature_specimen_gaps {
+        println!("index-check: advisory feature-specimen {id}");
+    }
     println!(
-        "index-check: ok (covered {}, advisory_missing {}, route_gaps {})",
+        "index-check: ok (covered {}, advisory_missing {}, route_gaps {}, feature_specimen_gaps {})",
         report.covered,
         report.advisory_missing.len(),
-        report.route_gaps.len()
+        report.route_gaps.len(),
+        report.feature_specimen_gaps.len()
     );
 }
 

@@ -9,6 +9,11 @@ code = "strict"
 cli = "strict"
 docs = "advisory"
 
+[enforcement.specimen]
+user = "strict"
+framework = "strict"
+code = "advisory"
+
 [enforcement.route]
 major_entrypoints = "advisory"
 frameworks = "advisory"
@@ -37,6 +42,9 @@ claims_anchors = [
 claims_surfaces = [
   "docs/sim-tooling/generated",
   "cli/xtask",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/index_render_tests",
 ]
 
 [[route]]

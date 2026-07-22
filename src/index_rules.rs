@@ -148,6 +148,10 @@ impl Strictness {
     fn requires_route(&self, category: &str) -> bool {
         self.strict_routes.contains(category) || self.strict_routes.contains("all")
     }
+
+    fn specimen_strict(&self, audience: &str) -> bool {
+        self.strict_specimens.contains(audience) || self.strict_specimens.contains("all")
+    }
 }
 
 fn strict_entries(table: &Table, out: &mut BTreeSet<String>) -> Result<(), String> {
@@ -174,6 +178,7 @@ fn strict_entries(table: &Table, out: &mut BTreeSet<String>) -> Result<(), Strin
 pub(crate) struct CoverageReport {
     pub(crate) covered: usize,
     pub(crate) advisory_missing: Vec<ClaimableItem>,
+    pub(crate) feature_specimen_gaps: Vec<String>,
     pub(crate) route_gaps: Vec<RouteGap>,
 }
 
@@ -184,9 +189,10 @@ pub(crate) struct RouteGap {
     pub(crate) reason: String,
 }
 
-pub(crate) fn check_coverage(
+pub(crate) fn check_coverage_with_feature_audiences(
     doc: &IndexDoc,
     strictness: &Strictness,
+    feature_audiences: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<CoverageReport, String> {
     let counts = claim_counts(doc);
     for ((kind, id), owners) in &counts {
@@ -216,17 +222,65 @@ pub(crate) fn check_coverage(
             _ => unreachable!("duplicate claims are rejected before coverage"),
         }
     }
+    let mut feature_specimen_gaps = feature_specimen_gaps(doc, strictness, feature_audiences);
+    for id in &feature_specimen_gaps {
+        if feature_specimen_strict(strictness, feature_audiences, id) {
+            return Err(format!("feature without runnable specimen: {id}"));
+        }
+    }
     let route_gaps = route_coverage_gaps(doc);
     for gap in &route_gaps {
         if strictness.requires_route(&gap.category) {
             return Err(format!("unrouted {}: {}", gap.category, gap.id));
         }
     }
+    feature_specimen_gaps.sort();
 
     Ok(CoverageReport {
         covered,
         advisory_missing,
+        feature_specimen_gaps,
         route_gaps,
+    })
+}
+
+fn feature_specimen_gaps(
+    doc: &IndexDoc,
+    strictness: &Strictness,
+    feature_audiences: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<String> {
+    doc.features
+        .iter()
+        .filter(|feature| {
+            feature_specimen_strict(strictness, feature_audiences, feature.id.as_str())
+                || feature_audiences
+                    .get(feature.id.as_str())
+                    .is_some_and(|audiences| {
+                        audiences.contains("user") || audiences.contains("framework")
+                    })
+        })
+        .filter(|feature| !feature_has_runnable_specimen(doc, feature))
+        .map(|feature| feature.id.to_string())
+        .collect()
+}
+
+fn feature_specimen_strict(
+    strictness: &Strictness,
+    feature_audiences: &BTreeMap<String, BTreeSet<String>>,
+    feature_id: &str,
+) -> bool {
+    feature_audiences.get(feature_id).is_some_and(|audiences| {
+        audiences
+            .iter()
+            .any(|audience| strictness.specimen_strict(audience))
+    })
+}
+
+fn feature_has_runnable_specimen(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+    feature.specimens.iter().any(|id| {
+        doc.specimens
+            .iter()
+            .any(|record| record.id.as_str() == id.as_str() && record.runnable && record.checked)
     })
 }
 
@@ -432,169 +486,5 @@ fn push_claims<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use sim_index_core::{
-        AnchorId, DiscoveredAnchor, DiscoveredSpecimen, DiscoveredSurface, FeatureId,
-        FeatureRecord, SubjectRecord, SurfaceId, Visibility, key::CanonicalFeatureKey,
-    };
-
-    use super::*;
-
-    #[test]
-    fn strict_selectors_parse_category_values() {
-        let mut strictness = Strictness::default();
-        strictness
-            .apply_strict_selectors("audience:user,surface:cli")
-            .expect("parse selectors");
-
-        assert!(strictness.strict_audiences.contains("user"));
-        assert!(strictness.strict_surfaces.contains("cli"));
-    }
-
-    #[test]
-    fn enforcement_table_marks_only_strict_entries() {
-        let strictness = Strictness::parse_features_toml(
-            r#"
-schema = "sim.features"
-
-[enforcement.audience]
-user = "strict"
-code = "advisory"
-
-[enforcement.surface]
-cli = "strict"
-view = "advisory"
-"#,
-        )
-        .expect("parse enforcement");
-
-        assert!(strictness.strict_audiences.contains("user"));
-        assert!(strictness.strict_surfaces.contains("cli"));
-        assert!(!strictness.strict_audiences.contains("code"));
-    }
-
-    #[test]
-    fn duplicate_claim_across_features_fails() {
-        let mut doc = base_doc();
-        doc.features
-            .push(feature("feature/demo/one", &["cli/demo"], &[], &[]));
-        doc.features
-            .push(feature("feature/demo/two", &["cli/demo"], &[], &[]));
-
-        let err = check_coverage(&doc, &Strictness::default()).unwrap_err();
-
-        assert!(err.contains("duplicate claim: surface cli/demo"));
-    }
-
-    #[test]
-    fn missing_strict_cli_surface_fails() {
-        let doc = base_doc();
-        let mut strictness = Strictness::default();
-        strictness.apply_strict_selectors("surface:cli").unwrap();
-
-        let err = check_coverage(&doc, &strictness).unwrap_err();
-
-        assert!(err.contains("unindexed: surface cli/demo"));
-    }
-
-    #[test]
-    fn strict_code_requires_reusable_code_anchors() {
-        let mut doc = base_doc();
-        doc.anchors.push(DiscoveredAnchor {
-            id: AnchorId::new("anchor/crate/demo"),
-            subject: SubjectId::new("crate/demo"),
-            kind: "crate".to_owned(),
-        });
-        doc.anchors.push(DiscoveredAnchor {
-            id: AnchorId::new("anchor/export/demo/runtime/install"),
-            subject: SubjectId::new("crate/demo"),
-            kind: "export".to_owned(),
-        });
-        doc.anchors.push(DiscoveredAnchor {
-            id: AnchorId::new("anchor/rustdoc/demo/helper"),
-            subject: SubjectId::new("crate/demo"),
-            kind: "rustdoc-item".to_owned(),
-        });
-        doc.features.push(feature(
-            "feature/demo/crate",
-            &[],
-            &[],
-            &["anchor/crate/demo"],
-        ));
-        let mut strictness = Strictness::default();
-        strictness.apply_strict_selectors("audience:code").unwrap();
-
-        let err = check_coverage(&doc, &strictness).unwrap_err();
-
-        assert!(err.contains("unindexed: anchor anchor/export/demo/runtime/install"));
-        assert!(!err.contains("anchor/rustdoc/demo/helper"));
-    }
-
-    #[test]
-    fn advisory_specimen_gap_is_reported() {
-        let report = check_coverage(&base_doc(), &Strictness::default()).expect("coverage report");
-
-        assert!(
-            report
-                .advisory_missing
-                .iter()
-                .any(|item| { item.kind == ClaimKind::Specimen && item.id == "recipe/demo/hello" })
-        );
-    }
-
-    fn base_doc() -> IndexDoc {
-        IndexDoc {
-            schema: "sim.index".to_owned(),
-            generated_by: "test".to_owned(),
-            visibility: Visibility::Public,
-            subjects: vec![SubjectRecord {
-                id: SubjectId::new("crate/demo"),
-                kind: "crate".to_owned(),
-                title: "demo".to_owned(),
-            }],
-            anchors: vec![DiscoveredAnchor {
-                id: AnchorId::new("anchor/cli/demo"),
-                subject: SubjectId::new("crate/demo"),
-                kind: "cli-verb".to_owned(),
-            }],
-            surfaces: vec![DiscoveredSurface {
-                id: SurfaceId::new("cli/demo"),
-                subject: SubjectId::new("crate/demo"),
-                kind: "cli".to_owned(),
-            }],
-            specimens: vec![DiscoveredSpecimen {
-                id: sim_index_core::SpecimenId::new("recipe/demo/hello"),
-                subject: SubjectId::new("crate/demo"),
-                kind: "recipe".to_owned(),
-                path: "recipes/hello/recipe.toml".to_owned(),
-                language: None,
-                runnable: true,
-                checked: true,
-                checked_by: Some("xtask check-recipes".to_owned()),
-                doc_anchor: None,
-            }],
-            drafts: Vec::new(),
-            features: Vec::new(),
-            routes: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-
-    fn feature(id: &str, surfaces: &[&str], specimens: &[&str], anchors: &[&str]) -> FeatureRecord {
-        FeatureRecord {
-            id: FeatureId::new(id),
-            key: CanonicalFeatureKey::new(format!("crate/demo/{}", id.replace('/', "-"))),
-            subject: SubjectId::new("crate/demo"),
-            title: id.to_owned(),
-            summary: "Demo feature.".to_owned(),
-            anchors: anchors.iter().map(|id| AnchorId::new(*id)).collect(),
-            surfaces: surfaces.iter().map(|id| SurfaceId::new(*id)).collect(),
-            specimens: specimens
-                .iter()
-                .map(|id| sim_index_core::SpecimenId::new(*id))
-                .collect(),
-            grammar_contracts: Vec::new(),
-            doc_anchor: None,
-        }
-    }
-}
+#[path = "index_rules_tests.rs"]
+mod tests;

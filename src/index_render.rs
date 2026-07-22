@@ -417,15 +417,44 @@ fn specimens_page(doc: &IndexDoc) -> String {
         return out;
     }
     out.push_str(
-        "| Specimen | Subject | Kind | Path | Checked |\n| --- | --- | --- | --- | --- |\n",
+        "| Feature | Specimen | Subject | Kind | Path | Language | Harness | Runnable | Checked |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for specimen in &doc.specimens {
-        out.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` |\n",
-            specimen.id, specimen.subject, specimen.kind, specimen.path, specimen.checked
-        ));
+        let features = specimen_features(doc, specimen.id.as_str());
+        for feature in features {
+            out.push_str(&format!(
+                "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+                feature,
+                specimen.id,
+                specimen.subject,
+                specimen.kind,
+                specimen.path,
+                specimen.language.as_deref().unwrap_or(""),
+                specimen.checked_by.as_deref().unwrap_or(""),
+                specimen.runnable,
+                specimen.checked
+            ));
+        }
     }
     out
+}
+
+fn specimen_features(doc: &IndexDoc, specimen_id: &str) -> Vec<String> {
+    let mut features = doc
+        .features
+        .iter()
+        .filter(|feature| {
+            feature
+                .specimens
+                .iter()
+                .any(|id| id.as_str() == specimen_id)
+        })
+        .map(|feature| feature.id.to_string())
+        .collect::<Vec<_>>();
+    if features.is_empty() {
+        features.push(String::new());
+    }
+    features
 }
 
 fn routes_page(doc: &IndexDoc) -> String {
