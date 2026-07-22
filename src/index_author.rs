@@ -19,7 +19,13 @@ pub(crate) struct AuthoredOverlay {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AuthoredFeature {
     draft: FeatureDraft,
-    supports: Vec<FeatureId>,
+    relations: Vec<AuthoredRelation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AuthoredRelation {
+    rel: String,
+    to: FeatureId,
 }
 
 pub(crate) fn load_optional(repo: &Path) -> Result<Option<AuthoredOverlay>, String> {
@@ -34,25 +40,25 @@ pub(crate) fn merge_authored(
     mut doc: IndexDoc,
     overlay: AuthoredOverlay,
 ) -> Result<IndexDoc, String> {
-    let mut support_edges = Vec::new();
+    let mut relation_edges = Vec::new();
     for authored in overlay.features {
         let mut draft = authored.draft;
         reject_literal_claims(&draft)?;
         resolve_claims(&draft, &doc)?;
         preserve_covered_grammar_contracts(&mut draft, &doc);
         let feature_id = draft.id.clone();
-        for supported in authored.supports {
-            support_edges.push(IndexEdge::relates(
+        for relation in authored.relations {
+            relation_edges.push(IndexEdge::relates(
                 feature_id.clone(),
-                "supports",
-                supported,
+                relation.rel,
+                relation.to,
             ));
         }
         doc.features.push(materialize_draft(draft));
     }
     remove_covered_drafts(&mut doc);
     doc.routes.extend(overlay.routes);
-    doc.edges.extend(support_edges);
+    doc.edges.extend(relation_edges);
     check_index_doc(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
     Ok(doc)
 }
@@ -191,6 +197,8 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
             "claims_surfaces",
             "claims_specimens",
             "supports",
+            "presents",
+            "replaces",
             "doc_anchor",
         ],
         &label,
@@ -227,11 +235,23 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
             grammar_contracts: Vec::new(),
             doc_anchor: optional_string(table, "doc_anchor", &label)?.map(AnchorId::new),
         },
-        supports: optional_string_list(table, "supports", &label)?
-            .into_iter()
-            .map(FeatureId::new)
-            .collect(),
+        relations: relation_lists(table, &label)?,
     })
+}
+
+fn relation_lists(table: &Table, label: &str) -> Result<Vec<AuthoredRelation>, String> {
+    let mut relations = Vec::new();
+    for key in ["supports", "presents", "replaces"] {
+        relations.extend(
+            optional_string_list(table, key, label)?
+                .into_iter()
+                .map(|id| AuthoredRelation {
+                    rel: key.to_owned(),
+                    to: FeatureId::new(id),
+                }),
+        );
+    }
+    Ok(relations)
 }
 
 fn route_from_table(table: &Table, index: usize) -> Result<RouteRecord, String> {
@@ -562,6 +582,30 @@ claims_surfaces = ["cli/repl"]
 
         assert!(merged.drafts.is_empty());
         assert_eq!(merged.features.len(), 1);
+    }
+
+    #[test]
+    fn authored_feature_relations_cover_supported_labels() {
+        let overlay = parse_overlay(
+            r#"
+schema = "sim.features"
+feature = [
+  { id = "feature/demo/facade", title = "Facade", summary = "Presents a local implementation feature.", owner = "crate/sim-lib-repl", claims_surfaces = ["cli/repl"], presents = ["feature/demo/implementation"] },
+  { id = "feature/demo/implementation", title = "Implementation", summary = "Implements the local facade behavior.", owner = "crate/sim-lib-repl", claims_specimens = ["recipe/sim-run/01-basics/version"] },
+]
+"#,
+        )
+        .expect("parse overlay");
+
+        let merged = merge_authored(test_doc(), overlay).expect("merge overlay");
+        let edge = merged
+            .edges
+            .iter()
+            .find(|edge| edge.rel == "presents")
+            .expect("presents edge");
+
+        assert_eq!(edge.from, "feature/demo/facade");
+        assert_eq!(edge.to, "feature/demo/implementation");
     }
 
     #[test]
