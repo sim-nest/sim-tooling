@@ -18,7 +18,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | Feature | Subject | Specimens | Summary |
 | --- | --- | ---: | --- |
 | `feature/sim-tooling/generated-docs` | `crate/xtask` | 1 | Generate repo contracts, feature maps, card indexes, and index fragments through xtask. |
-| `feature/sim-index/core` | `crate/xtask` | 1 | Generate, query, route, and prove the SIM Index graph as a checked constellation surface. |
+| `feature/sim-index/core` | `crate/xtask` | 1 | Generate, query, route, prove, and check duplicate implementation overlap in the SIM Index graph as a checked constellation surface. |
 
 ## Surfaces
 

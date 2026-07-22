@@ -6,6 +6,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use serde_json::Value as JsonValue;
 use sim_index_core::DiscoveredSpecimen;
 use toml::Value;
 
@@ -100,6 +101,56 @@ impl SourceResolver {
             text,
         }))
     }
+
+    pub(crate) fn package_for(&self, repo: &str, path: &str) -> Result<String, String> {
+        if !self.enabled {
+            return Err(
+                "source resolver is disabled; pass --control-root and --repos-manifest".to_owned(),
+            );
+        }
+        let Some(root) = self.repos.get(repo) else {
+            return Err(format!("repo {repo} is absent from repos.toml"));
+        };
+        reject_unsafe_relative_path(path)?;
+        let packages = repo_contract_packages(root, repo)?;
+        let mut best = Vec::<&SourcePackage>::new();
+        let mut best_len = None::<usize>;
+        for package in &packages {
+            if !package_contains_path(&package.root, path) {
+                continue;
+            }
+            let len = package.root.len();
+            match best_len {
+                Some(current) if current > len => {}
+                Some(current) if current == len => best.push(package),
+                _ => {
+                    best.clear();
+                    best.push(package);
+                    best_len = Some(len);
+                }
+            }
+        }
+        match best.as_slice() {
+            [package] => Ok(package.name.clone()),
+            [] => Err(format!(
+                "repo {repo} has no generated package root for {path}"
+            )),
+            packages => Err(format!(
+                "repo {repo} maps {path} to multiple generated package roots: {}",
+                packages
+                    .iter()
+                    .map(|package| package.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SourcePackage {
+    name: String,
+    root: String,
 }
 
 fn resolve_path(control_root: &Path, value: &str) -> PathBuf {
@@ -109,6 +160,43 @@ fn resolve_path(control_root: &Path, value: &str) -> PathBuf {
     } else {
         control_root.join(path)
     }
+}
+
+fn repo_contract_packages(repo_root: &Path, repo: &str) -> Result<Vec<SourcePackage>, String> {
+    let path = repo_root.join("docs/generated/repo-contract.json");
+    let text =
+        fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let value: JsonValue =
+        serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
+    let packages = value
+        .get("packages")
+        .and_then(JsonValue::as_array)
+        .ok_or_else(|| format!("{} missing packages array", path.display()))?;
+    packages
+        .iter()
+        .enumerate()
+        .map(|(index, package)| {
+            let label = format!("{} packages[{index}]", path.display());
+            let name = package
+                .get("name")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| format!("{label} missing name"))?;
+            let root = package
+                .get("root")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| format!("{label} missing root"))?;
+            reject_unsafe_relative_path(root)
+                .map_err(|err| format!("{label} has unsafe root for repo {repo}: {err}"))?;
+            Ok(SourcePackage {
+                name: name.to_owned(),
+                root: root.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn package_contains_path(root: &str, path: &str) -> bool {
+    root.is_empty() || path == root || path.starts_with(&format!("{root}/"))
 }
 
 fn repo_from_specimen_id(id: &str) -> Option<&str> {
@@ -127,7 +215,7 @@ fn reject_unsafe_relative_path(path: &str) -> Result<(), String> {
             .components()
             .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
     {
-        return Err(format!("unsafe specimen path {}", path.display()));
+        return Err(format!("unsafe relative path {}", path.display()));
     }
     Ok(())
 }
@@ -208,6 +296,59 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn package_for_selects_longest_generated_contract_root() {
+        let root = temp_root("sim-tooling-package-for");
+        let repo = root.join("sim-demo");
+        fs::create_dir_all(repo.join("docs/generated")).unwrap();
+        fs::write(
+            repo.join("docs/generated/repo-contract.json"),
+            r#"{
+  "schema": "sim.repo-contract.v1",
+  "packages": [
+    { "name": "sim-demo", "root": "" },
+    { "name": "sim-demo-core", "root": "crates/sim-demo-core" },
+    { "name": "sim-demo-core-inner", "root": "crates/sim-demo-core/inner" }
+  ]
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("repos.toml"),
+            "[[repo]]\nname = \"sim-demo\"\ncontains_code = true\nlocal_path = \"sim-demo\"\n",
+        )
+        .unwrap();
+        let resolver = SourceResolver::from_manifest(&root, &root.join("repos.toml")).unwrap();
+
+        assert_eq!(
+            resolver
+                .package_for("sim-demo", "crates/sim-demo-core/inner/src/lib.rs")
+                .unwrap(),
+            "sim-demo-core-inner"
+        );
+        assert_eq!(
+            resolver.package_for("sim-demo", "README.md").unwrap(),
+            "sim-demo"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn package_for_rejects_unsafe_member_paths() {
+        let resolver = SourceResolver {
+            repos: BTreeMap::from([("sim-demo".to_owned(), PathBuf::from("."))]),
+            enabled: true,
+        };
+
+        let err = resolver
+            .package_for("sim-demo", "../sim-private/secret.rs")
+            .unwrap_err();
+
+        assert!(err.contains("unsafe relative path"));
     }
 
     fn temp_root(name: &str) -> PathBuf {
