@@ -27,7 +27,6 @@ audiences = ["code", "framework"]
 guidance = "Use this row when adding a generated doc lane or checking generated index artifacts."
 claims_anchors = [
   "anchor/crate/xtask",
-  "anchor/cli/xtask",
   "anchor/doc/generated/card-index",
   "anchor/doc/generated/feature-map",
   "anchor/doc/generated/repo-contract",
@@ -39,12 +38,26 @@ claims_anchors = [
   "anchor/export/xtask/doc/chunk-recursive",
   "anchor/export/xtask/registry/catalog",
 ]
-claims_surfaces = [
-  "docs/sim-tooling/generated",
-  "cli/xtask",
-]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_render_tests",
+]
+
+[[feature]]
+id = "feature/sim-index/core"
+title = "SIM Index core"
+summary = "Generate, query, route, and prove the SIM Index graph as a checked constellation surface."
+owner = "crate/xtask"
+audiences = ["user", "code", "framework"]
+guidance = "Use this row when checking whether a feature exists, tracing routes, or proving the generated index is current."
+claims_anchors = [
+  "anchor/cli/xtask",
+]
+claims_surfaces = [
+  "cli/xtask",
+  "docs/sim-tooling/generated",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/index_fixpoint_tests",
 ]
 
 [[route]]
@@ -53,4 +66,13 @@ task = "Add a generated doc"
 audiences = ["code", "framework"]
 steps = [
   { feature = "feature/sim-tooling/generated-docs", why = "The xtask documentation row owns generated doc lanes and index fragments." },
+]
+
+[[route]]
+id = "route/find-whether-feature-exists"
+task = "Find whether a feature exists"
+audiences = ["user", "code", "framework"]
+steps = [
+  { feature = "feature/sim-index/core", why = "The SIM Index core row owns generated graph queries and strict fixpoint checks." },
+  { specimen = "spec-test/sim-tooling/src/index_fixpoint_tests", why = "The checked fixpoint test proves the index can index and validate itself." },
 ]

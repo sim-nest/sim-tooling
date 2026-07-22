@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use sim_index_core::{
     CanonicalFeatureKey, DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord, IndexDoc,
-    SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
+    RouteId, RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
 };
 
 use super::*;
@@ -51,6 +51,26 @@ fn render_emits_named_pages_and_cards() {
             .contents
             .contains("\"kind\":\"surface\"")
     );
+}
+
+#[test]
+fn route_page_keeps_single_trailing_newline_without_coverage_gaps() {
+    let mut doc = fixture_doc();
+    doc.routes.push(RouteRecord {
+        id: RouteId::new("route/open-demo"),
+        title: "Open demo".to_owned(),
+        audiences: vec!["user".to_owned()],
+        steps: vec![RouteStep::Feature {
+            id: FeatureId::new("feature/demo"),
+            why: "The demo feature opens the route.".to_owned(),
+        }],
+        doc_anchor: None,
+    });
+
+    let page = routes_page(&doc);
+
+    assert!(page.ends_with('\n'));
+    assert!(!page.ends_with("\n\n"));
 }
 
 fn fixture_doc() -> IndexDoc {

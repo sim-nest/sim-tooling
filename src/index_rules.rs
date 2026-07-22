@@ -97,9 +97,21 @@ impl Strictness {
                 continue;
             }
             let Some((category, value)) = selector.split_once(':') else {
-                return Err(format!(
-                    "strict selector {selector:?} must use category:value"
-                ));
+                match selector {
+                    "route" => {
+                        self.strict_routes.insert("all".to_owned());
+                        continue;
+                    }
+                    "overlap" => {
+                        self.strict_overlap.insert("all".to_owned());
+                        continue;
+                    }
+                    _ => {
+                        return Err(format!(
+                            "strict selector {selector:?} must use category:value"
+                        ));
+                    }
+                }
             };
             let value = value.trim();
             if value.is_empty() {
@@ -145,8 +157,12 @@ impl Strictness {
         }
     }
 
-    fn requires_route(&self, category: &str) -> bool {
+    pub(crate) fn requires_route(&self, category: &str) -> bool {
         self.strict_routes.contains(category) || self.strict_routes.contains("all")
+    }
+
+    pub(crate) fn requires_any_route(&self) -> bool {
+        !self.strict_routes.is_empty()
     }
 
     fn specimen_strict(&self, audience: &str) -> bool {
@@ -276,7 +292,7 @@ fn feature_specimen_strict(
     })
 }
 
-fn feature_has_runnable_specimen(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+pub(crate) fn feature_has_runnable_specimen(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
     feature.specimens.iter().any(|id| {
         doc.specimens
             .iter()
@@ -320,10 +336,30 @@ pub(crate) fn route_coverage_gaps(doc: &IndexDoc) -> Vec<RouteGap> {
 }
 
 fn is_major_entrypoint(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+    if is_generated_doc_xtask_feature(doc, feature) {
+        return false;
+    }
     feature.surfaces.iter().any(|id| {
         doc.surfaces
             .iter()
             .any(|surface| surface.id.as_str() == id.as_str() && surface.kind == "cli")
+    })
+}
+
+fn is_generated_doc_xtask_feature(doc: &IndexDoc, feature: &FeatureRecord) -> bool {
+    if !feature.id.as_str().ends_with("/generated-docs") {
+        return false;
+    }
+    if !feature.subject.as_str().ends_with("crate/xtask") {
+        return false;
+    }
+    feature.surfaces.iter().any(|id| {
+        let id = id.as_str();
+        id.ends_with("cli/xtask")
+            && doc
+                .surfaces
+                .iter()
+                .any(|surface| surface.id.as_str() == id && surface.kind == "cli")
     })
 }
 

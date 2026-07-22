@@ -21,9 +21,13 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         .transpose()?
         .unwrap_or_default();
     let findings = overlap_findings(&doc, &clusters);
+    if options.strict && !findings.is_empty() {
+        return Err(strict_error(&findings));
+    }
     if options.json {
         let text = serde_json::to_string_pretty(&json!({
-            "advisory": true,
+            "advisory": !options.strict,
+            "strict": options.strict,
             "cluster_count": clusters.len(),
             "finding_count": findings.len(),
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
@@ -51,6 +55,7 @@ struct OverlapOptions {
     input: PathBuf,
     clusters: Option<PathBuf>,
     json: bool,
+    strict: bool,
 }
 
 impl OverlapOptions {
@@ -64,6 +69,7 @@ impl OverlapOptions {
         let mut input = None;
         let mut clusters = None;
         let mut json = false;
+        let mut strict = false;
         let mut index = 3;
         while index < args.len() {
             match args[index].as_str() {
@@ -80,6 +86,7 @@ impl OverlapOptions {
                     ));
                 }
                 "--json" => json = true,
+                "--strict" => strict = true,
                 "-h" | "--help" => return Err(usage(program)),
                 other => {
                     return Err(format!(
@@ -95,13 +102,14 @@ impl OverlapOptions {
                 .ok_or_else(|| format!("index overlap requires --input; {}", usage(program)))?,
             clusters,
             json,
+            strict,
         })
     }
 }
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} index overlap --input <index.sx> [--clusters <clusters.json>] [--json]"
+        "usage: {program} index overlap --input <index.sx> [--clusters <clusters.json>] [--json] [--strict]"
     )
 }
 
@@ -188,6 +196,19 @@ fn overlap_findings(doc: &IndexDoc, clusters: &[CloneCluster]) -> Vec<Finding> {
     findings
 }
 
+fn strict_error(findings: &[Finding]) -> String {
+    findings
+        .iter()
+        .map(|finding| {
+            format!(
+                "unreconciled clone cluster {}: {} <-> {} missing-relating-edge",
+                finding.cluster, finding.left, finding.right
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn cluster_features(doc: &IndexDoc, cluster: &CloneCluster) -> Vec<String> {
     let mut features = BTreeSet::new();
     for member in &cluster.members {
@@ -245,6 +266,20 @@ mod tests {
         }];
 
         assert!(overlap_findings(&doc, &clusters).is_empty());
+    }
+
+    #[test]
+    fn strict_error_names_unreconciled_cluster() {
+        let findings = vec![Finding {
+            cluster: "cluster/helpers".to_owned(),
+            left: "feature/one".to_owned(),
+            right: "feature/two".to_owned(),
+        }];
+
+        let err = strict_error(&findings);
+
+        assert!(err.contains("unreconciled clone cluster cluster/helpers"));
+        assert!(err.contains("feature/one <-> feature/two"));
     }
 
     fn doc_with_features(with_edge: bool) -> IndexDoc {

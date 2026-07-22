@@ -102,10 +102,10 @@
     "generated_by": "cargo run -p xtask -- simdoc",
     "generation_timestamp": "2026-07-12T22:49:46+02:00",
     "generator": "xtask repo-contract v1",
-    "git_commit": "d4639249dcf9eadb88bdc1a0c6a90cdfe7b9ef13",
+    "git_commit": "f0de3b55f7f8030dba7383db97cc44a1779df8fd",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "d4639249dcf9eadb88bdc1a0c6a90cdfe7b9ef13",
+    "source_commit": "f0de3b55f7f8030dba7383db97cc44a1779df8fd",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -118,9 +118,9 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "76b1ee7064871123",
+    "workspace_hash": "c6f946b17544a112",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 88,
+    "workspace_hash_input_count": 90,
     "workspace_hash_inputs": [
       "Cargo.toml",
       "features.toml",
@@ -183,6 +183,8 @@
       "src/index_doctor.rs",
       "src/index_find.rs",
       "src/index_find_tests.rs",
+      "src/index_fixpoint.rs",
+      "src/index_fixpoint_tests.rs",
       "src/index_fragment.rs",
       "src/index_merge.rs",
       "src/index_merge_tests.rs",

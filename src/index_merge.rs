@@ -158,7 +158,7 @@ fn merge_fragments(fragments: &[Fragment]) -> Result<IndexDoc, String> {
     Ok(merged)
 }
 
-fn encode_sx(doc: &IndexDoc) -> Result<String, String> {
+pub(crate) fn encode_sx(doc: &IndexDoc) -> Result<String, String> {
     IndexCodec
         .encode(doc, EncodePosition::Data, IndexForm::Sx)
         .map_err(|err| format!("encode index.sx: {err}"))

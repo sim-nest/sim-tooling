@@ -15,8 +15,9 @@
 //! - `citizenize` -- rewrite a crate or path toward the citizen conventions.
 //! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
 //! - `index seed` -- extract private migration seed rows from legacy markdown.
-//! - `index merge`, `index render`, `index find`, `index route`, `index overlap`, and
-//!   `index snapshot` -- build, query, and stage the public constellation index.
+//! - `index merge`, `index fixpoint`, `index render`, `index find`,
+//!   `index route`, `index overlap`, and `index snapshot` -- build, query, and
+//!   stage the public constellation index.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -49,6 +50,7 @@ mod index_author;
 mod index_check;
 mod index_doctor;
 mod index_find;
+mod index_fixpoint;
 mod index_fragment;
 mod index_merge;
 mod index_overlap;

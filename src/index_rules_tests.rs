@@ -19,6 +19,17 @@ fn strict_selectors_parse_category_values() {
 }
 
 #[test]
+fn strict_selectors_accept_route_and_overlap_shorthand() {
+    let mut strictness = Strictness::default();
+    strictness
+        .apply_strict_selectors("route,overlap")
+        .expect("parse selectors");
+
+    assert!(strictness.requires_route("major_entrypoints"));
+    assert!(strictness.strict_overlap.contains("all"));
+}
+
+#[test]
 fn enforcement_table_marks_only_strict_entries() {
     let strictness = Strictness::parse_features_toml(
         r#"
@@ -156,6 +167,48 @@ fn strict_framework_feature_accepts_checked_runnable_specimen() {
 
     check_coverage_with_feature_audiences(&doc, &strictness, &audiences)
         .expect("runnable specimen satisfies strict framework coverage");
+}
+
+#[test]
+fn generated_doc_xtask_surface_is_not_a_major_entrypoint() {
+    let mut doc = base_doc();
+    doc.subjects.push(SubjectRecord {
+        id: SubjectId::new("crate/xtask"),
+        kind: "crate".to_owned(),
+        title: "xtask".to_owned(),
+    });
+    doc.surfaces.push(DiscoveredSurface {
+        id: SurfaceId::new("cli/xtask"),
+        subject: SubjectId::new("crate/xtask"),
+        kind: "cli".to_owned(),
+    });
+    doc.features.push(FeatureRecord {
+        id: FeatureId::new("feature/demo/generated-docs"),
+        key: CanonicalFeatureKey::new("crate/xtask/generated-docs"),
+        subject: SubjectId::new("crate/xtask"),
+        title: "Generated docs".to_owned(),
+        summary: "Generate repository documentation.".to_owned(),
+        anchors: Vec::new(),
+        surfaces: vec![SurfaceId::new("cli/xtask")],
+        specimens: Vec::new(),
+        grammar_contracts: Vec::new(),
+        doc_anchor: None,
+    });
+
+    assert!(route_coverage_gaps(&doc).is_empty());
+}
+
+#[test]
+fn product_cli_surface_without_route_is_a_major_entrypoint_gap() {
+    let mut doc = base_doc();
+    doc.features
+        .push(feature("feature/demo/command", &["cli/demo"], &[], &[]));
+
+    let gaps = route_coverage_gaps(&doc);
+
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0].category, "major_entrypoints");
+    assert_eq!(gaps[0].id, "feature/demo/command");
 }
 
 fn base_doc() -> IndexDoc {

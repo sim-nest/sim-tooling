@@ -497,7 +497,7 @@ fn routes_page(doc: &IndexDoc) -> String {
             ));
         }
     }
-    out
+    trim_trailing_blank_lines(out)
 }
 
 fn push_route_table(out: &mut String, routes: Vec<&RouteRecord>) {
@@ -523,6 +523,13 @@ fn push_route_table(out: &mut String, routes: Vec<&RouteRecord>) {
 
 fn page(title: &str) -> String {
     format!("# {title}\n\n{GENERATED}\n\n")
+}
+
+fn trim_trailing_blank_lines(mut out: String) -> String {
+    while out.ends_with("\n\n") {
+        out.pop();
+    }
+    out
 }
 
 fn package_subjects(doc: &IndexDoc) -> impl Iterator<Item = &SubjectRecord> {
