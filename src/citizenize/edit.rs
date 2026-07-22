@@ -28,12 +28,6 @@ pub(super) fn edit_file(text: &str, domain: &str, candidates: &[Candidate]) -> S
                 candidate.name
             ),
         ]);
-        for line in &candidate.field_list_lines {
-            before
-                .entry(*line)
-                .or_default()
-                .push("#[citizen(list)]".to_owned());
-        }
     }
 
     let mut out = String::new();

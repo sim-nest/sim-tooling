@@ -99,16 +99,6 @@ pub(super) fn derives_citizen(attrs: &[Attribute]) -> bool {
     })
 }
 
-pub(super) fn is_vec_type(ty: &Type) -> bool {
-    let Type::Path(path) = ty else {
-        return false;
-    };
-    path.path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "Vec")
-}
-
 pub(super) fn impl_self_type_name(ty: &Type) -> Option<String> {
     let Type::Path(path) = ty else {
         return None;

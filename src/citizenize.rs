@@ -46,7 +46,6 @@ struct Candidate {
     name: String,
     insert_line: usize,
     has_derive: bool,
-    field_list_lines: Vec<usize>,
 }
 
 /// Citizenizes the crate named or located by `target`, resolved within the
@@ -179,17 +178,9 @@ fn candidates_in_file(parsed: &syn::File, skip_by_impl: &BTreeSet<String>) -> Ve
             if skip_by_impl.contains(&name) {
                 return None;
             }
-            let Fields::Named(fields) = &item.fields else {
+            let Fields::Named(_) = &item.fields else {
                 return None;
             };
-            let field_list_lines = fields
-                .named
-                .iter()
-                .filter(|field| {
-                    !parser::has_attr(&field.attrs, "citizen") && parser::is_vec_type(&field.ty)
-                })
-                .filter_map(|field| field.ident.as_ref().map(|ident| ident.span().start().line))
-                .collect::<Vec<_>>();
             let insert_line = item
                 .attrs
                 .first()
@@ -199,7 +190,6 @@ fn candidates_in_file(parsed: &syn::File, skip_by_impl: &BTreeSet<String>) -> Ve
                 name,
                 insert_line,
                 has_derive: parser::has_attr(&item.attrs, "derive"),
-                field_list_lines,
             })
         })
         .collect()
