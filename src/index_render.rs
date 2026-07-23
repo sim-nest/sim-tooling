@@ -15,6 +15,7 @@ use sim_index_core::{
 use sim_kernel::EncodePosition;
 
 use crate::{
+    generated_artifact::{ArtifactSet, GeneratedArtifact},
     index_render_features::{feature_files, feature_index_page, feature_page_path},
     index_render_frameworks::frameworks_page,
     index_rules::route_coverage_gaps,
@@ -39,7 +40,10 @@ pub(crate) fn run_render(args: Vec<String>) -> Result<(), String> {
             "index render: {} page(s), {} card row(s)",
             files
                 .iter()
-                .filter(|file| file.name.ends_with(".md"))
+                .filter(|file| file
+                    .path
+                    .extension()
+                    .is_some_and(|extension| extension == "md"))
                 .count(),
             card_count(&doc)
         );
@@ -141,66 +145,58 @@ pub(crate) fn load_doc(path: &Path) -> Result<IndexDoc, String> {
     Ok(doc)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct GeneratedFile {
-    name: String,
-    contents: String,
-}
-
 #[cfg(test)]
-fn expected_files(doc: &IndexDoc) -> Result<Vec<GeneratedFile>, String> {
+fn expected_files(doc: &IndexDoc) -> Result<ArtifactSet, String> {
     expected_files_with_sources(doc, &SourceResolver::empty())
 }
 
 fn expected_files_with_sources(
     doc: &IndexDoc,
     sources: &SourceResolver,
-) -> Result<Vec<GeneratedFile>, String> {
+) -> Result<ArtifactSet, String> {
     let json = IndexCodec
         .encode(doc, EncodePosition::Data, IndexForm::Json)
         .map_err(|err| format!("encode index.json: {err}"))?;
-    let mut files = vec![
-        file("index.json", with_newline(json)),
-        file("index.cards.jsonl", cards_jsonl(doc)?),
-        file("overview.md", overview_page(doc)),
-        file("features.md", feature_index_page(doc)),
-        file("user.md", user_page(doc)),
-        file("code.md", code_page(doc)),
-        file("frameworks.md", frameworks_page(doc)),
-        file("surfaces.md", surfaces_page(doc)),
-        file("languages.md", languages_page(doc)),
-        file("packages.md", packages_page(doc)),
-        file("specimens.md", specimens_page(doc)),
-        file("routes.md", routes_page(doc)),
+    let mut artifacts = vec![
+        file("index.json", with_newline(json))?,
+        file("index.cards.jsonl", cards_jsonl(doc)?)?,
+        file("overview.md", overview_page(doc))?,
+        file("features.md", feature_index_page(doc))?,
+        file("user.md", user_page(doc))?,
+        file("code.md", code_page(doc))?,
+        file("frameworks.md", frameworks_page(doc))?,
+        file("surfaces.md", surfaces_page(doc))?,
+        file("languages.md", languages_page(doc))?,
+        file("packages.md", packages_page(doc))?,
+        file("specimens.md", specimens_page(doc))?,
+        file("routes.md", routes_page(doc))?,
     ];
-    files.extend(
+    artifacts.extend(
         feature_files(doc, sources)?
             .into_iter()
-            .map(|(name, contents)| file(name, contents)),
+            .map(|(name, contents)| file(name, contents))
+            .collect::<Result<Vec<_>, _>>()?,
     );
-    Ok(files)
+    ArtifactSet::new(artifacts)
 }
 
-fn file(name: impl Into<String>, contents: String) -> GeneratedFile {
-    GeneratedFile {
-        name: name.into(),
-        contents,
-    }
+fn file(path: impl Into<PathBuf>, contents: String) -> Result<GeneratedArtifact, String> {
+    GeneratedArtifact::new(path, contents.into_bytes())
 }
 
-fn write_or_check_files(out: &Path, files: &[GeneratedFile], check: bool) -> Result<(), String> {
+fn write_or_check_files(out: &Path, files: &ArtifactSet, check: bool) -> Result<(), String> {
     if check {
         let expected_names = files
             .iter()
-            .map(|file| file.name.clone())
+            .map(|file| file.path_str().to_owned())
             .collect::<BTreeSet<_>>();
         let stale = files
             .iter()
             .filter_map(|file| {
-                let path = out.join(&file.name);
-                match fs::read_to_string(&path) {
-                    Ok(current) if current == file.contents => None,
-                    Ok(_) | Err(_) => Some(file.name.as_str()),
+                let path = out.join(&file.path);
+                match fs::read(&path) {
+                    Ok(current) if current == file.bytes => None,
+                    Ok(_) | Err(_) => Some(file.path_str()),
                 }
             })
             .collect::<Vec<_>>();
@@ -209,6 +205,7 @@ fn write_or_check_files(out: &Path, files: &[GeneratedFile], check: bool) -> Res
             return Ok(());
         }
         let mut stale = stale.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        stale.sort_by_key(|path| stale_artifact_order(path));
         stale.extend(extra);
         return Err(format!(
             "stale generated index artifacts: {}; run `sh bin/simctl index`",
@@ -222,16 +219,22 @@ fn write_or_check_files(out: &Path, files: &[GeneratedFile], check: bool) -> Res
         fs::remove_dir_all(&feature_dir)
             .map_err(|err| format!("remove {}: {err}", feature_dir.display()))?;
     }
-    for file in files {
-        let path = out.join(&file.name);
+    for file in files.iter() {
+        let path = out.join(&file.path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|err| format!("create {}: {err}", parent.display()))?;
         }
-        fs::write(&path, &file.contents)
-            .map_err(|err| format!("write {}: {err}", path.display()))?;
+        fs::write(&path, &file.bytes).map_err(|err| format!("write {}: {err}", path.display()))?;
     }
     Ok(())
+}
+
+fn stale_artifact_order(path: &str) -> usize {
+    "index.json\nindex.cards.jsonl\noverview.md\nfeatures.md\nuser.md\ncode.md\nframeworks.md\nsurfaces.md\nlanguages.md\npackages.md\nspecimens.md\nroutes.md"
+        .lines()
+        .position(|name| name == path)
+        .unwrap_or(usize::MAX)
 }
 
 fn extra_feature_pages(
