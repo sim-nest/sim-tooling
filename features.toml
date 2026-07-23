@@ -59,6 +59,7 @@ claims_surfaces = [
 claims_specimens = [
   "spec-test/sim-tooling/src/index_fixpoint_tests",
   "spec-test/sim-tooling/src/index_vault_graph_tests",
+  "spec-test/sim-tooling/src/index_vault_profile_tests",
 ]
 
 [[route]]
