@@ -67,6 +67,8 @@ mod index_snapshot;
 mod index_source;
 mod index_specimen_scan;
 mod index_surface_scan;
+mod index_vault_graph;
+mod index_vault_graph_model;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
@@ -75,6 +77,9 @@ mod simdoc;
 mod simdoc_index;
 mod simdoc_rustdoc;
 mod validation_matrix;
+
+#[cfg(test)]
+mod index_vault_graph_tests;
 
 pub use atelier::{
     AtelierGuardOptions, AtelierGuardReport, AtelierLayer, AtelierNode, AtelierNodeKind,

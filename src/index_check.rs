@@ -11,6 +11,7 @@ use sim_index_core::{IndexDoc, check_index_doc};
 use crate::{
     index_author,
     index_rules::{CoverageReport, Strictness, check_coverage_with_feature_audiences},
+    index_vault_graph::{VaultGranularity, VaultGraph},
 };
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
@@ -100,6 +101,17 @@ pub(crate) fn index_check(
     let source = read_generated_fragment(repo)?;
     let doc = decode_fragment(repo, &source)?;
     check_index_doc(&doc).map_err(|err| format!("invalid index fragment: {err}"))?;
+    let vault_graph =
+        VaultGraph::from_index(&doc).map_err(|err| format!("invalid vault graph: {err}"))?;
+    vault_graph
+        .check(VaultGranularity::Compact)
+        .map_err(|err| format!("invalid vault graph: {err}"))?;
+    let unrepresented = vault_graph.coverage.unrepresented_rows();
+    if unrepresented != 0 {
+        return Err(format!(
+            "invalid vault graph: {unrepresented} compact row(s) are not represented"
+        ));
+    }
     assert_fragment_fresh(repo, &source)?;
     let feature_audiences = index_author::feature_audiences(repo)?;
     let coverage = check_coverage_with_feature_audiences(&doc, strictness, &feature_audiences)?;

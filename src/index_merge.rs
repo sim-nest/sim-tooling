@@ -14,6 +14,8 @@ use sim_index_core::{
 };
 use sim_kernel::EncodePosition;
 
+use crate::index_vault_graph::{VaultGranularity, VaultGraph};
+
 const GENERATOR: &str = "xtask index merge v1";
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
@@ -155,6 +157,19 @@ fn merge_fragments(fragments: &[Fragment]) -> Result<IndexDoc, String> {
 
     sort_doc(&mut merged);
     check_index_doc(&merged).map_err(|err| format!("merged index is invalid: {err}"))?;
+    if merged.visibility == Visibility::Public {
+        let vault_graph = VaultGraph::from_index(&merged)
+            .map_err(|err| format!("merged vault graph is invalid: {err}"))?;
+        vault_graph
+            .check(VaultGranularity::Compact)
+            .map_err(|err| format!("merged vault graph is invalid: {err}"))?;
+        let unrepresented = vault_graph.coverage.unrepresented_rows();
+        if unrepresented != 0 {
+            return Err(format!(
+                "merged vault graph is invalid: {unrepresented} compact row(s) are not represented"
+            ));
+        }
+    }
     Ok(merged)
 }
 
