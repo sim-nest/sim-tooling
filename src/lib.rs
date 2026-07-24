@@ -17,7 +17,8 @@
 //! - `index seed` -- extract private migration seed rows from legacy markdown.
 //! - `index merge`, `index fixpoint`, `index render`, `index find`,
 //!   `index route`, `index overlap`, `index snapshot`, and `index export` --
-//!   build, query, stage, and project the public constellation index.
+//!   build, query, stage, and project the public constellation index into
+//!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
