@@ -4,10 +4,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
-use sim_lib_net_core::hex_encode;
 
-use crate::{CardSpine, DocPosition};
+use crate::{CardSpine, DocPosition, content_digest::content_digest};
 
 const STATE_SCHEMA: &str = "sim.cardspine-state.v1";
 
@@ -76,15 +74,13 @@ pub(crate) fn lanes_to_reencode(spine: &CardSpine, state: &CardSpineState) -> Ve
 }
 
 pub(crate) fn lane_digest(contents: &str) -> String {
-    let digest = Sha256::digest(contents.as_bytes());
-    format!("sha256:{}", hex_encode(&digest))
+    format!("sha256:{}", content_digest(contents.as_bytes()))
 }
 
 pub(crate) fn file_lane_digest(root: &Path, lane: &str) -> Option<String> {
-    fs::read(root.join(lane)).ok().map(|bytes| {
-        let digest = Sha256::digest(&bytes);
-        format!("sha256:{}", hex_encode(&digest))
-    })
+    fs::read(root.join(lane))
+        .ok()
+        .map(|bytes| format!("sha256:{}", content_digest(&bytes)))
 }
 
 pub(crate) fn state_path(root: &Path) -> PathBuf {
@@ -220,6 +216,14 @@ mod tests {
                 DocPosition::CardIndex,
                 DocPosition::HumanReadme
             ]
+        );
+    }
+
+    #[test]
+    fn lane_digest_keeps_the_card_state_spelling() {
+        assert_eq!(
+            lane_digest("SIM\n"),
+            "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0"
         );
     }
 }

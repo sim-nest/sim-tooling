@@ -17,8 +17,9 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 
 | Feature | Subject | Specimens | Summary |
 | --- | --- | ---: | --- |
-| `feature/sim-tooling/generated-docs` | `crate/xtask` | 1 | Generate repo contracts, feature maps, card indexes, and index fragments through xtask. |
-| `feature/sim-index/core` | `crate/xtask` | 1 | Generate, query, route, prove, and check duplicate implementation overlap in the SIM Index graph as a checked constellation surface. |
+| `feature/sim-tooling/generated-docs` | `crate/xtask` | 2 | Generate repo contracts, feature maps, card indexes, index fragments, and managed vault note namespaces through xtask. |
+| `feature/sim-index/core` | `crate/xtask` | 3 | Generate, query, route, prove, and check duplicate implementation overlap in the SIM Index graph as a checked constellation surface. |
+| `feature/sim-index/vault-export` | `crate/xtask` | 1 | Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles. |
 
 ## Surfaces
 
@@ -53,8 +54,13 @@ Specimen `spec-test/sim-tooling/src/index_render_tests` is checked by `cargo tes
 Source `src/index_render_tests.rs`:
 
 ```rust
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
+use crate::content_digest::content_digest;
 use sim_index_core::{
     CanonicalFeatureKey, DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord, IndexDoc,
     RouteId, RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
@@ -70,7 +76,7 @@ fn render_emits_named_pages_and_cards() {
     let files = expected_files(&doc).unwrap();
     let names = files
         .iter()
-        .map(|file| file.name.clone())
+        .map(|file| file.path_str().to_owned())
         .collect::<BTreeSet<_>>();
 
     for name in [
@@ -93,19 +99,130 @@ fn render_emits_named_pages_and_cards() {
     assert!(
         files
             .iter()
-            .find(|file| file.name == "index.cards.jsonl")
+            .find(|file| file.path_str() == "index.cards.jsonl")
             .unwrap()
-            .contents
-            .contains("\"kind\":\"feature\"")
+            .bytes
+            .windows("\"kind\":\"feature\"".len())
+            .any(|window| window == b"\"kind\":\"feature\"")
     );
     assert!(
         files
             .iter()
-            .find(|file| file.name == "index.cards.jsonl")
+            .find(|file| file.path_str() == "index.cards.jsonl")
             .unwrap()
-            .contents
-            .contains("\"kind\":\"surface\"")
+            .bytes
+            .windows("\"kind\":\"surface\"".len())
+            .any(|window| window == b"\"kind\":\"surface\"")
     );
+}
+
+#[test]
+fn render_fixture_artifacts_keep_golden_bytes() {
+    let files = expected_files(&fixture_doc()).unwrap();
+    let actual = files
+        .iter()
+        .map(|file| (file.path_str(), content_digest(&file.bytes)))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        actual,
+        [
+            (
+                "code.md",
+                "e022109a6600a6e1c1d18a8243dfa88681f1176a329a9035049760ab76830cb6",
+            ),
+            (
+                "features.md",
+                "15d8234fb8773a48170e38f0d71d7128fba60fcc9d8f75fe9b1c63dc739f4e72",
+            ),
+            (
+                "features/feature--demo.md",
+                "dffef8ad177094ee9831dafb70c5caa8cbde22121659211f14290e982db5f75c",
+            ),
+            (
+                "frameworks.md",
+                "96c89d34cb6527371c1166c040337bca2a2afd6094ebe08b8552f00bcb9c228e",
+            ),
+            (
+                "index.cards.jsonl",
+                "0f5777ca1f453214913f96d8187b870328636d436bb73a4e320cd5c6af549602",
+            ),
+            (
+                "index.json",
+                "842243a848455faacf488ab22b8230232776f5ec154d8e7a8b2eb391a5f95c9e",
+            ),
+            (
+                "languages.md",
+                "a8c0fc8311004c40ebf6882176c7007c182af686c37b187caef58f2eb2213c7b",
+            ),
+            (
+                "overview.md",
+                "d10f83ae1bbfbbe15f7b6036315f5ed2a6338563e9270ccfecbaacb531679836",
+            ),
+            (
+                "packages.md",
+                "0d1c568ec3b31ee01b3b2c54ef31d484c3f985e2c4f6b7a349eaa8843b6bb4a8",
+            ),
+            (
+                "routes.md",
+                "9e832e87fcc6b2e02b523f9d552c33e6f023fa5b97dba3510c2bf83afb5a76d3",
+            ),
+            (
+                "specimens.md",
+                "9f0a03d319f8938f32a25dc6a1719a6b577963a030c83fa47bfb4a4d0e7d9e3d",
+            ),
+            (
+                "surfaces.md",
+                "ab9e9ca85786f0dca18909a934b9b9e444405744880daa02b27f13756736f00b",
+            ),
+            (
+                "user.md",
+                "87aaeeac4454c0e39f946f06611a27d22e36c4e8e68c07bd923e0b1ca77f1b2b",
+            ),
+        ]
+        .map(|(path, digest)| (path, digest.to_owned()))
+        .to_vec()
+    );
+}
+
+#[test]
+fn render_check_keeps_the_stale_message_contract() {
+    let root = temp_root();
+    let files = ArtifactSet::new(vec![
+        GeneratedArtifact::new("code.md", b"current\n".to_vec()).unwrap(),
+        GeneratedArtifact::new("user.md", b"current\n".to_vec()).unwrap(),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        write_or_check_files(&root, &files, true).unwrap_err(),
+        "stale generated index artifacts: user.md, code.md; run `sh bin/simctl index`"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn render_write_cleans_only_the_feature_page_scope() {
+    let root = temp_root();
+    fs::create_dir_all(root.join("features")).unwrap();
+    fs::write(root.join("features/old.md"), "old\n").unwrap();
+    fs::write(root.join("sibling.md"), "keep\n").unwrap();
+    let files = ArtifactSet::new(vec![
+        GeneratedArtifact::new("features/current.md", b"current\n".to_vec()).unwrap(),
+    ])
+    .unwrap();
+
+    write_or_check_files(&root, &files, false).unwrap();
+
+    assert!(!root.join("features/old.md").exists());
+    assert_eq!(
+        fs::read(root.join("features/current.md")).unwrap(),
+        b"current\n"
+    );
+    assert_eq!(fs::read(root.join("sibling.md")).unwrap(), b"keep\n");
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -126,6 +243,16 @@ fn route_page_keeps_single_trailing_newline_without_coverage_gaps() {
 
     assert!(page.ends_with('\n'));
     assert!(!page.ends_with("\n\n"));
+}
+
+fn temp_root() -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sim-tooling-index-render-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    root
 }
 
 fn fixture_doc() -> IndexDoc {
@@ -173,6 +300,421 @@ fn fixture_doc() -> IndexDoc {
         doc_anchor: None,
     });
     doc
+}
+```
+
+Specimen `spec-test/sim-tooling/src/index_vault_write_tests` is checked by `cargo test`.
+
+Source `src/index_vault_write_tests.rs`:
+
+```rust
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+use crate::{
+    generated_artifact::{ArtifactSet, GeneratedArtifact},
+    generated_namespace::ManagedNamespace,
+    index_vault_manifest::{MANIFEST_FILE, VaultManifest, VaultManifestSeed},
+};
+
+// conformance: managed vault namespaces reject unsafe state before replacing generated notes.
+
+static TEMP_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn plan_rejects_traversal_and_does_not_write() {
+    let root = TempRoot::new("plan");
+    fs::write(root.path().join("User.md"), b"user\n").unwrap();
+    assert!(ManagedNamespace::open(root.path(), "../SIM-Index").is_err());
+    assert!(ManagedNamespace::open(root.path(), "C:/SIM-Index").is_err());
+    assert!(GeneratedArtifact::new("../escape.md", b"x".to_vec()).is_err());
+
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let before = root_entries(root.path());
+    let plan = namespace.plan(
+        &seed("portable-markdown-v1"),
+        &artifacts(&[("README.md", "hi\n")]),
+    );
+
+    assert_eq!(plan.namespace, "SIM-Index");
+    assert_eq!(plan.artifact_count, 1);
+    assert_eq!(plan.byte_count, 3);
+    assert_eq!(root_entries(root.path()), before);
+    assert!(!root.path().join("SIM-Index").exists());
+}
+
+#[test]
+fn commit_writes_owned_namespace_and_preserves_siblings() {
+    let root = TempRoot::new("commit");
+    fs::write(root.path().join("User.md"), b"user\n").unwrap();
+    fs::create_dir(root.path().join("Notes")).unwrap();
+    fs::write(root.path().join("Notes/own.md"), b"mine\n").unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let set = artifacts(&[
+        ("README.md", "readme\n"),
+        ("Features/feature~demo.md", "feature\n"),
+    ]);
+
+    namespace
+        .preflight(&seed("portable-markdown-v1"), &set)
+        .unwrap()
+        .commit()
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(root.path().join("User.md")).unwrap(),
+        "user\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("Notes/own.md")).unwrap(),
+        "mine\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("SIM-Index/README.md")).unwrap(),
+        "readme\n"
+    );
+    let manifest = read_manifest(root.path());
+    assert_eq!(manifest.namespace, "SIM-Index");
+    assert_eq!(manifest.profile, "portable-markdown-v1");
+    assert_eq!(manifest.artifacts.len(), 2);
+    namespace
+        .check(&seed("portable-markdown-v1"), &set)
+        .unwrap();
+}
+
+#[test]
+fn preflight_refuses_unowned_wrong_profile_changed_missing_and_foreign_state() {
+    let root = TempRoot::new("conflicts");
+    fs::create_dir(root.path().join("SIM-Index")).unwrap();
+    fs::write(root.path().join("SIM-Index/manual.md"), b"manual\n").unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "no ownership manifest",
+    );
+
+    let root = committed_root("wrong-profile", &[("README.md", "old\n")]);
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("obsidian-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "profile",
+    );
+
+    let root = committed_root("edited", &[("README.md", "old\n")]);
+    fs::write(root.path().join("SIM-Index/README.md"), b"user edit\n").unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "changed",
+    );
+
+    let root = committed_root("missing", &[("README.md", "old\n")]);
+    fs::remove_file(root.path().join("SIM-Index/README.md")).unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "missing",
+    );
+
+    let root = committed_root("foreign", &[("README.md", "old\n")]);
+    fs::write(root.path().join("SIM-Index/foreign.md"), b"mine\n").unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "foreign",
+    );
+}
+
+#[test]
+fn check_reports_stale_without_writing() {
+    let root = committed_root("stale", &[("README.md", "old\n")]);
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let replacement = artifacts(&[("README.md", "new\n")]);
+
+    assert_contains(
+        namespace
+            .check(&seed("portable-markdown-v1"), &replacement)
+            .unwrap_err(),
+        "stale",
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("SIM-Index/README.md")).unwrap(),
+        "old\n"
+    );
+}
+
+#[test]
+fn concurrent_manifest_change_blocks_commit_before_writes() {
+    let root = committed_root("concurrent", &[("README.md", "old\n")]);
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let transaction = namespace
+        .preflight(
+            &seed("portable-markdown-v1"),
+            &artifacts(&[("README.md", "new\n")]),
+        )
+        .unwrap();
+    fs::write(
+        root.path().join("SIM-Index").join(MANIFEST_FILE),
+        b"{\"schema\":\"other\"}\n",
+    )
+    .unwrap();
+
+    assert!(transaction.commit().is_err());
+    assert!(!root.path().join(".SIM-Index.sim-stage").exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join("SIM-Index/README.md")).unwrap(),
+        "old\n"
+    );
+}
+
+#[test]
+fn interrupted_stage_and_recovery_are_reported_without_cleanup() {
+    let root = TempRoot::new("interrupted");
+    fs::create_dir(root.path().join(".SIM-Index.sim-stage")).unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "interrupted",
+    );
+    assert!(root.path().join(".SIM-Index.sim-stage").exists());
+
+    fs::remove_dir(root.path().join(".SIM-Index.sim-stage")).unwrap();
+    fs::create_dir(root.path().join(".SIM-Index.sim-recovery")).unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "interrupted",
+    );
+    assert!(root.path().join(".SIM-Index.sim-recovery").exists());
+}
+
+#[test]
+fn injected_rename_failure_keeps_stage_and_recovery() {
+    let root = committed_root("rename-failure", &[("README.md", "old\n")]);
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let transaction = namespace
+        .preflight(
+            &seed("portable-markdown-v1"),
+            &artifacts(&[("README.md", "new\n")]),
+        )
+        .unwrap();
+
+    assert_contains(
+        transaction
+            .commit_with_injected_recovery_failure()
+            .unwrap_err(),
+        "injected rename failure",
+    );
+    assert!(!root.path().join("SIM-Index").exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join(".SIM-Index.sim-recovery/README.md")).unwrap(),
+        "old\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join(".SIM-Index.sim-stage/README.md")).unwrap(),
+        "new\n"
+    );
+}
+
+#[test]
+fn case_fold_collisions_are_rejected() {
+    assert!(
+        ArtifactSet::new(vec![
+            GeneratedArtifact::new("Notes/A.md", b"a".to_vec()).unwrap(),
+            GeneratedArtifact::new("notes/a.md", b"b".to_vec()).unwrap(),
+        ])
+        .is_err()
+    );
+
+    let root = TempRoot::new("case-fold");
+    fs::create_dir(root.path().join("SIM-Index")).unwrap();
+    fs::write(root.path().join("SIM-Index/A.md"), b"a\n").unwrap();
+    fs::write(root.path().join("SIM-Index/a.md"), b"b\n").unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "case-fold collision",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_escape_is_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempRoot::new("symlink");
+    fs::write(root.path().join("outside.md"), b"outside\n").unwrap();
+    fs::create_dir(root.path().join("SIM-Index")).unwrap();
+    symlink(
+        root.path().join("outside.md"),
+        root.path().join("SIM-Index/link.md"),
+    )
+    .unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "symlink",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupted_broken_stage_symlink_is_reported_without_cleanup() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempRoot::new("broken-stage-symlink");
+    symlink(
+        root.path().join("missing-stage-target"),
+        root.path().join(".SIM-Index.sim-stage"),
+    )
+    .unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+
+    assert_contains(
+        namespace
+            .preflight(
+                &seed("portable-markdown-v1"),
+                &artifacts(&[("README.md", "new\n")]),
+            )
+            .unwrap_err(),
+        "interrupted",
+    );
+    assert!(fs::symlink_metadata(root.path().join(".SIM-Index.sim-stage")).is_ok());
+}
+
+fn committed_root(name: &str, files: &[(&str, &str)]) -> TempRoot {
+    let root = TempRoot::new(name);
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let set = artifacts(files);
+    namespace
+        .preflight(&seed("portable-markdown-v1"), &set)
+        .unwrap()
+        .commit()
+        .unwrap();
+    root
+}
+
+fn artifacts(files: &[(&str, &str)]) -> ArtifactSet {
+    ArtifactSet::new(
+        files
+            .iter()
+            .map(|(path, text)| GeneratedArtifact::new(*path, text.as_bytes().to_vec()).unwrap())
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn seed(profile: &str) -> VaultManifestSeed {
+    VaultManifestSeed::new(
+        profile,
+        "compact",
+        "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
+        BTreeMap::from([
+            ("subjects".to_owned(), 1),
+            ("anchors".to_owned(), 2),
+            ("features".to_owned(), 3),
+        ]),
+    )
+    .unwrap()
+}
+
+fn read_manifest(root: &Path) -> VaultManifest {
+    VaultManifest::from_bytes(&fs::read(root.join("SIM-Index").join(MANIFEST_FILE)).unwrap())
+        .unwrap()
+}
+
+fn root_entries(root: &Path) -> Vec<String> {
+    let mut entries = fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
+}
+
+fn assert_contains(text: String, expected: &str) {
+    assert!(
+        text.contains(expected),
+        "expected `{text}` to contain `{expected}`"
+    );
+}
+
+struct TempRoot {
+    path: PathBuf,
+}
+
+impl TempRoot {
+    fn new(label: &str) -> Self {
+        let id = TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "sim-tooling-index-vault-{label}-{}-{id}",
+            std::process::id()
+        ));
+        if path.exists() {
+            fs::remove_dir_all(&path).unwrap();
+        }
+        fs::create_dir(&path).unwrap();
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 ```
 
@@ -347,5 +889,876 @@ fn self_doc() -> IndexDoc {
         doc_anchor: None,
     });
     doc
+}
+```
+
+Specimen `spec-test/sim-tooling/src/index_vault_graph_tests` is checked by `cargo test`.
+
+Source `src/index_vault_graph_tests.rs`:
+
+```rust
+use sim_index_core::{
+    AnchorId, CanonicalFeatureKey, DiscoveredAnchor, DiscoveredSpecimen, DiscoveredSurface,
+    FeatureDraft, FeatureId, FeatureRecord, GrammarContract, IndexDoc, IndexEdge, RouteId,
+    RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
+};
+
+use crate::index_vault_graph::{
+    VaultEndpoint, VaultGranularity, VaultGraph, VaultNode, VaultNodeKind, VaultRelation,
+};
+
+// conformance: vault graphs derive app-neutral note rows from checked Index records.
+
+#[test]
+fn vault_graph_contract_matches_checked_fixture() {
+    let graph = VaultGraph::from_index(&fixture_doc()).unwrap();
+
+    graph.check(VaultGranularity::Compact).unwrap();
+    assert_eq!(graph.coverage.unrepresented_rows(), 0);
+    assert_eq!(graph.unresolved_relations().count(), 0);
+    assert!(graph.nodes.iter().any(|node| {
+        matches!(
+            node,
+            VaultNode::Feature(feature)
+                if feature.id == "feature/demo"
+                    && feature.grammar_contracts[0].id == "grammar/demo"
+                    && feature.grammar_contracts[0].round_trip
+        )
+    }));
+
+    let route_steps = graph
+        .relations
+        .iter()
+        .filter(|relation| relation.rel == "route-step")
+        .map(|relation| {
+            (
+                relation.order.unwrap(),
+                relation.to.kind,
+                relation.to.id.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        route_steps,
+        [
+            (0, VaultNodeKind::Feature, "feature/demo"),
+            (1, VaultNodeKind::Specimen, "recipe/demo/open"),
+        ]
+    );
+    let mut expected_reverse = graph
+        .relations
+        .iter()
+        .map(VaultRelation::reversed)
+        .collect::<Vec<_>>();
+    expected_reverse.sort();
+    assert_eq!(graph.reverse_relations, expected_reverse);
+}
+
+#[test]
+fn permuted_input_rows_produce_identical_graphs() {
+    let original = VaultGraph::from_index(&fixture_doc()).unwrap();
+    let mut shuffled = fixture_doc();
+    shuffled.subjects.reverse();
+    shuffled.anchors.reverse();
+    shuffled.surfaces.reverse();
+    shuffled.specimens.reverse();
+    shuffled.drafts.reverse();
+    shuffled.features.reverse();
+    shuffled.routes.reverse();
+    shuffled.edges.reverse();
+    shuffled.features[0].anchors.reverse();
+    shuffled.features[0].surfaces.reverse();
+    shuffled.features[0].specimens.reverse();
+
+    let permuted = VaultGraph::from_index(&shuffled).unwrap();
+
+    assert_eq!(permuted, original);
+}
+
+#[test]
+fn invalid_unchecked_index_is_rejected_before_graphing() {
+    let mut doc = fixture_doc();
+    doc.subjects[0].id = SubjectId::new("bad subject");
+
+    let err = VaultGraph::from_index(&doc).unwrap_err();
+
+    assert!(err.contains("invalid index document"));
+}
+
+#[test]
+fn duplicate_index_edges_are_rejected_as_duplicate_relations() {
+    let mut doc = fixture_doc();
+    doc.edges.push(IndexEdge::relates(
+        FeatureId::new("feature/demo"),
+        "supports",
+        FeatureId::new("feature/other"),
+    ));
+
+    let err = VaultGraph::from_index(&doc).unwrap_err();
+
+    assert!(err.contains("duplicate forward relation"));
+}
+
+#[test]
+fn duplicate_raw_ids_across_node_kinds_are_rejected() {
+    let mut doc = fixture_doc();
+    doc.surfaces.push(DiscoveredSurface {
+        id: SurfaceId::new("anchor/demo/doc"),
+        subject: SubjectId::new("crate/demo"),
+        kind: "syntax".to_owned(),
+    });
+
+    let err = VaultGraph::from_index(&doc).unwrap_err();
+
+    assert!(err.contains("duplicate id anchor/demo/doc"));
+}
+
+#[test]
+fn incomplete_granularity_coverage_is_rejected() {
+    let mut graph = VaultGraph::from_index(&fixture_doc()).unwrap();
+    let removed = VaultEndpoint {
+        kind: VaultNodeKind::Feature,
+        id: "feature/demo".to_owned(),
+    };
+    graph.coverage.full.remove(&removed);
+
+    let err = graph.check(VaultGranularity::Full).unwrap_err();
+
+    assert!(err.contains("unrepresented Full row"));
+}
+
+#[test]
+fn unresolved_relation_iterator_reports_missing_endpoints() {
+    let mut graph = VaultGraph::from_index(&fixture_doc()).unwrap();
+    graph.relations.push(VaultRelation {
+        from: VaultEndpoint {
+            kind: VaultNodeKind::Feature,
+            id: "feature/demo".to_owned(),
+        },
+        rel: "broken".to_owned(),
+        to: VaultEndpoint {
+            kind: VaultNodeKind::Anchor,
+            id: "anchor/missing".to_owned(),
+        },
+        order: None,
+    });
+
+    assert_eq!(graph.unresolved_relations().count(), 1);
+    assert!(graph.check(VaultGranularity::Compact).is_err());
+}
+
+fn fixture_doc() -> IndexDoc {
+    IndexDoc {
+        schema: "sim.index".to_owned(),
+        generated_by: "test".to_owned(),
+        visibility: Visibility::Public,
+        subjects: vec![
+            SubjectRecord {
+                id: SubjectId::new("crate/demo"),
+                kind: "crate".to_owned(),
+                title: "demo".to_owned(),
+            },
+            SubjectRecord {
+                id: SubjectId::new("repo/demo"),
+                kind: "repo".to_owned(),
+                title: "Demo repo".to_owned(),
+            },
+        ],
+        anchors: vec![
+            DiscoveredAnchor {
+                id: AnchorId::new("anchor/demo/doc"),
+                subject: SubjectId::new("crate/demo"),
+                kind: "doc-section".to_owned(),
+            },
+            DiscoveredAnchor {
+                id: AnchorId::new("anchor/demo/decoder"),
+                subject: SubjectId::new("crate/demo"),
+                kind: "export".to_owned(),
+            },
+            DiscoveredAnchor {
+                id: AnchorId::new("anchor/demo/encoder"),
+                subject: SubjectId::new("crate/demo"),
+                kind: "export".to_owned(),
+            },
+        ],
+        surfaces: vec![DiscoveredSurface {
+            id: SurfaceId::new("syntax/demo"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "syntax".to_owned(),
+        }],
+        specimens: vec![DiscoveredSpecimen {
+            id: SpecimenId::new("recipe/demo/open"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "recipe".to_owned(),
+            path: "recipes/open/recipe.toml".to_owned(),
+            language: Some("lisp".to_owned()),
+            runnable: true,
+            checked: true,
+            checked_by: Some("cargo test".to_owned()),
+            doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+        }],
+        drafts: vec![FeatureDraft {
+            id: FeatureId::new("feature/demo-draft"),
+            subject: SubjectId::new("crate/demo"),
+            title: "Demo draft".to_owned(),
+            summary: "Draft row.".to_owned(),
+            claims_anchors: vec![AnchorId::new("anchor/demo/doc")],
+            claims_surfaces: vec![SurfaceId::new("syntax/demo")],
+            claims_specimens: vec![SpecimenId::new("recipe/demo/open")],
+            literal_anchors: Vec::new(),
+            literal_surfaces: Vec::new(),
+            literal_specimens: Vec::new(),
+            grammar_contracts: vec![grammar_contract()],
+            doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+        }],
+        features: vec![
+            FeatureRecord {
+                id: FeatureId::new("feature/demo"),
+                key: CanonicalFeatureKey::new("crate/demo/demo"),
+                subject: SubjectId::new("crate/demo"),
+                title: "Demo".to_owned(),
+                summary: "Demo feature.".to_owned(),
+                anchors: vec![
+                    AnchorId::new("anchor/demo/encoder"),
+                    AnchorId::new("anchor/demo/decoder"),
+                ],
+                surfaces: vec![SurfaceId::new("syntax/demo")],
+                specimens: vec![SpecimenId::new("recipe/demo/open")],
+                grammar_contracts: vec![grammar_contract()],
+                doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+            },
+            FeatureRecord {
+                id: FeatureId::new("feature/other"),
+                key: CanonicalFeatureKey::new("crate/demo/other"),
+                subject: SubjectId::new("crate/demo"),
+                title: "Other".to_owned(),
+                summary: "Other feature.".to_owned(),
+                anchors: Vec::new(),
+                surfaces: Vec::new(),
+                specimens: Vec::new(),
+                grammar_contracts: Vec::new(),
+                doc_anchor: None,
+            },
+        ],
+        routes: vec![RouteRecord {
+            id: RouteId::new("route/open-demo"),
+            title: "Open demo".to_owned(),
+            audiences: vec!["framework".to_owned(), "code".to_owned()],
+            steps: vec![
+                RouteStep::Feature {
+                    id: FeatureId::new("feature/demo"),
+                    why: "Start with the reusable feature.".to_owned(),
+                },
+                RouteStep::Specimen {
+                    id: SpecimenId::new("recipe/demo/open"),
+                    why: "Then run the checked specimen.".to_owned(),
+                },
+            ],
+            doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+        }],
+        edges: vec![
+            IndexEdge::contains(SubjectId::new("repo/demo"), SubjectId::new("crate/demo")),
+            IndexEdge::relates(
+                FeatureId::new("feature/demo"),
+                "supports",
+                FeatureId::new("feature/other"),
+            ),
+        ],
+    }
+}
+
+fn grammar_contract() -> GrammarContract {
+    GrammarContract {
+        id: "grammar/demo".to_owned(),
+        decoder: Some(AnchorId::new("anchor/demo/decoder")),
+        encoder: Some(AnchorId::new("anchor/demo/encoder")),
+        surface: Some(SurfaceId::new("syntax/demo")),
+        round_trip: true,
+    }
+}
+```
+
+Specimen `spec-test/sim-tooling/src/index_vault_profile_tests` is checked by `cargo test`.
+
+Source `src/index_vault_profile_tests.rs`:
+
+```rust
+use sim_index_core::shape::is_index_id;
+
+use crate::{
+    index_vault_graph::{VaultEndpoint, VaultNodeKind},
+    index_vault_link::{
+        LinkTargetStyle, MetadataStyle, NoteRef, OutlineStyle, escape_markdown_label,
+        escape_wikilink_label, id_from_note_filename, id_to_note_filename, logseq_property_value,
+        yaml_property_value,
+    },
+    index_vault_profile::{PROFILE_ALIASES, PROFILES, resolve_profile},
+};
+
+// conformance: vault profiles resolve explicit versions and derive safe note links.
+
+#[test]
+fn profile_table_maps_friendly_names_to_versioned_ids() {
+    let aliases = PROFILE_ALIASES
+        .iter()
+        .map(|alias| (alias.friendly_name, alias.profile_id))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        aliases,
+        [
+            ("portable", "portable-markdown-v1"),
+            ("obsidian", "obsidian-markdown-v1"),
+            ("seqlog", "seqlog-markdown-v1"),
+            ("logseq", "logseq-file-v1"),
+        ]
+    );
+    assert_eq!(PROFILES.len(), 4);
+    for alias in aliases {
+        assert_eq!(resolve_profile(alias.0).unwrap().id, alias.1);
+        assert_eq!(resolve_profile(alias.1).unwrap().id, alias.1);
+    }
+}
+
+#[test]
+fn profile_choices_are_descriptors() {
+    let portable = resolve_profile("portable").unwrap();
+    assert_eq!(portable.friendly_name, "portable");
+    assert_eq!(portable.metadata.style, MetadataStyle::YamlProperties);
+    assert_eq!(portable.links.style, LinkTargetStyle::RelativeCommonMark);
+    assert_eq!(portable.outline.style, OutlineStyle::CommonMarkHeadings);
+
+    let logseq = resolve_profile("logseq").unwrap();
+    assert_eq!(logseq.metadata.style, MetadataStyle::LogseqProperties);
+    assert_eq!(logseq.links.style, LinkTargetStyle::VaultRootWikilink);
+    assert_eq!(logseq.outline.style, OutlineStyle::IndentedBlocks);
+}
+
+#[test]
+fn unknown_profiles_are_rejected_without_fallback() {
+    let err = resolve_profile("obsidian-vlatest").unwrap_err();
+
+    assert!(err.contains("unknown Index vault profile"));
+    assert!(err.contains("portable-markdown-v1"));
+}
+
+#[test]
+fn slash_to_tilde_note_filenames_round_trip_index_ids() {
+    let id = "feature/sim-runtime/incremental-query-core";
+    let filename = id_to_note_filename(id).unwrap();
+
+    assert_eq!(filename, "feature~sim-runtime~incremental-query-core.md");
+    assert_eq!(id_from_note_filename(&filename).unwrap(), id);
+    assert!(!is_index_id("feature/sim-runtime~incremental-query-core"));
+    assert!(id_to_note_filename("feature/sim-runtime~incremental-query-core").is_err());
+    assert!(id_from_note_filename("../feature~demo.md").is_err());
+    assert!(id_from_note_filename("feature~demo.txt").is_err());
+}
+
+#[test]
+fn note_refs_render_relative_commonmark_links() {
+    let source = note(VaultNodeKind::Feature, "feature/source");
+    let target = note(VaultNodeKind::Specimen, "spec-test/demo/source");
+    let sibling = note(VaultNodeKind::Feature, "feature/other");
+
+    assert_eq!(
+        target.relative_commonmark_target_from(&source),
+        "../specimens/spec-test~demo~source.md"
+    );
+    assert_eq!(
+        sibling.relative_commonmark_target_from(&source),
+        "feature~other.md"
+    );
+    assert_eq!(
+        target.commonmark_link_from(&source, "Spec [checked]"),
+        "[Spec \\[checked\\]](../specimens/spec-test~demo~source.md)"
+    );
+}
+
+#[test]
+fn note_refs_render_vault_root_wikilink_targets() {
+    let target = note(VaultNodeKind::Route, "route/add-generated-doc");
+
+    assert_eq!(
+        target.vault_root_wikilink_target("SIM-Index"),
+        "SIM-Index/routes/route~add-generated-doc"
+    );
+    assert_eq!(
+        target.vault_root_wikilink("/SIM-Index/", "Route | docs"),
+        "[[SIM-Index/routes/route~add-generated-doc|Route \\| docs]]"
+    );
+}
+
+#[test]
+fn escaping_helpers_cover_markdown_yaml_and_logseq_values() {
+    assert_eq!(escape_markdown_label(r"a [b]\c"), r"a \[b\]\\c");
+    assert_eq!(escape_wikilink_label(r"a | [b]\c"), r"a \| \[b\]\\c");
+    assert_eq!(yaml_property_value("a\"b\nc"), "\"a\\\"b\\nc\"");
+    assert_eq!(logseq_property_value("a\\b\nc\td"), r"a\\b\nc\td");
+}
+
+fn note(kind: VaultNodeKind, id: &str) -> NoteRef {
+    let note = NoteRef::new(VaultEndpoint::new(kind, id)).unwrap();
+    assert_eq!(note.endpoint().id, id);
+    assert!(note.path().to_str().unwrap().ends_with(".md"));
+    note
+}
+```
+
+### `feature/sim-index/vault-export`
+
+Specimen `spec-test/sim-tooling/src/index_vault_tests` is checked by `cargo test`.
+
+Source `src/index_vault_tests.rs`:
+
+```rust
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+use sim_codec_index::{IndexCodec, IndexForm};
+use sim_index_core::{
+    AnchorId, CanonicalFeatureKey, DiscoveredAnchor, DiscoveredSpecimen, DiscoveredSurface,
+    FeatureDraft, FeatureId, FeatureRecord, GrammarContract, IndexDoc, IndexEdge, RouteId,
+    RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
+};
+use sim_kernel::EncodePosition;
+
+use crate::{
+    index_vault::{ExportMode, IndexExportOptions, export},
+    index_vault_graph::VaultGranularity,
+    index_vault_manifest::{MANIFEST_FILE, VaultManifest},
+};
+
+// conformance: `xtask index export` composes the checked Index vault graph,
+// profile renderer, and managed namespace transaction without owning a second graph.
+
+static TEMP_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn export_options_require_explicit_input_profile_and_vault_root() {
+    assert_contains(
+        IndexExportOptions::parse(&args(&["index", "export"])).unwrap_err(),
+        "requires --input",
+    );
+    assert_contains(
+        IndexExportOptions::parse(&args(&[
+            "index",
+            "export",
+            "--input",
+            "index.sx",
+            "--profile",
+            "portable",
+        ]))
+        .unwrap_err(),
+        "requires --vault-root",
+    );
+
+    let options = IndexExportOptions::parse(&args(&[
+        "index",
+        "export",
+        "--input",
+        "index.sx",
+        "--profile",
+        "portable",
+        "--vault-root",
+        "vault",
+    ]))
+    .unwrap();
+    assert_eq!(options.namespace, PathBuf::from("SIM-Index"));
+    assert_eq!(options.granularity, VaultGranularity::Compact);
+    assert_eq!(options.mode, ExportMode::Write);
+}
+
+#[test]
+fn export_options_reject_duplicate_and_conflicting_flags() {
+    assert_contains(
+        IndexExportOptions::parse(&args(&[
+            "index",
+            "export",
+            "--input",
+            "a.sx",
+            "--input",
+            "b.sx",
+            "--profile",
+            "portable",
+            "--vault-root",
+            "vault",
+        ]))
+        .unwrap_err(),
+        "duplicate",
+    );
+    assert_contains(
+        IndexExportOptions::parse(&args(&[
+            "index",
+            "export",
+            "--input",
+            "index.sx",
+            "--profile",
+            "portable",
+            "--vault-root",
+            "vault",
+            "--plan",
+            "--check",
+        ]))
+        .unwrap_err(),
+        "mutually exclusive",
+    );
+    assert_contains(
+        IndexExportOptions::parse(&args(&[
+            "index",
+            "export",
+            "--input",
+            "index.sx",
+            "--profile",
+            "portable",
+            "--vault-root",
+            "vault",
+            "--granularity",
+            "wide",
+        ]))
+        .unwrap_err(),
+        "granularity",
+    );
+}
+
+#[test]
+fn all_profiles_export_checked_fixture_and_preserve_sibling_notes() {
+    let input = encoded_fixture(Visibility::Public);
+
+    for profile in ["portable", "obsidian", "seqlog", "logseq"] {
+        let root = TempRoot::new(profile);
+        fs::write(root.path().join("User.md"), b"user note\n").unwrap();
+
+        let plan = export(options(
+            &input.path().join("index.sx"),
+            root.path(),
+            profile,
+            ExportMode::Plan,
+            VaultGranularity::Compact,
+        ))
+        .unwrap();
+        assert_eq!(plan.mode, ExportMode::Plan);
+        assert!(plan.summary().contains("profile="));
+        assert!(!root.path().join("SIM-Index").exists());
+
+        let write = export(options(
+            &input.path().join("index.sx"),
+            root.path(),
+            profile,
+            ExportMode::Write,
+            VaultGranularity::Compact,
+        ))
+        .unwrap();
+        assert_eq!(write.mode, ExportMode::Write);
+        assert!(write.changed_artifacts > 0);
+        assert_eq!(write.unchanged_artifacts, 0);
+        assert_eq!(
+            fs::read_to_string(root.path().join("User.md")).unwrap(),
+            "user note\n"
+        );
+        assert!(root.path().join("SIM-Index").join(MANIFEST_FILE).exists());
+
+        let check = export(options(
+            &input.path().join("index.sx"),
+            root.path(),
+            profile,
+            ExportMode::Check,
+            VaultGranularity::Compact,
+        ))
+        .unwrap();
+        assert_eq!(check.changed_artifacts, 0);
+        assert_eq!(check.unchanged_artifacts, write.artifact_count);
+        assert_eq!(check.profile_id, write.profile_id);
+    }
+}
+
+#[test]
+fn repeated_write_is_a_noop_and_managed_edits_block_check_and_write() {
+    let input = encoded_fixture(Visibility::Public);
+    let root = TempRoot::new("repeat");
+    let first = export(options(
+        &input.path().join("index.sx"),
+        root.path(),
+        "obsidian",
+        ExportMode::Write,
+        VaultGranularity::Compact,
+    ))
+    .unwrap();
+    assert!(first.changed_artifacts > 0);
+
+    let second = export(options(
+        &input.path().join("index.sx"),
+        root.path(),
+        "obsidian",
+        ExportMode::Write,
+        VaultGranularity::Compact,
+    ))
+    .unwrap();
+    assert_eq!(second.changed_artifacts, 0);
+    assert_eq!(second.unchanged_artifacts, first.artifact_count);
+
+    let manifest = read_manifest(root.path());
+    assert_eq!(manifest.profile, "obsidian-markdown-v1");
+    let readme = root.path().join("SIM-Index/README.md");
+    fs::write(&readme, b"user edit\n").unwrap();
+
+    assert_contains(
+        export(options(
+            &input.path().join("index.sx"),
+            root.path(),
+            "obsidian",
+            ExportMode::Check,
+            VaultGranularity::Compact,
+        ))
+        .unwrap_err(),
+        "changed outside the exporter",
+    );
+    assert_contains(
+        export(options(
+            &input.path().join("index.sx"),
+            root.path(),
+            "obsidian",
+            ExportMode::Write,
+            VaultGranularity::Compact,
+        ))
+        .unwrap_err(),
+        "changed outside the exporter",
+    );
+}
+
+#[test]
+fn full_granularity_and_private_local_visibility_are_checked() {
+    let input = encoded_fixture(Visibility::Public);
+    let root = TempRoot::new("full");
+    let full = export(options(
+        &input.path().join("index.sx"),
+        root.path(),
+        "portable",
+        ExportMode::Write,
+        VaultGranularity::Full,
+    ))
+    .unwrap();
+    assert_eq!(full.granularity, "full");
+    assert!(root.path().join("SIM-Index/anchors").exists());
+
+    let private = encoded_fixture(Visibility::PrivateLocal);
+    let err = export(options(
+        &private.path().join("index.sx"),
+        root.path(),
+        "portable",
+        ExportMode::Plan,
+        VaultGranularity::Compact,
+    ))
+    .unwrap_err();
+    assert_contains(err, "requires a public IndexDoc");
+}
+
+fn options(
+    input: &Path,
+    vault_root: &Path,
+    profile: &str,
+    mode: ExportMode,
+    granularity: VaultGranularity,
+) -> IndexExportOptions {
+    IndexExportOptions {
+        input: input.to_path_buf(),
+        profile: profile.to_owned(),
+        vault_root: vault_root.to_path_buf(),
+        namespace: PathBuf::from("SIM-Index"),
+        granularity,
+        mode,
+    }
+}
+
+fn encoded_fixture(visibility: Visibility) -> TempRoot {
+    let root = TempRoot::new("index-input");
+    let source = IndexCodec
+        .encode(
+            &fixture_doc(visibility),
+            EncodePosition::Data,
+            IndexForm::Sx,
+        )
+        .unwrap();
+    fs::write(root.path().join("index.sx"), source).unwrap();
+    root
+}
+
+fn fixture_doc(visibility: Visibility) -> IndexDoc {
+    IndexDoc {
+        schema: "sim.index".to_owned(),
+        generated_by: "test".to_owned(),
+        visibility,
+        subjects: vec![
+            SubjectRecord {
+                id: SubjectId::new("crate/demo"),
+                kind: "crate".to_owned(),
+                title: "demo".to_owned(),
+            },
+            SubjectRecord {
+                id: SubjectId::new("repo/demo"),
+                kind: "repo".to_owned(),
+                title: "Demo repo".to_owned(),
+            },
+        ],
+        anchors: vec![
+            DiscoveredAnchor {
+                id: AnchorId::new("anchor/demo/doc"),
+                subject: SubjectId::new("crate/demo"),
+                kind: "doc-section".to_owned(),
+            },
+            DiscoveredAnchor {
+                id: AnchorId::new("anchor/demo/decoder"),
+                subject: SubjectId::new("crate/demo"),
+                kind: "export".to_owned(),
+            },
+            DiscoveredAnchor {
+                id: AnchorId::new("anchor/demo/encoder"),
+                subject: SubjectId::new("crate/demo"),
+                kind: "export".to_owned(),
+            },
+        ],
+        surfaces: vec![DiscoveredSurface {
+            id: SurfaceId::new("syntax/demo"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "syntax".to_owned(),
+        }],
+        specimens: vec![DiscoveredSpecimen {
+            id: SpecimenId::new("recipe/demo/open"),
+            subject: SubjectId::new("crate/demo"),
+            kind: "recipe".to_owned(),
+            path: "recipes/open/recipe.toml".to_owned(),
+            language: Some("lisp".to_owned()),
+            runnable: true,
+            checked: true,
+            checked_by: Some("cargo test".to_owned()),
+            doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+        }],
+        drafts: vec![FeatureDraft {
+            id: FeatureId::new("feature/demo-draft"),
+            subject: SubjectId::new("crate/demo"),
+            title: "Demo draft".to_owned(),
+            summary: "Draft row.".to_owned(),
+            claims_anchors: vec![AnchorId::new("anchor/demo/doc")],
+            claims_surfaces: vec![SurfaceId::new("syntax/demo")],
+            claims_specimens: vec![SpecimenId::new("recipe/demo/open")],
+            literal_anchors: Vec::new(),
+            literal_surfaces: Vec::new(),
+            literal_specimens: Vec::new(),
+            grammar_contracts: vec![grammar_contract()],
+            doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+        }],
+        features: vec![
+            FeatureRecord {
+                id: FeatureId::new("feature/demo"),
+                key: CanonicalFeatureKey::new("crate/demo/demo"),
+                subject: SubjectId::new("crate/demo"),
+                title: "Demo".to_owned(),
+                summary: "Demo feature.".to_owned(),
+                anchors: vec![
+                    AnchorId::new("anchor/demo/encoder"),
+                    AnchorId::new("anchor/demo/decoder"),
+                ],
+                surfaces: vec![SurfaceId::new("syntax/demo")],
+                specimens: vec![SpecimenId::new("recipe/demo/open")],
+                grammar_contracts: vec![grammar_contract()],
+                doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+            },
+            FeatureRecord {
+                id: FeatureId::new("feature/other"),
+                key: CanonicalFeatureKey::new("crate/demo/other"),
+                subject: SubjectId::new("crate/demo"),
+                title: "Other".to_owned(),
+                summary: "Other feature.".to_owned(),
+                anchors: Vec::new(),
+                surfaces: Vec::new(),
+                specimens: Vec::new(),
+                grammar_contracts: Vec::new(),
+                doc_anchor: None,
+            },
+        ],
+        routes: vec![RouteRecord {
+            id: RouteId::new("route/open-demo"),
+            title: "Open demo".to_owned(),
+            audiences: vec!["framework".to_owned(), "code".to_owned()],
+            steps: vec![
+                RouteStep::Feature {
+                    id: FeatureId::new("feature/demo"),
+                    why: "Start with the reusable feature.".to_owned(),
+                },
+                RouteStep::Specimen {
+                    id: SpecimenId::new("recipe/demo/open"),
+                    why: "Then run the checked specimen.".to_owned(),
+                },
+            ],
+            doc_anchor: Some(AnchorId::new("anchor/demo/doc")),
+        }],
+        edges: vec![
+            IndexEdge::contains(SubjectId::new("repo/demo"), SubjectId::new("crate/demo")),
+            IndexEdge::relates(
+                FeatureId::new("feature/demo"),
+                "supports",
+                FeatureId::new("feature/other"),
+            ),
+        ],
+    }
+}
+
+fn grammar_contract() -> GrammarContract {
+    GrammarContract {
+        id: "grammar/demo".to_owned(),
+        decoder: Some(AnchorId::new("anchor/demo/decoder")),
+        encoder: Some(AnchorId::new("anchor/demo/encoder")),
+        surface: Some(SurfaceId::new("syntax/demo")),
+        round_trip: true,
+    }
+}
+
+fn args(parts: &[&str]) -> Vec<String> {
+    std::iter::once("xtask".to_owned())
+        .chain(parts.iter().map(|part| (*part).to_owned()))
+        .collect()
+}
+
+fn read_manifest(root: &Path) -> VaultManifest {
+    VaultManifest::from_bytes(&fs::read(root.join("SIM-Index").join(MANIFEST_FILE)).unwrap())
+        .unwrap()
+}
+
+fn assert_contains(text: String, expected: &str) {
+    assert!(
+        text.contains(expected),
+        "expected `{text}` to contain `{expected}`"
+    );
+}
+
+struct TempRoot {
+    path: PathBuf,
+}
+
+impl TempRoot {
+    fn new(label: &str) -> Self {
+        let id = TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "sim-tooling-index-vault-cli-{label}-{}-{id}",
+            std::process::id()
+        ));
+        if path.exists() {
+            fs::remove_dir_all(&path).unwrap();
+        }
+        fs::create_dir(&path).unwrap();
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 ```

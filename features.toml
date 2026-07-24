@@ -21,10 +21,10 @@ frameworks = "advisory"
 [[feature]]
 id = "feature/sim-tooling/generated-docs"
 title = "Generated documentation lanes"
-summary = "Generate repo contracts, feature maps, card indexes, and index fragments through xtask."
+summary = "Generate repo contracts, feature maps, card indexes, index fragments, and managed vault note namespaces through xtask."
 owner = "crate/xtask"
 audiences = ["code", "framework"]
-guidance = "Use this row when adding a generated doc lane or checking generated index artifacts."
+guidance = "Use this row when adding a generated doc lane, checking generated index artifacts, or synchronizing a managed generated namespace."
 claims_anchors = [
   "anchor/crate/xtask",
   "anchor/doc/generated/card-index",
@@ -40,6 +40,7 @@ claims_anchors = [
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_render_tests",
+  "spec-test/sim-tooling/src/index_vault_write_tests",
 ]
 
 [[feature]]
@@ -58,6 +59,30 @@ claims_surfaces = [
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_fixpoint_tests",
+  "spec-test/sim-tooling/src/index_vault_graph_tests",
+  "spec-test/sim-tooling/src/index_vault_profile_tests",
+]
+
+[[feature]]
+id = "feature/sim-index/vault-export"
+title = "SIM Index vault export"
+summary = "Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles."
+owner = "crate/xtask"
+audiences = ["user", "code", "framework"]
+guidance = "Use this row when exporting Index evidence into a Markdown vault. Authors still add features, routes, and generated documentation through the generated-doc owner; this exporter consumes the checked public graph and writes only its managed namespace."
+claims_anchors = [
+  "anchor/cli/xtask",
+]
+claims_surfaces = [
+  "cli/xtask",
+  "docs/sim-tooling/generated",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/index_vault_tests",
+]
+supports = [
+  "feature/sim-index/core",
+  "feature/sim-tooling/generated-docs",
 ]
 
 [[route]]
@@ -75,4 +100,15 @@ audiences = ["user", "code", "framework"]
 steps = [
   { feature = "feature/sim-index/core", why = "The SIM Index core row owns generated graph queries, strict fixpoint checks, overlap checks, and duplicate implementation prevention." },
   { specimen = "spec-test/sim-tooling/src/index_fixpoint_tests", why = "The checked fixpoint test proves the index can index and validate itself." },
+]
+
+[[route]]
+id = "route/export-index-to-vault"
+task = "Export the SIM Index to a Markdown vault"
+audiences = ["user", "code", "framework"]
+steps = [
+  { feature = "feature/sim-index/core", why = "The SIM Index core row owns the public graph that the vault exporter consumes." },
+  { feature = "feature/sim-tooling/generated-docs", why = "The generated-doc row owns the generated documentation evidence that appears in the public Index." },
+  { feature = "feature/sim-index/vault-export", why = "The vault export row owns the profile selection, managed namespace, plan, write, and check behavior." },
+  { specimen = "spec-test/sim-tooling/src/index_vault_tests", why = "The checked end-to-end specimen proves all vault profiles export the fixture graph, preserve sibling notes, and verify managed namespaces." },
 ]

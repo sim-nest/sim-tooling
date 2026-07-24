@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
-use sim_lib_net_core::hex_encode;
-
-use crate::simdoc::{collect_recipe_files, repo_name};
+use crate::{
+    content_digest::content_digest,
+    simdoc::{collect_recipe_files, repo_name},
+};
 
 /// Content-id algorithm tag for build-side documentation Cards.
 pub const CARD_CONTENT_ID_ALGORITHM: &str = "sim.card-id.sha256-v1";
@@ -59,8 +59,10 @@ impl CardSpine {
 /// Returns the content-addressed id for one Card.
 pub fn card_content_id(card: &Card) -> String {
     let canonical = canonical_card_bytes(card);
-    let digest = Sha256::digest(canonical.as_bytes());
-    format!("{CARD_CONTENT_ID_ALGORITHM}:{}", hex_encode(&digest))
+    format!(
+        "{CARD_CONTENT_ID_ALGORITHM}:{}",
+        content_digest(canonical.as_bytes())
+    )
 }
 
 fn recipe_card(repo: &str, recipe: &str) -> Card {

@@ -16,8 +16,9 @@
 //! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
 //! - `index seed` -- extract private migration seed rows from legacy markdown.
 //! - `index merge`, `index fixpoint`, `index render`, `index find`,
-//!   `index route`, `index overlap`, and `index snapshot` -- build, query, and
-//!   stage the public constellation index.
+//!   `index route`, `index overlap`, `index snapshot`, and `index export` --
+//!   build, query, stage, and project the public constellation index into
+//!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -39,11 +40,14 @@ pub mod atelier;
 mod cardspine;
 mod cardspine_state;
 mod citizenize;
+mod content_digest;
 mod crate_catalog;
 mod crate_catalog_manifest;
 mod dispatch;
 mod docencoder;
 mod file_size_gate;
+mod generated_artifact;
+mod generated_namespace;
 mod generator_options;
 mod index_anchor_scan;
 mod index_author;
@@ -65,6 +69,14 @@ mod index_snapshot;
 mod index_source;
 mod index_specimen_scan;
 mod index_surface_scan;
+mod index_vault;
+mod index_vault_graph;
+mod index_vault_graph_model;
+mod index_vault_link;
+mod index_vault_manifest;
+mod index_vault_profile;
+mod index_vault_render;
+mod index_vault_render_writer;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
@@ -73,6 +85,17 @@ mod simdoc;
 mod simdoc_index;
 mod simdoc_rustdoc;
 mod validation_matrix;
+
+#[cfg(test)]
+mod index_vault_graph_tests;
+#[cfg(test)]
+mod index_vault_profile_tests;
+#[cfg(test)]
+mod index_vault_render_tests;
+#[cfg(test)]
+mod index_vault_tests;
+#[cfg(test)]
+mod index_vault_write_tests;
 
 pub use atelier::{
     AtelierGuardOptions, AtelierGuardReport, AtelierLayer, AtelierNode, AtelierNodeKind,
