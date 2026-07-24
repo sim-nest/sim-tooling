@@ -8,6 +8,8 @@ pub(crate) enum VaultGranularity {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VaultGraph {
+    pub(crate) schema: String,
+    pub(crate) generated_by: String,
     pub(crate) nodes: Vec<VaultNode>,
     pub(crate) relations: Vec<VaultRelation>,
     pub(crate) reverse_relations: Vec<VaultRelation>,

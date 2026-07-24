@@ -14,7 +14,10 @@ use sim_index_core::{
 };
 use sim_kernel::EncodePosition;
 
-use crate::index_vault_graph::{VaultGranularity, VaultGraph};
+use crate::{
+    index_vault_graph::{VaultGranularity, VaultGraph},
+    index_vault_render::check_all_vault_renders,
+};
 
 const GENERATOR: &str = "xtask index merge v1";
 
@@ -163,6 +166,8 @@ fn merge_fragments(fragments: &[Fragment]) -> Result<IndexDoc, String> {
         vault_graph
             .check(VaultGranularity::Compact)
             .map_err(|err| format!("merged vault graph is invalid: {err}"))?;
+        check_all_vault_renders(&vault_graph)
+            .map_err(|err| format!("merged vault render is invalid: {err}"))?;
         let unrepresented = vault_graph.coverage.unrepresented_rows();
         if unrepresented != 0 {
             return Err(format!(

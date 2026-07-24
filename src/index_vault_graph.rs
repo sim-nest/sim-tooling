@@ -25,6 +25,8 @@ impl VaultGraph {
         let reverse_relations = sorted_relations(relations.iter().map(VaultRelation::reversed));
         let coverage = VaultCoverage::from_nodes(&nodes);
         let graph = Self {
+            schema: doc.schema.clone(),
+            generated_by: doc.generated_by.clone(),
             nodes,
             relations,
             reverse_relations,

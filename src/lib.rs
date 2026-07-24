@@ -71,6 +71,8 @@ mod index_vault_graph;
 mod index_vault_graph_model;
 mod index_vault_link;
 mod index_vault_profile;
+mod index_vault_render;
+mod index_vault_render_writer;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
@@ -84,6 +86,8 @@ mod validation_matrix;
 mod index_vault_graph_tests;
 #[cfg(test)]
 mod index_vault_profile_tests;
+#[cfg(test)]
+mod index_vault_render_tests;
 
 pub use atelier::{
     AtelierGuardOptions, AtelierGuardReport, AtelierLayer, AtelierNode, AtelierNodeKind,
