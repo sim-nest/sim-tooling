@@ -46,6 +46,7 @@ mod dispatch;
 mod docencoder;
 mod file_size_gate;
 mod generated_artifact;
+mod generated_namespace;
 mod generator_options;
 mod index_anchor_scan;
 mod index_author;
@@ -70,6 +71,7 @@ mod index_surface_scan;
 mod index_vault_graph;
 mod index_vault_graph_model;
 mod index_vault_link;
+mod index_vault_manifest;
 mod index_vault_profile;
 mod index_vault_render;
 mod index_vault_render_writer;
@@ -88,6 +90,8 @@ mod index_vault_graph_tests;
 mod index_vault_profile_tests;
 #[cfg(test)]
 mod index_vault_render_tests;
+#[cfg(test)]
+mod index_vault_write_tests;
 
 pub use atelier::{
     AtelierGuardOptions, AtelierGuardReport, AtelierLayer, AtelierNode, AtelierNodeKind,
