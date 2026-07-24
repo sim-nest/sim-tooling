@@ -93,6 +93,20 @@ refreshes `.sim/atelier/shell.json`. The aggregate loads the Site graph,
 Constellation Index, tool catalog, Retrieval Radar panels, Guideline Firewall
 report, navigation sections, validation status, repo state, and editor policy.
 
+## Index Vault Export
+
+`cargo run -p xtask -- index export --input <index.sx> --profile <profile> --vault-root <dir>`
+projects a public SIM Index graph into a managed Markdown namespace inside a
+user-selected vault root. Profiles are `portable`, `obsidian`, `seqlog`, and
+`logseq`; `--namespace` defaults to `SIM-Index`, and `--granularity` defaults to
+`compact`.
+
+`--plan` prints the deterministic artifact summary without writing. `--check`
+proves an existing managed namespace matches the current graph. Write mode
+updates only the managed namespace described by its manifest, refuses edited
+managed notes, and leaves sibling user notes and application configuration
+outside the namespace unchanged.
+
 ## Documentation Lanes
 
 `cargo run -p xtask -- simdoc` builds the public documentation lanes:

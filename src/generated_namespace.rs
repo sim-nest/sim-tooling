@@ -65,6 +65,36 @@ impl ManagedNamespace {
         }
     }
 
+    pub(crate) fn diff(
+        &self,
+        seed: &VaultManifestSeed,
+        artifacts: &ArtifactSet,
+    ) -> Result<NamespaceDiff, String> {
+        let expected = self.expected_manifest(seed, artifacts);
+        let snapshot = self.inspect_current(&expected)?;
+        let CurrentNamespace::Owned { files, .. } = snapshot.current else {
+            return Ok(NamespaceDiff {
+                namespace: self.namespace_text.clone(),
+                changed_artifacts: artifacts.iter().count(),
+                unchanged_artifacts: 0,
+            });
+        };
+        let changed_expected = expected
+            .artifacts
+            .iter()
+            .filter(|(path, digest)| files.get(*path) != Some(*digest))
+            .count();
+        let removed_previous = files
+            .keys()
+            .filter(|path| !expected.artifacts.contains_key(*path))
+            .count();
+        Ok(NamespaceDiff {
+            namespace: self.namespace_text.clone(),
+            changed_artifacts: changed_expected + removed_previous,
+            unchanged_artifacts: expected.artifacts.len() - changed_expected,
+        })
+    }
+
     pub(crate) fn check(
         &self,
         seed: &VaultManifestSeed,
@@ -197,6 +227,13 @@ pub(crate) struct NamespacePlan {
     pub(crate) manifest_path: PathBuf,
     pub(crate) artifact_count: usize,
     pub(crate) byte_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NamespaceDiff {
+    pub(crate) namespace: String,
+    pub(crate) changed_artifacts: usize,
+    pub(crate) unchanged_artifacts: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

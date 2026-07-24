@@ -16,8 +16,8 @@
 //! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
 //! - `index seed` -- extract private migration seed rows from legacy markdown.
 //! - `index merge`, `index fixpoint`, `index render`, `index find`,
-//!   `index route`, `index overlap`, and `index snapshot` -- build, query, and
-//!   stage the public constellation index.
+//!   `index route`, `index overlap`, `index snapshot`, and `index export` --
+//!   build, query, stage, and project the public constellation index.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -68,6 +68,7 @@ mod index_snapshot;
 mod index_source;
 mod index_specimen_scan;
 mod index_surface_scan;
+mod index_vault;
 mod index_vault_graph;
 mod index_vault_graph_model;
 mod index_vault_link;
@@ -90,6 +91,8 @@ mod index_vault_graph_tests;
 mod index_vault_profile_tests;
 #[cfg(test)]
 mod index_vault_render_tests;
+#[cfg(test)]
+mod index_vault_tests;
 #[cfg(test)]
 mod index_vault_write_tests;
 
