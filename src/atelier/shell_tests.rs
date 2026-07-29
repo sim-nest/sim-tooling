@@ -99,6 +99,7 @@ fn source_radar_default_matches_explicit_backend() {
     fixture
         .repo("sim-web")
         .cargo("sim-web-shell")
+        .rust_lib("pub fn fixture() {}\n")
         .readme("Codec lisp agent guard.")
         .git_clean();
     fixture.write_manifest(&[repo_row("sim-web", "sim-web", &["sim-web-shell"])]);
@@ -106,6 +107,13 @@ fn source_radar_default_matches_explicit_backend() {
     let implicit = fixture.shell(false);
     let explicit = fixture.shell_with_backend(false, AtelierBackend::SourceRadar);
     assert_eq!(implicit, explicit);
+    assert!(
+        implicit["index"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "a valid fixture keeps command-timing diagnostics out of equality"
+    );
     assert!(implicit.get("contract_native").is_none());
     assert!(!panel_ids(&implicit).contains(&"contract-native".to_owned()));
     assert!(implicit["startup"].get("backend").is_none());
