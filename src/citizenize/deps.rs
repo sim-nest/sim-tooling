@@ -35,9 +35,9 @@ fn dependency_spec(krate: &CrateInfo, dep: &str, mode: DependencyMode) -> String
 
 fn published_version(dep: &str) -> &'static str {
     match dep {
-        "sim-citizen" => "0.1.1",
-        "sim-citizen-derive" => "0.1.0",
-        "sim-kernel" => "0.1.3",
+        "sim-citizen" => "0.2.0",
+        "sim-citizen-derive" => "0.2.0",
+        "sim-kernel" => "0.2.0",
         _ => "0.1",
     }
 }
