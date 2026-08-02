@@ -60,7 +60,8 @@ pub(crate) fn repo_contract_for_repo(
     check: bool,
     repo: &Path,
 ) -> Result<RepoContractReport, String> {
-    let artifacts = contract_artifacts(repo)?;
+    let repo = repo.canonicalize().map_err(display_io)?;
+    let artifacts = contract_artifacts(&repo)?;
     let package_count = artifacts.package_count;
     let generated_dir = repo.join("docs/generated");
     if !check {
@@ -83,6 +84,8 @@ pub(crate) struct ContractArtifacts {
 }
 
 pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, String> {
+    let repo = repo.canonicalize().map_err(display_io)?;
+    let repo = repo.as_path();
     let metadata = cargo_metadata(repo)?;
     let workspace_names = workspace_package_names(&metadata)?;
     let cut = crate::repo_contract_cut::load_or_derive_split_cut(repo, &workspace_names)?;

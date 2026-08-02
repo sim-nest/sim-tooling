@@ -39,5 +39,18 @@ toml = "0.8"
 [patch."https://github.com/sim-nest/sim-codecs"]
 sim-codec-index = { path = "../sim-codecs/crates/sim-codec-index" }
 
+[patch."https://github.com/sim-nest/sim-foundation"]
+sim-index-core = { path = "../sim-foundation/crates/sim-index-core" }
+
+[patch.crates-io]
+sim-citizen = { path = "../sim-citizen/crates/sim-citizen" }
+sim-citizen-derive = { path = "../sim-citizen/crates/sim-citizen-derive" }
+sim-cookbook = { path = "../sim-foundation/crates/sim-cookbook" }
+sim-codec-json = { path = "../sim-codecs/crates/sim-codec-json" }
+sim-kernel = { path = "../sim-kernel" }
+sim-lib-net-core = { path = "../sim-foundation/crates/sim-lib-net-core" }
+sim-shape = { path = "../sim-shape" }
+sim-value = { path = "../sim-foundation/crates/sim-value" }
+
 [lints]
 workspace = true
