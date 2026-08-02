@@ -36,5 +36,8 @@ sim-lib-net-core = "0.1.4"
 syn = { version = "2", features = ["full"] }
 toml = "0.8"
 
+[patch."https://github.com/sim-nest/sim-codecs"]
+sim-codec-index = { path = "../sim-codecs/crates/sim-codec-index" }
+
 [lints]
 workspace = true
