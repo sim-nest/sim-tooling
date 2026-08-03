@@ -30,10 +30,10 @@ pub(crate) fn index_doc(
     packages: &[PackageContract],
     cards: &[Value],
 ) -> Result<IndexDoc, String> {
-    let (mut subjects, mut edges) = package_subjects(repo, packages);
+    let (mut subjects, package_edges) = package_subjects(repo, packages);
     let (card_subjects, card_edges) = card_owner_subjects(repo, cards);
     subjects.extend(card_subjects);
-    edges.extend(card_edges);
+    let edges = merge_edges(package_edges, card_edges);
     let anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
     let discovered = crate::index_surface_scan::discovered(repo, packages, &anchors);
     let specimens = crate::index_specimen_scan::discovered(repo, packages);
@@ -49,6 +49,15 @@ pub(crate) fn index_doc(
     }
     check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
     Ok(doc)
+}
+
+fn merge_edges(package_edges: Vec<IndexEdge>, card_edges: Vec<IndexEdge>) -> Vec<IndexEdge> {
+    let mut edges = BTreeMap::new();
+    for edge in package_edges.into_iter().chain(card_edges) {
+        let key = (edge.from.clone(), edge.rel.clone(), edge.to.clone());
+        edges.entry(key).or_insert(edge);
+    }
+    edges.into_values().collect()
 }
 
 fn merge_subjects(left: Vec<SubjectRecord>, right: Vec<SubjectRecord>) -> Vec<SubjectRecord> {
@@ -477,6 +486,31 @@ mod tests {
             .collect::<BTreeSet<_>>();
 
         assert!(ids.contains("crate/sim-lib-stream-jack-provider"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn package_and_card_ownership_share_one_contains_edge() {
+        let root = temp_root("sim-tooling-index-fragment-shared-owner");
+        let cards = vec![json!({
+            "id": "cookbook/demo",
+            "kind": "cookbook-recipe",
+            "owner": "demo"
+        })];
+
+        let doc = index_doc(&root, &[package("demo", "")], &cards)
+            .expect("package and card ownership deduplicate");
+        let matching = doc
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.from == format!("repo/{}", repo_name(&root))
+                    && edge.rel == "contains"
+                    && edge.to == "crate/demo"
+            })
+            .count();
+        assert_eq!(matching, 1);
 
         fs::remove_dir_all(root).unwrap();
     }
