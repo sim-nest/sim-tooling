@@ -77,6 +77,7 @@ mod index_vault_manifest;
 mod index_vault_profile;
 mod index_vault_render;
 mod index_vault_render_writer;
+mod json_render;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;

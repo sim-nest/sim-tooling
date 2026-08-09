@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::{
+    json_render,
     repo_contract::{GENERATED_MARKER, GENERATOR, PackageContract},
     repo_contract_cut::SplitCut,
 };
@@ -26,23 +27,26 @@ pub(crate) fn artifacts(
     let mut map = BTreeMap::new();
     map.insert(
         "repo-contract.json",
-        pretty(json!({
-            "generator": GENERATOR,
-            "package_count": input.packages.len(),
-            "group_count": input.cut.groups.len(),
-            "card_count": input.cards.len(),
-            "citizen_count": input.citizens.len(),
-            "non_citizen_exemption_count": input.exemptions.len(),
-            "recipe_book_count": input.recipes.len(),
-            "groups": input.cut.groups,
-            "group_order": input.cut.group_order,
-            "packages": input.packages.iter().map(package_json).collect::<Vec<_>>(),
-            "cards": input.cards,
-            "citizens": input.citizens,
-            "non_citizen_exemptions": input.exemptions,
-            "recipes": input.recipes,
-            "provenance": input.provenance,
-        }))?,
+        json_render::pretty(
+            json!({
+                "generator": GENERATOR,
+                "package_count": input.packages.len(),
+                "group_count": input.cut.groups.len(),
+                "card_count": input.cards.len(),
+                "citizen_count": input.citizens.len(),
+                "non_citizen_exemption_count": input.exemptions.len(),
+                "recipe_book_count": input.recipes.len(),
+                "groups": input.cut.groups,
+                "group_order": input.cut.group_order,
+                "packages": input.packages.iter().map(package_json).collect::<Vec<_>>(),
+                "cards": input.cards,
+                "citizens": input.citizens,
+                "non_citizen_exemptions": input.exemptions,
+                "recipes": input.recipes,
+                "provenance": input.provenance,
+            }),
+            "repository contract",
+        )?,
     );
     map.insert(
         "repo-contract.md",
@@ -55,30 +59,42 @@ pub(crate) fn artifacts(
             input.cards,
         ),
     );
-    map.insert("provenance.json", pretty(input.provenance.clone())?);
+    map.insert(
+        "provenance.json",
+        json_render::pretty(input.provenance.clone(), "repository provenance")?,
+    );
     map.insert(
         "rustdoc-index.json",
-        pretty(json!({
-            "generator": GENERATOR,
-            "packages": input.packages.iter().map(rustdoc_json).collect::<Vec<_>>(),
-        }))?,
+        json_render::pretty(
+            json!({
+                "generator": GENERATOR,
+                "packages": input.packages.iter().map(rustdoc_json).collect::<Vec<_>>(),
+            }),
+            "rustdoc index",
+        )?,
     );
     map.insert("rustdoc-index.md", rustdoc_markdown(input.packages));
     map.insert(
         "card-index.json",
-        pretty(json!({
-            "generator": GENERATOR,
-            "card_count": input.cards.len(),
-            "cards": input.cards,
-        }))?,
+        json_render::pretty(
+            json!({
+                "generator": GENERATOR,
+                "card_count": input.cards.len(),
+                "cards": input.cards,
+            }),
+            "card index",
+        )?,
     );
     map.insert("card-index.md", card_markdown(input.cards));
     map.insert(
         "feature-map.json",
-        pretty(json!({
-            "generator": GENERATOR,
-            "packages": input.packages.iter().map(feature_json).collect::<Vec<_>>(),
-        }))?,
+        json_render::pretty(
+            json!({
+                "generator": GENERATOR,
+                "packages": input.packages.iter().map(feature_json).collect::<Vec<_>>(),
+            }),
+            "feature map",
+        )?,
     );
     map.insert("feature-map.md", feature_markdown(input.packages));
     map.insert("sim-index-fragment.sx", input.index_fragment.to_owned());
@@ -205,13 +221,6 @@ fn feature_markdown(packages: &[PackageContract]) -> String {
         ));
     }
     out
-}
-
-fn pretty(value: Value) -> Result<String, String> {
-    let mut out =
-        serde_json::to_string_pretty(&value).map_err(|err| format!("serialize json: {err}"))?;
-    out.push('\n');
-    Ok(out)
 }
 
 fn markdown_cell(text: &str) -> String {

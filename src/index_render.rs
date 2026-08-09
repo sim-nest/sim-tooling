@@ -615,9 +615,8 @@ fn cards_jsonl(doc: &IndexDoc) -> Result<String, String> {
     Ok(out)
 }
 
-fn canonical_json_line(mut value: Value) -> Result<String, String> {
-    value.sort_all_objects();
-    serde_json::to_string(&value).map_err(|err| format!("serialize card: {err}"))
+fn canonical_json_line(value: Value) -> Result<String, String> {
+    crate::json_render::compact(value, "card")
 }
 
 fn feature_card(feature: &FeatureRecord) -> Value {
