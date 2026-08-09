@@ -186,6 +186,17 @@ fn render_fixture_artifacts_keep_golden_bytes() {
 }
 
 #[test]
+fn card_json_lines_ignore_nested_object_insertion_order() {
+    let left = serde_json::from_str(r#"{"b":1,"a":{"d":2,"c":3}}"#).unwrap();
+    let right = serde_json::from_str(r#"{"a":{"c":3,"d":2},"b":1}"#).unwrap();
+
+    assert_eq!(
+        canonical_json_line(left).unwrap(),
+        canonical_json_line(right).unwrap()
+    );
+}
+
+#[test]
 fn render_check_keeps_the_stale_message_contract() {
     let root = temp_root();
     let files = ArtifactSet::new(vec![
