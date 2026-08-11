@@ -413,10 +413,7 @@ fn catalog_json(entries: &[PackageEntry]) -> Result<String, String> {
         "package_count": entries.len(),
         "packages": packages,
     });
-    let mut out = serde_json::to_string_pretty(&value)
-        .map_err(|err| format!("serialize crate catalog json: {err}"))?;
-    out.push('\n');
-    Ok(out)
+    crate::json_render::pretty(value, "crate catalog json")
 }
 
 fn catalog_markdown(entries: &[PackageEntry]) -> String {

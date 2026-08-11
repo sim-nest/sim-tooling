@@ -609,10 +609,14 @@ fn cards_jsonl(doc: &IndexDoc) -> Result<String, String> {
     });
     let mut out = String::new();
     for row in rows {
-        out.push_str(&serde_json::to_string(&row).map_err(|err| format!("serialize card: {err}"))?);
+        out.push_str(&canonical_json_line(row)?);
         out.push('\n');
     }
     Ok(out)
+}
+
+fn canonical_json_line(value: Value) -> Result<String, String> {
+    crate::json_render::compact(value, "card")
 }
 
 fn feature_card(feature: &FeatureRecord) -> Value {

@@ -70,13 +70,6 @@ summary = "Project the public SIM Index into a managed Markdown vault namespace 
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
 guidance = "Use this row when exporting Index evidence into a Markdown vault. Authors still add features, routes, and generated documentation through the generated-doc owner; this exporter consumes the checked public graph and writes only its managed namespace."
-claims_anchors = [
-  "anchor/cli/xtask",
-]
-claims_surfaces = [
-  "cli/xtask",
-  "docs/sim-tooling/generated",
-]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_vault_tests",
 ]
