@@ -13,7 +13,10 @@ pub(crate) fn ensure_package_metadata(text: &str, description: &str) -> String {
         insertions.push("readme = \"README.md\"".to_owned());
     }
     if !has_package_key(&lines, start, end, "publish") {
-        insertions.push("publish = false".to_owned());
+        // Cargo permits publication when `package.publish` is absent. Make
+        // that effective value explicit without changing release semantics as
+        // a side effect of regenerating documentation metadata.
+        insertions.push("publish = true".to_owned());
     }
     if insertions.is_empty() {
         return text.to_owned();
@@ -64,4 +67,29 @@ fn package_insert_index(lines: &[String], start: usize, end: usize) -> usize {
 
 fn toml_string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_package_metadata;
+
+    #[test]
+    fn missing_publish_preserves_cargo_default() {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n";
+
+        let updated = ensure_package_metadata(manifest, "Demo package");
+
+        assert!(updated.contains("publish = true\n"));
+        assert!(!updated.contains("publish = false\n"));
+    }
+
+    #[test]
+    fn explicit_publish_policy_is_unchanged() {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n";
+
+        let updated = ensure_package_metadata(manifest, "Demo package");
+
+        assert_eq!(updated.matches("publish = false").count(), 1);
+        assert!(!updated.contains("publish = true\n"));
+    }
 }
