@@ -202,7 +202,6 @@ pub struct PlainRecord {
     citizenize_path(&fixture).unwrap();
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
     assert!(!manifest.contains("path ="));
-    patch_published_fixture_dependencies(&fixture);
     let status = Command::new("cargo")
         .arg("check")
         .arg("--manifest-path")
@@ -281,61 +280,6 @@ fn patch_transitive_kernel_dependency(root: &Path) {
         ),
     )
     .unwrap();
-}
-
-fn patch_published_fixture_dependencies(root: &Path) {
-    let manifest_path = root.join("Cargo.toml");
-    let manifest = fs::read_to_string(&manifest_path).unwrap();
-    if manifest.contains("[patch.crates-io]") {
-        return;
-    }
-    let patches = [
-        ("sim-citizen", local_dependency_root("sim-citizen")),
-        (
-            "sim-citizen-derive",
-            local_dependency_root("sim-citizen-derive"),
-        ),
-        ("sim-kernel", local_dependency_root("sim-kernel")),
-        ("sim-value", local_dependency_root("sim-value")),
-    ];
-    let mut patched = format!("{manifest}\n[patch.crates-io]\n");
-    for (crate_name, path) in patches {
-        patched.push_str(&format!(
-            "{crate_name} = {{ path = \"{}\" }}\n",
-            path.display().to_string().replace('\\', "\\\\")
-        ));
-    }
-    fs::write(manifest_path, patched).unwrap();
-}
-
-fn local_dependency_root(crate_name: &str) -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if manifest_dir
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == "packages")
-    {
-        return manifest_dir
-            .parent()
-            .expect("meta-workspace package should have a packages parent")
-            .join(crate_name);
-    }
-
-    let repo_root = manifest_dir;
-    let parent = repo_root
-        .parent()
-        .expect("sim-tooling checkout should have sibling repos");
-    match crate_name {
-        "sim-citizen" | "sim-citizen-derive" => {
-            parent.join("sim-citizen").join("crates").join(crate_name)
-        }
-        "sim-kernel" => parent.join("sim-kernel"),
-        "sim-value" => parent
-            .join("sim-foundation")
-            .join("crates")
-            .join("sim-value"),
-        _ => repo_root.join("crates").join(crate_name),
-    }
 }
 
 fn dependency_path_in_manifest(manifest: &str, name: &str) -> Option<String> {
