@@ -28,7 +28,7 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 serde_json = "1"
 sha2 = "0.10"
 sim-cookbook = "0.2.0"
-sim-codec-index = { version = "0.2.0", git = "https://github.com/sim-nest/sim-codecs", rev = "e50dffe45dd5ef0c2e42dbf5370f6cb8724ac696" }
+sim-codec-index = { version = "0.2.0", git = "https://github.com/sim-nest/sim-codecs", rev = "89320a0f0158e3399b08c8cf97df194912969233" }
 sim-codec-json = "0.2.0"
 sim-index-core = { version = "0.1.0", git = "https://github.com/sim-nest/sim-foundation", rev = "545515c9fcbf17d1ed982756788b3f4c2363da3b" }
 sim-kernel = "0.2.0"
