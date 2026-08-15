@@ -17,9 +17,14 @@ use crate::{
     index_source::SourceResolver,
 };
 
+#[path = "index_overlap_policy.rs"]
+mod policy;
+use policy::{CoveragePolicy, protocol_coverage_findings};
+
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = OverlapOptions::parse(&args)?;
     let report = read_overlap_report(options.clusters.as_ref(), options.strict)?;
+    let policy = CoveragePolicy::read(options.policy.as_ref(), options.strict)?;
     let doc = load_doc(&options.input)?;
     let sources = SourceResolver::from_options(
         options.control_root.as_deref(),
@@ -31,8 +36,10 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         implementation_shape_clusters(&doc, &sources)?;
     clusters.extend(implementation_clusters);
     let (role_findings, role_classification) = protocol_role_findings(&doc);
+    let (coverage_findings, coverage_classification) = protocol_coverage_findings(&doc, &policy);
     let mut findings = overlap_findings(&doc, &sources, &clusters);
     findings.extend(role_findings);
+    findings.extend(coverage_findings);
     let strict_findings = findings
         .iter()
         .filter(|finding| finding.strict)
@@ -63,6 +70,13 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
                 "gap_members": role_classification.gap_members,
                 "policy_members": role_classification.policy_members,
                 "policy_causes": role_classification.policy_causes,
+            },
+            "protocol_coverage_classification": {
+                "configured_protocols": policy.protocols.len(),
+                "applicable_implementations": coverage_classification.applicable,
+                "covered_implementations": coverage_classification.covered,
+                "exempt_implementations": coverage_classification.exempt,
+                "uncovered_implementations": coverage_classification.uncovered,
             },
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
         }))
@@ -221,6 +235,7 @@ fn has_edge_path(doc: &IndexDoc, from: &str, to: &str, relations: &[&str]) -> bo
 struct OverlapOptions {
     input: PathBuf,
     clusters: Option<PathBuf>,
+    policy: Option<PathBuf>,
     control_root: Option<PathBuf>,
     repos_manifest: Option<PathBuf>,
     json: bool,
@@ -237,6 +252,7 @@ impl OverlapOptions {
         }
         let mut input = None;
         let mut clusters = None;
+        let mut policy = None;
         let mut control_root = None;
         let mut repos_manifest = None;
         let mut json = false;
@@ -254,6 +270,12 @@ impl OverlapOptions {
                     index += 1;
                     clusters = Some(PathBuf::from(
                         args.get(index).ok_or("--clusters requires a path")?,
+                    ));
+                }
+                "--policy" => {
+                    index += 1;
+                    policy = Some(PathBuf::from(
+                        args.get(index).ok_or("--policy requires a path")?,
                     ));
                 }
                 "--control-root" => {
@@ -284,6 +306,7 @@ impl OverlapOptions {
             input: input
                 .ok_or_else(|| format!("index overlap requires --input; {}", usage(program)))?,
             clusters,
+            policy,
             control_root,
             repos_manifest,
             json,
@@ -294,7 +317,7 @@ impl OverlapOptions {
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
+        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--policy <policy.toml>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
     )
 }
 
@@ -312,6 +335,20 @@ struct Finding {
 }
 
 impl Finding {
+    fn coverage(protocol: &str, reason: &str, detail: String, classification: &str) -> Self {
+        Self {
+            cluster: format!("protocol-coverage/{protocol}"),
+            member: None,
+            left: None,
+            right: None,
+            source_classification: Some(classification.to_owned()),
+            graph_relation: Some("implements".to_owned()),
+            reason: reason.to_owned(),
+            detail,
+            strict: true,
+        }
+    }
+
     fn source_member(
         cluster: &CloneCluster,
         member: &OverlapMember,
@@ -429,6 +466,16 @@ fn overlap_findings(
     let mut findings = Vec::new();
     for cluster in clusters {
         for member in &cluster.members {
+            if member.classification == SourceClassification::Candidate {
+                findings.push(Finding::source_member(
+                    cluster,
+                    member,
+                    "unresolved-candidate",
+                    "candidate has not been classified keep, delegated, or repaired".to_owned(),
+                    true,
+                ));
+                continue;
+            }
             if member.classification == SourceClassification::Regression {
                 findings.push(Finding::source_member(
                     cluster,

@@ -106,7 +106,7 @@ fn classified_source_members_resolve_without_graph_findings() {
 }
 
 #[test]
-fn mapped_candidate_members_remain_advisory() {
+fn mapped_candidate_members_fail_the_complete_board() {
     let fixture = OverlapFixture::new("sim-tooling-overlap-candidate");
     let report_path = fixture.report(&json!({
         "schema": "sim.overlap-report/v1",
@@ -128,15 +128,18 @@ fn mapped_candidate_members_remain_advisory() {
 
     let findings = overlap_findings(&fixture.doc(false), &sources, &report.clusters);
 
+    assert_eq!(findings.len(), 2);
+    assert!(findings.iter().all(|finding| finding.strict));
     assert!(
-        findings.is_empty(),
-        "candidate source rows map but do not become strict graph findings"
+        findings
+            .iter()
+            .all(|finding| finding.reason == "unresolved-candidate")
     );
     fixture.cleanup();
 }
 
 #[test]
-fn mapped_candidate_without_feature_is_advisory_finding() {
+fn mapped_candidate_without_feature_is_unresolved_finding() {
     let fixture = OverlapFixture::new("sim-tooling-overlap-unindexed-candidate");
     let report_path = fixture.report(&json!({
         "schema": "sim.overlap-report/v1",
@@ -158,8 +161,8 @@ fn mapped_candidate_without_feature_is_advisory_finding() {
     let findings = overlap_findings(&doc, &sources, &report.clusters);
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].reason, "unindexed-source-member");
-    assert!(!findings[0].strict);
+    assert_eq!(findings[0].reason, "unresolved-candidate");
+    assert!(findings[0].strict);
     fixture.cleanup();
 }
 
@@ -197,12 +200,7 @@ fn unmapped_and_ambiguous_candidate_members_are_strict_findings() {
     assert!(
         findings
             .iter()
-            .any(|finding| finding.reason == "unmapped-source-member")
-    );
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.reason == "ambiguous-source-member")
+            .all(|finding| finding.reason == "unresolved-candidate")
     );
     fixture.cleanup();
 }
@@ -329,6 +327,64 @@ fn explicit_delegation_satisfies_a_protocol_role() {
     assert_eq!(classification.satisfied_members, 1);
 }
 
+#[test]
+fn configured_protocol_coverage_is_finite_and_fail_closed() {
+    let mut doc = IndexDoc::public("protocol-coverage");
+    add_protocol_owner(&mut doc, "function", "sim_kernel::Function");
+    add_role_member(&mut doc, "CoveredFunction", "function", true, true);
+    add_role_member(&mut doc, "ExemptFunction", "function", true, true);
+    add_role_member(&mut doc, "UncoveredFunction", "function", true, true);
+    for name in ["ExemptFunction", "UncoveredFunction"] {
+        let feature = doc
+            .features
+            .iter_mut()
+            .find(|feature| feature.id.as_str() == format!("feature/member/{name}"))
+            .unwrap();
+        feature.anchors.clear();
+    }
+    let exempt_anchor = "anchor/member/ExemptFunction".to_owned();
+    let mut policy = CoveragePolicy::default();
+    policy.protocols.insert("sim_kernel::Function".to_owned());
+    policy.exemptions.insert(
+        exempt_anchor.clone(),
+        policy::CoverageExemption {
+            anchor: exempt_anchor,
+            reason: "generated adapter is intentionally internal to its claimed facade".to_owned(),
+        },
+    );
+
+    let (findings, classification) = protocol_coverage_findings(&doc, &policy);
+
+    assert_eq!(classification.applicable, 3);
+    assert_eq!(classification.covered, 1);
+    assert_eq!(classification.exempt, 1);
+    assert_eq!(classification.uncovered, 1);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].reason, "uncovered-protocol");
+    assert!(findings[0].strict);
+}
+
+#[test]
+fn stale_protocol_coverage_exemption_fails() {
+    let mut policy = CoveragePolicy::default();
+    policy.protocols.insert("sim_kernel::Function".to_owned());
+    policy.exemptions.insert(
+        "anchor/missing".to_owned(),
+        policy::CoverageExemption {
+            anchor: "anchor/missing".to_owned(),
+            reason: "fixture proves exemptions cannot silently outlive source".to_owned(),
+        },
+    );
+
+    let (findings, classification) =
+        protocol_coverage_findings(&IndexDoc::public("empty"), &policy);
+
+    assert_eq!(classification.applicable, 0);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].reason, "stale-coverage-exemption");
+    assert!(findings[0].strict);
+}
+
 fn add_protocol_owner(doc: &mut IndexDoc, key: &str, protocol: &str) {
     let anchor = AnchorId::new(format!("anchor/protocol/{key}"));
     doc.declarations.push(declaration_fact(
@@ -427,6 +483,7 @@ fn strict_options(clusters: Option<PathBuf>) -> OverlapOptions {
     OverlapOptions {
         input: PathBuf::from("index.sx"),
         clusters,
+        policy: None,
         control_root: None,
         repos_manifest: None,
         json: false,
