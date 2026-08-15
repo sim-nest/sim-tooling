@@ -78,6 +78,21 @@ supports = [
   "feature/sim-tooling/generated-docs",
 ]
 
+[[feature]]
+id = "feature/sim-tooling/benchmark-environment-compatibility"
+title = "Benchmark environment compatibility"
+summary = "Probe typed host and build evidence and refuse benchmark comparisons when policy-required material fields are unavailable or differ."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use the inventory-backed DeclaredHost identity with probe_environment, then apply a CompatibilityPolicy before comparing benchmark results. Treat unavailable evidence as a refusal; never substitute a hostname label or guessed host property."
+claims_anchors = [
+  "anchor/rustdoc/xtask/compatibility-policy",
+  "anchor/rustdoc/xtask/compatibility_mismatches",
+  "anchor/rustdoc/xtask/declared-host",
+  "anchor/rustdoc/xtask/environment-probe",
+  "anchor/rustdoc/xtask/probe_environment",
+]
+
 [[route]]
 id = "route/add-generated-doc"
 task = "Add a generated doc"
