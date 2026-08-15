@@ -33,6 +33,26 @@ struct AuthoredRelation {
     to: FeatureId,
 }
 
+impl AuthoredOverlay {
+    pub(crate) fn features(&self) -> impl Iterator<Item = (&str, &SubjectId)> {
+        self.features
+            .iter()
+            .map(|feature| (feature.draft.id.as_str(), &feature.draft.subject))
+    }
+
+    pub(crate) fn relations(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.features.iter().flat_map(|feature| {
+            feature.relations.iter().map(move |relation| {
+                (
+                    feature.draft.id.as_str(),
+                    relation.rel.as_str(),
+                    relation.to.as_str(),
+                )
+            })
+        })
+    }
+}
+
 pub(crate) fn load_optional(repo: &Path) -> Result<Option<AuthoredOverlay>, String> {
     let path = repo.join(FEATURES_FILE);
     if !path.is_file() {
@@ -223,6 +243,8 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
             "protocol_role",
             "depends_on",
             "delegates_to",
+            "reuses",
+            "composes",
             "doc_anchor",
         ],
         &label,
@@ -273,6 +295,8 @@ fn relation_lists(table: &Table, label: &str) -> Result<Vec<AuthoredRelation>, S
         ("protocol_role", "protocol-role"),
         ("depends_on", "depends-on"),
         ("delegates_to", "delegates-to"),
+        ("reuses", "reuses"),
+        ("composes", "composes"),
     ] {
         relations.extend(
             optional_string_list(table, key, label)?

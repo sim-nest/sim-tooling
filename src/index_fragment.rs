@@ -52,6 +52,7 @@ pub(crate) fn index_doc(
     doc.drafts = discovered.drafts;
     doc.edges = edges;
     if let Some(overlay) = crate::index_author::load_optional(repo)? {
+        crate::index_composition::check_authored_composition(repo, packages, &doc, &overlay)?;
         doc = crate::index_author::merge_authored(doc, overlay)?;
     }
     check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
@@ -617,6 +618,7 @@ steps = [
                 "src": if root.is_empty() { "src/lib.rs".to_owned() } else { format!("{root}/src/lib.rs") },
             })],
             dependencies: Vec::new(),
+            source_dependencies: Vec::new(),
             features: Vec::new(),
             rustdoc_summary: format!("{name} docs"),
         }

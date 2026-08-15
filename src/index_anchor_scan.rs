@@ -634,6 +634,7 @@ mod tests {
             target_kinds: vec!["lib".to_owned(), "bin".to_owned()],
             targets: Vec::new(),
             dependencies: Vec::new(),
+            source_dependencies: Vec::new(),
             features: Vec::new(),
             rustdoc_summary: format!("{name} docs"),
         }

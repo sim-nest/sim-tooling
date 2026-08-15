@@ -52,6 +52,7 @@ mod generator_options;
 mod index_anchor_scan;
 mod index_author;
 mod index_check;
+mod index_composition;
 mod index_doctor;
 mod index_find;
 mod index_fixpoint;

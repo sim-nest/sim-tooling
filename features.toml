@@ -46,10 +46,10 @@ claims_specimens = [
 [[feature]]
 id = "feature/sim-index/core"
 title = "SIM Index core"
-summary = "Generate, query, route, prove, and check duplicate implementation overlap, including normalized public record-shape, resolved protocol implementation-shape candidates, and configured protocol-role gaps, in the SIM Index graph as a checked constellation surface."
+summary = "Generate, query, route, prove, and check duplicate implementation overlap and source-backed authored composition claims in the SIM Index graph as a checked constellation surface."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, reviewing source, normalized record-shape, conservative protocol implementation-shape overlap, and authored protocol-role coverage on one board, or proving the generated index is current. Implementation candidates require the same resolved protocol and alpha-normalized body shape; protocol-role questions additionally require an authored role plus a graph dependency path to its trait owner, so policy records, prototypes, predicates, and metatables are not inferred from nominal similarity."
+guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, reviewing source, normalized record-shape, conservative protocol implementation-shape overlap, authored protocol-role coverage, and authored reuses or composes relations on one board, or proving the generated index is current. Implementation candidates require the same resolved protocol and alpha-normalized body shape; protocol-role questions additionally require an authored role plus a graph dependency path to its trait owner, so policy records, prototypes, predicates, and metatables are not inferred from nominal similarity. Reuse and composition claims resolve to owner packages and require both a normal dependency and a reachable production call, impl, or type-use fact unless an explicit checked delegation edge records the indirection."
 claims_anchors = [
   "anchor/cli/xtask",
 ]
