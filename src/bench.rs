@@ -12,6 +12,8 @@ use crate::content_digest::content_digest;
 
 #[path = "bench/env.rs"]
 pub mod env;
+#[path = "bench/exec.rs"]
+pub mod exec;
 #[path = "bench/run.rs"]
 pub mod run;
 

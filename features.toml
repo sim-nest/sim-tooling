@@ -111,6 +111,26 @@ claims_anchors = [
   "anchor/rustdoc/xtask/workload",
 ]
 
+[[feature]]
+id = "feature/sim-tooling/benchmark-process-isolation"
+title = "Bounded benchmark process isolation"
+summary = "Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use ProcessDeclaration and execute for process-backed workloads. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample; never introduce shell interpolation or give adapters a recorded result to mutate."
+claims_anchors = [
+  "anchor/rustdoc/xtask/cpu-affinity",
+  "anchor/rustdoc/xtask/execute",
+  "anchor/rustdoc/xtask/execute_adapter",
+  "anchor/rustdoc/xtask/isolation-record",
+  "anchor/rustdoc/xtask/process-declaration",
+  "anchor/rustdoc/xtask/process-sample",
+  "anchor/rustdoc/xtask/workload-adapter",
+]
+composes = [
+  "feature/sim-tooling/benchmark-sampling",
+]
+
 [[route]]
 id = "route/add-generated-doc"
 task = "Add a generated doc"

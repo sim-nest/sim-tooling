@@ -22,6 +22,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | `feature/sim-index/vault-export` | `crate/xtask` | 1 | Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles. |
 | `feature/sim-tooling/benchmark-environment-compatibility` | `crate/xtask` | 0 | Probe typed host and build evidence and refuse benchmark comparisons when policy-required material fields are unavailable or differ. |
 | `feature/sim-tooling/benchmark-sampling` | `crate/xtask` | 0 | Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures. |
+| `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 0 | Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence. |
 
 ## Surfaces
 
