@@ -16,6 +16,12 @@ use crate::{
     repo_contract::PackageContract,
 };
 
+mod declaration;
+
+#[cfg(test)]
+use declaration::{DeclarationEvidence, PublicItemKind};
+use declaration::{DeclarationLimits, declaration_facts};
+
 /// Discovers deterministic anchors for source and generated contract facts.
 pub(crate) fn discovered(
     repo: &Path,
@@ -166,10 +172,8 @@ fn insert_rustdoc_anchors(
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(file) = syn::parse_file(&text) else {
-            continue;
-        };
-        collect_public_items(&file.items, "", &mut items);
+        let scan = declaration_facts(&rel, &text, DeclarationLimits::default());
+        items.extend(scan.facts.into_iter().map(|fact| fact.module_path));
         if rel.ends_with("/lib.rs") || rel == "src/lib.rs" {
             items.insert("crate-root".to_owned());
         }
@@ -182,42 +186,6 @@ fn insert_rustdoc_anchors(
             subject,
             "rustdoc-item",
         );
-    }
-}
-
-fn collect_public_items(items: &[syn::Item], prefix: &str, out: &mut BTreeSet<String>) {
-    for item in items {
-        match item {
-            syn::Item::Const(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.ident.to_string()));
-            }
-            syn::Item::Enum(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.ident.to_string()));
-            }
-            syn::Item::Fn(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.sig.ident.to_string()));
-            }
-            syn::Item::Mod(item) if is_public(&item.vis) => {
-                let name = join_path(prefix, &item.ident.to_string());
-                out.insert(name.clone());
-                if let Some((_, nested)) = &item.content {
-                    collect_public_items(nested, &name, out);
-                }
-            }
-            syn::Item::Static(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.ident.to_string()));
-            }
-            syn::Item::Struct(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.ident.to_string()));
-            }
-            syn::Item::Trait(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.ident.to_string()));
-            }
-            syn::Item::Type(item) if is_public(&item.vis) => {
-                out.insert(join_path(prefix, &item.ident.to_string()));
-            }
-            _ => {}
-        }
     }
 }
 
@@ -375,6 +343,142 @@ pub(crate) fn is_simple_symbol_tail(tail: &str) -> bool {
                     | b'/'
             )
         })
+}
+
+#[cfg(test)]
+mod declaration_fact_tests {
+    use super::*;
+
+    const FIXTURE: &str = r#"
+        pub struct Packet<T: Clone> { pub value: T, hidden: usize }
+        pub enum Move<T> { Send(T), Wait { count: usize } }
+        pub trait Codec<'a, T: 'a> { fn encode(&self, value: T); }
+        pub type ResultOf<T> = Result<T, Error>;
+        pub use crate::wire::{Packet as WirePacket, Move};
+        pub mod nested { pub struct Public; struct Private; }
+    "#;
+
+    #[test]
+    fn covers_public_declaration_shapes_and_nested_paths() {
+        let scan = declaration_facts("src/lib.rs", FIXTURE, DeclarationLimits::default());
+        let paths = scan
+            .facts
+            .iter()
+            .map(|fact| fact.module_path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            paths,
+            BTreeSet::from([
+                "move",
+                "nested",
+                "nested/public",
+                "packet",
+                "result-of",
+                "codec",
+                "wire-packet",
+            ])
+        );
+        assert!(scan.evidence.is_empty());
+        let packet = scan
+            .facts
+            .iter()
+            .find(|fact| fact.module_path == "packet")
+            .unwrap();
+        assert_eq!(packet.kind, PublicItemKind::Struct);
+        assert_eq!(packet.members, ["value:__generic_0"]);
+        let movement = scan
+            .facts
+            .iter()
+            .find(|fact| fact.module_path == "move")
+            .unwrap();
+        assert_eq!(movement.members, ["Send(__generic_0)", "Wait(usize)"]);
+    }
+
+    #[test]
+    fn formatting_comments_and_binder_names_do_not_change_facts() {
+        let left = declaration_facts(
+            "src/lib.rs",
+            "pub struct Pair<T: Clone> { pub left: T, pub right: Vec<T> }",
+            DeclarationLimits::default(),
+        );
+        let right = declaration_facts(
+            "src/lib.rs",
+            "// layout is deliberately unrelated\npub struct Pair<\n U : Clone\n>{pub left:U,pub right:Vec<U>}",
+            DeclarationLimits::default(),
+        );
+        assert_eq!(left.facts, right.facts);
+    }
+
+    #[test]
+    fn semantic_type_and_visibility_changes_are_distinct() {
+        let baseline = declaration_facts(
+            "src/lib.rs",
+            "pub struct Value { pub field: u32 }",
+            DeclarationLimits::default(),
+        );
+        let changed_type = declaration_facts(
+            "src/lib.rs",
+            "pub struct Value { pub field: u64 }",
+            DeclarationLimits::default(),
+        );
+        let changed_visibility = declaration_facts(
+            "src/lib.rs",
+            "pub struct Value { field: u32 }",
+            DeclarationLimits::default(),
+        );
+        assert_ne!(baseline.facts, changed_type.facts);
+        assert_ne!(baseline.facts, changed_visibility.facts);
+    }
+
+    #[test]
+    fn malformed_unsupported_and_bounded_inputs_leave_evidence() {
+        let malformed = declaration_facts(
+            "src/broken.rs",
+            "pub struct {",
+            DeclarationLimits::default(),
+        );
+        assert!(matches!(
+            malformed.evidence.as_slice(),
+            [DeclarationEvidence::Malformed { .. }]
+        ));
+
+        let unsupported = declaration_facts(
+            "src/lib.rs",
+            "pub union Bits { value: u64 }",
+            DeclarationLimits::default(),
+        );
+        assert!(
+            matches!(unsupported.evidence.as_slice(), [DeclarationEvidence::UnsupportedPublicItem { kind, .. }] if kind == "union")
+        );
+
+        let item_limited = declaration_facts(
+            "src/lib.rs",
+            "pub struct A; pub struct B;",
+            DeclarationLimits {
+                max_items: 1,
+                max_syntax_bytes: 100,
+            },
+        );
+        assert_eq!(item_limited.facts.len(), 1);
+        assert!(matches!(
+            item_limited.evidence.as_slice(),
+            [DeclarationEvidence::TruncatedItems { limit: 1, .. }]
+        ));
+
+        let syntax_limited = declaration_facts(
+            "src/lib.rs",
+            "pub type Long<T> = Result<Vec<T>, VeryLongErrorName>;",
+            DeclarationLimits {
+                max_items: 10,
+                max_syntax_bytes: 2,
+            },
+        );
+        assert!(matches!(
+            syntax_limited.evidence.as_slice(),
+            [DeclarationEvidence::TruncatedSyntax { limit: 2, .. }]
+        ));
+        assert!(syntax_limited.facts[0].members.is_empty());
+    }
 }
 
 pub(crate) fn quoted_values(text: &str) -> Vec<String> {
