@@ -131,6 +131,25 @@ composes = [
   "feature/sim-tooling/benchmark-sampling",
 ]
 
+[[feature]]
+id = "feature/sim-tooling/robust-benchmark-comparison"
+title = "Robust benchmark comparison"
+summary = "Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use compare with raw indexed samples, typed environment probes, and an explicit RobustComparisonPolicy. Inspect exclusions and inconclusive reasons before consuming the outcome; incompatible or high-dispersion evidence never becomes a threshold pass."
+claims_anchors = [
+  "anchor/rustdoc/xtask/compare",
+  "anchor/rustdoc/xtask/comparison-report",
+  "anchor/rustdoc/xtask/excluded-sample",
+  "anchor/rustdoc/xtask/robust-comparison-policy",
+  "anchor/rustdoc/xtask/robust-summary",
+]
+composes = [
+  "feature/sim-tooling/benchmark-environment-compatibility",
+  "feature/sim-tooling/benchmark-sampling",
+]
+
 [[route]]
 id = "route/add-generated-doc"
 task = "Add a generated doc"
