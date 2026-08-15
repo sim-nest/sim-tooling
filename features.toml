@@ -46,10 +46,10 @@ claims_specimens = [
 [[feature]]
 id = "feature/sim-index/core"
 title = "SIM Index core"
-summary = "Generate, query, route, prove, and check duplicate implementation overlap, including normalized public record-shape candidates, in the SIM Index graph as a checked constellation surface."
+summary = "Generate, query, route, prove, and check duplicate implementation overlap, including normalized public record-shape and resolved protocol implementation-shape candidates, in the SIM Index graph as a checked constellation surface."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, reviewing source and normalized record-shape overlap on one board, or proving the generated index is current."
+guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, reviewing source, normalized record-shape, and conservative protocol implementation-shape overlap on one board, or proving the generated index is current. Implementation candidates require the same resolved protocol and alpha-normalized body shape; they are discovery evidence, not a claim of semantic equivalence."
 claims_anchors = [
   "anchor/cli/xtask",
 ]

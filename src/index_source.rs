@@ -179,6 +179,70 @@ impl SourceResolver {
             )),
         }
     }
+
+    pub(crate) fn implementation_source(
+        &self,
+        package: &str,
+        protocol_spelling: &str,
+        implementor: &str,
+    ) -> Result<(String, String, u64), String> {
+        let needle = implementor.rsplit("::").next().unwrap_or(implementor);
+        let mut matches = Vec::new();
+        for (repo, root) in &self.repos {
+            let packages = repo_contract_packages(root, repo)?;
+            for source_package in packages.iter().filter(|row| row.name == package) {
+                let source_root = root.join(&source_package.root);
+                for path in rust_sources(&source_root)? {
+                    let text = fs::read_to_string(&path)
+                        .map_err(|err| format!("read {}: {err}", path.display()))?;
+                    let Some((line, _)) = text.lines().enumerate().find(|(_, source)| {
+                        source.contains("impl")
+                            && source.contains(" for ")
+                            && source.contains(protocol_spelling)
+                            && source.contains(needle)
+                    }) else {
+                        continue;
+                    };
+                    let relative = path
+                        .strip_prefix(root)
+                        .map_err(|err| format!("relativize {}: {err}", path.display()))?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    matches.push((repo.clone(), relative, line as u64 + 1));
+                }
+            }
+        }
+        match matches.as_slice() {
+            [found] => Ok(found.clone()),
+            [] => Err(format!(
+                "no implementation source for {package}::{protocol_spelling} for {implementor}"
+            )),
+            _ => Err(format!(
+                "ambiguous implementation source for {package}::{protocol_spelling} for {implementor}"
+            )),
+        }
+    }
+}
+
+fn rust_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut sources = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let entries = fs::read_dir(&directory)
+            .map_err(|err| format!("read directory {}: {err}", directory.display()))?;
+        for entry in entries {
+            let path = entry
+                .map_err(|err| format!("read directory entry in {}: {err}", directory.display()))?
+                .path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push(path);
+            }
+        }
+    }
+    sources.sort();
+    Ok(sources)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

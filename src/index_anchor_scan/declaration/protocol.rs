@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quote::ToTokens;
+use syn::fold::Fold;
 
 use super::{compact_tokens, normalize_tokens};
 
@@ -109,12 +110,7 @@ impl<'a> ProtocolResolver<'a> {
                         protocol: self.resolve(module, protocol),
                         source_spelling: compact_tokens(&protocol.to_token_stream().to_string()),
                         implementor: compact_tokens(&item.self_ty.to_token_stream().to_string()),
-                        body_fingerprint: item
-                            .items
-                            .iter()
-                            .map(|member| normalize_tokens(member, &item.generics))
-                            .collect::<Vec<_>>()
-                            .join(""),
+                        body_fingerprint: implementation_fingerprint(item),
                         source_anchor: format!("{}#declaration-{declaration}", self.file),
                     });
                 }
@@ -223,6 +219,117 @@ impl<'a> ProtocolResolver<'a> {
             BTreeSet::from([target])
         }
     }
+}
+
+fn implementation_fingerprint(item: &syn::ItemImpl) -> String {
+    item.items
+        .iter()
+        .map(|member| match member {
+            syn::ImplItem::Fn(method) => {
+                let mut normalizer = LocalNormalizer::default();
+                for input in &method.sig.inputs {
+                    if let syn::FnArg::Typed(input) = input {
+                        normalizer.collect_pattern(&input.pat);
+                    }
+                }
+                collect_block_locals(&method.block, &mut normalizer);
+                let normalized = normalizer.fold_impl_item_fn(method.clone());
+                normalize_tokens(&normalized, &item.generics)
+            }
+            _ => normalize_tokens(member, &item.generics),
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+#[derive(Default)]
+struct LocalNormalizer {
+    names: BTreeMap<String, String>,
+}
+
+impl LocalNormalizer {
+    fn collect_pattern(&mut self, pattern: &syn::Pat) {
+        match pattern {
+            syn::Pat::Ident(ident) if ident.ident != "self" => {
+                let next = format!("local{}", self.names.len());
+                self.names.entry(ident.ident.to_string()).or_insert(next);
+            }
+            syn::Pat::Ident(ident) => {
+                if let Some((_, pattern)) = &ident.subpat {
+                    self.collect_pattern(pattern);
+                }
+            }
+            syn::Pat::Or(pattern) => pattern
+                .cases
+                .iter()
+                .for_each(|pat| self.collect_pattern(pat)),
+            syn::Pat::Paren(pattern) => self.collect_pattern(&pattern.pat),
+            syn::Pat::Reference(pattern) => self.collect_pattern(&pattern.pat),
+            syn::Pat::Slice(pattern) => pattern
+                .elems
+                .iter()
+                .for_each(|pat| self.collect_pattern(pat)),
+            syn::Pat::Struct(pattern) => pattern
+                .fields
+                .iter()
+                .for_each(|field| self.collect_pattern(&field.pat)),
+            syn::Pat::Tuple(pattern) => pattern
+                .elems
+                .iter()
+                .for_each(|pat| self.collect_pattern(pat)),
+            syn::Pat::TupleStruct(pattern) => pattern
+                .elems
+                .iter()
+                .for_each(|pat| self.collect_pattern(pat)),
+            syn::Pat::Type(pattern) => self.collect_pattern(&pattern.pat),
+            _ => {}
+        }
+    }
+}
+
+impl Fold for LocalNormalizer {
+    fn fold_pat_ident(&mut self, mut pattern: syn::PatIdent) -> syn::PatIdent {
+        if let Some(name) = self.names.get(&pattern.ident.to_string()) {
+            pattern.ident = syn::Ident::new(name, pattern.ident.span());
+        }
+        syn::fold::fold_pat_ident(self, pattern)
+    }
+
+    fn fold_expr_path(&mut self, mut expression: syn::ExprPath) -> syn::ExprPath {
+        if expression.qself.is_none()
+            && expression.path.leading_colon.is_none()
+            && expression.path.segments.len() == 1
+            && let Some(segment) = expression.path.segments.first_mut()
+            && let Some(name) = self.names.get(&segment.ident.to_string())
+        {
+            segment.ident = syn::Ident::new(name, segment.ident.span());
+        }
+        syn::fold::fold_expr_path(self, expression)
+    }
+}
+
+fn collect_block_locals(block: &syn::Block, normalizer: &mut LocalNormalizer) {
+    for statement in &block.stmts {
+        if let syn::Stmt::Local(local) = statement {
+            normalizer.collect_pattern(&local.pat);
+        }
+        // Nested locals are found by the fold's token normalization only after their
+        // names have been collected, so walk expression blocks conservatively.
+        if let syn::Stmt::Expr(expression, _) = statement {
+            collect_expr_locals(expression, normalizer);
+        }
+    }
+}
+
+fn collect_expr_locals(expression: &syn::Expr, normalizer: &mut LocalNormalizer) {
+    struct Collector<'a>(&'a mut LocalNormalizer);
+    impl Fold for Collector<'_> {
+        fn fold_local(&mut self, local: syn::Local) -> syn::Local {
+            self.0.collect_pattern(&local.pat);
+            syn::fold::fold_local(self, local)
+        }
+    }
+    let _ = Collector(normalizer).fold_expr(expression.clone());
 }
 
 fn resolution_from(candidates: BTreeSet<String>) -> ProtocolResolution {
@@ -421,5 +528,28 @@ mod tests {
             right.protocol_impls[0].source_anchor
         );
         assert_eq!(left.protocol_impls[0].implementor, "V");
+    }
+
+    #[test]
+    fn impl_fingerprint_alpha_normalizes_locals_but_preserves_behavior() {
+        let scan = |body| {
+            declaration_facts(
+                "src/lib.rs",
+                &format!("trait Managed {{ fn run(&self); }} struct V; impl Managed for V {{ fn run(&self) {{ {body} }} }}"),
+                DeclarationLimits::default(),
+            )
+            .protocol_impls
+            .remove(0)
+            .body_fingerprint
+        };
+        let javascript = scan("let pending = self.queue.len(); self.clear(pending, 7);");
+        let python = scan("let count = self.queue.len(); self.clear(count, 7);");
+        let different_clearing = scan("let count = self.queue.len(); self.retain(count, 7);");
+
+        assert_eq!(javascript, python);
+        assert_ne!(javascript, different_clearing);
+        assert!(javascript.contains("queue"));
+        assert!(javascript.contains("clear"));
+        assert!(javascript.contains('7'));
     }
 }

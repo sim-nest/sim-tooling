@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use sim_index_core::{FeatureRecord, IndexDoc, SubjectId};
 
 use crate::{
-    index_overlap_record::record_shape_clusters,
+    index_overlap_record::{implementation_shape_clusters, record_shape_clusters},
     index_overlap_report::{
         CloneCluster, OverlapMember, SourceClassification, read_overlap_report,
     },
@@ -27,6 +27,9 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     )?;
     let mut clusters = report.clusters;
     clusters.extend(record_shape_clusters(&doc, &sources)?);
+    let (implementation_clusters, implementation_classification) =
+        implementation_shape_clusters(&doc, &sources)?;
+    clusters.extend(implementation_clusters);
     let findings = overlap_findings(&doc, &sources, &clusters);
     let strict_findings = findings
         .iter()
@@ -44,6 +47,14 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             "cluster_count": clusters.len(),
             "finding_count": findings.len(),
             "strict_finding_count": strict_findings.len(),
+            "implementation_shape_classification": {
+                "candidate_clusters": implementation_classification.candidate_clusters,
+                "candidate_members": implementation_classification.candidate_members,
+                "excluded_relation_count": implementation_classification.excluded_relation_count,
+                "excluded_relation_causes": implementation_classification.excluded_relation_causes,
+                "false_positive_count": implementation_classification.false_positive_count,
+                "false_positive_causes": implementation_classification.false_positive_causes,
+            },
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
         }))
         .map_err(|err| format!("serialize overlap findings: {err}"))?;

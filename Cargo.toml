@@ -34,7 +34,7 @@ sim-codec-json = "0.2.0"
 sim-index-core = { path = "../sim-foundation/crates/sim-index-core" }
 sim-kernel = "0.2.0"
 sim-lib-net-core = "0.2.0"
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["fold", "full"] }
 toml = "0.8"
 
 [lints]
