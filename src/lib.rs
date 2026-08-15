@@ -56,6 +56,8 @@ mod index_doctor;
 mod index_find;
 mod index_fixpoint;
 mod index_fragment;
+#[cfg(test)]
+mod index_landed_contract_tests;
 mod index_merge;
 mod index_overlap;
 mod index_overlap_report;
