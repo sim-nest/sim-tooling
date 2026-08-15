@@ -36,6 +36,7 @@
 #![deny(missing_docs)]
 
 pub mod atelier;
+pub mod bench;
 
 mod cardspine;
 mod cardspine_state;
