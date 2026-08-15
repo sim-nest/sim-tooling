@@ -21,6 +21,8 @@
 //!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
+//! - `bench run`, `bench compare`, `bench show`, and `bench check` -- execute,
+//!   inspect, and enforce durable benchmark artifacts.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
 //! - `atelier-cassette`, `atelier-capsule`, and `atelier-index` -- check caches.
 //! - `atelier-radar` -- query ranked confidence hints over the Atelier index.

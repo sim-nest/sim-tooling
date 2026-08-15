@@ -1,10 +1,13 @@
 use crate::{
-    atelier, citizenize, crate_catalog, file_size_gate, generator_options, index_check,
+    atelier, bench, citizenize, crate_catalog, file_size_gate, generator_options, index_check,
     index_doctor, index_find, index_fixpoint, index_merge, index_overlap, index_render,
     index_route, index_seed, index_snapshot, index_vault, repo_contract, simdoc, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
+    if matches!(args.as_slice(), [_, command, ..] if command == "bench") {
+        return bench::cli::run(args);
+    }
     if matches!(args.as_slice(), [_, command, ..] if command == "simdoc") {
         return simdoc::run(args);
     }

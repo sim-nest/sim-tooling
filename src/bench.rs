@@ -10,6 +10,8 @@ use serde_json::Value;
 
 use crate::content_digest::content_digest;
 
+#[path = "bench/cli.rs"]
+pub mod cli;
 #[path = "bench/compare.rs"]
 pub mod compare;
 #[path = "bench/env.rs"]

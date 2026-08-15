@@ -150,6 +150,23 @@ composes = [
   "feature/sim-tooling/benchmark-sampling",
 ]
 
+[[feature]]
+id = "feature/sim-tooling/benchmark-cli"
+title = "Benchmark artifact CLI"
+summary = "Run exact process benchmarks and compare, inspect, or policy-check durable reports through human and JSON views derived from one verified report object."
+owner = "crate/xtask"
+audiences = ["user", "code", "framework"]
+guidance = "Use bench run with a declared JSON request to create an atomic artifact; use bench compare or bench show to inspect it, and bench check for read-only policy enforcement. Select --json when automation needs the same ReportView fields shown concisely to humans."
+claims_anchors = [
+  "anchor/rustdoc/xtask/command-spec",
+  "anchor/rustdoc/xtask/report-view",
+  "anchor/rustdoc/xtask/run-request",
+]
+composes = [
+  "feature/sim-tooling/benchmark-process-isolation",
+  "feature/sim-tooling/robust-benchmark-comparison",
+]
+
 [[route]]
 id = "route/add-generated-doc"
 task = "Add a generated doc"

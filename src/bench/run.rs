@@ -55,7 +55,7 @@ pub trait Workload<C: MonotonicClock> {
 }
 
 /// Validated execution limits that are intentionally separate from statistics.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
     /// Desired duration used to choose the measured iteration count.
     pub calibration_target_ns: u64,
