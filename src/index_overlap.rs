@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use sim_index_core::{FeatureRecord, IndexDoc, SubjectId};
+use sim_index_core::{DeclarationRole, FeatureRecord, IndexDoc, ProtocolResolution, SubjectId};
 
 use crate::{
     index_overlap_record::{implementation_shape_clusters, record_shape_clusters},
@@ -30,7 +30,9 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let (implementation_clusters, implementation_classification) =
         implementation_shape_clusters(&doc, &sources)?;
     clusters.extend(implementation_clusters);
-    let findings = overlap_findings(&doc, &sources, &clusters);
+    let (role_findings, role_classification) = protocol_role_findings(&doc);
+    let mut findings = overlap_findings(&doc, &sources, &clusters);
+    findings.extend(role_findings);
     let strict_findings = findings
         .iter()
         .filter(|finding| finding.strict)
@@ -55,6 +57,13 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
                 "false_positive_count": implementation_classification.false_positive_count,
                 "false_positive_causes": implementation_classification.false_positive_causes,
             },
+            "protocol_role_classification": {
+                "configured_members": role_classification.configured_members,
+                "satisfied_members": role_classification.satisfied_members,
+                "gap_members": role_classification.gap_members,
+                "policy_members": role_classification.policy_members,
+                "policy_causes": role_classification.policy_causes,
+            },
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
         }))
         .map_err(|err| format!("serialize overlap findings: {err}"))?;
@@ -71,6 +80,141 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+const PROTOCOL_ROLE_REL: &str = "protocol-role";
+const PROTOCOL_DEPENDENCY_RELS: &[&str] = &["depends-on", "reuses", "composes", "delegates-to"];
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ProtocolRoleClassification {
+    configured_members: usize,
+    satisfied_members: usize,
+    gap_members: usize,
+    policy_members: usize,
+    policy_causes: BTreeMap<String, usize>,
+}
+
+/// Raises only explicitly authored protocol roles. A structural resemblance is
+/// not configuration: the member feature must name its role owner and have a
+/// dependency path to that owner before a missing implementation is a useful
+/// question.
+fn protocol_role_findings(doc: &IndexDoc) -> (Vec<Finding>, ProtocolRoleClassification) {
+    let features = doc
+        .features
+        .iter()
+        .map(|feature| (feature.id.as_str(), feature))
+        .collect::<BTreeMap<_, _>>();
+    let declarations = doc
+        .declarations
+        .iter()
+        .map(|fact| (fact.anchor.as_str(), fact))
+        .collect::<BTreeMap<_, _>>();
+    let implementations = doc
+        .protocol_relations
+        .iter()
+        .filter_map(|relation| match &relation.resolution {
+            ProtocolResolution::Resolved { protocol } => {
+                Some((relation.anchor.as_str(), protocol.as_str()))
+            }
+            ProtocolResolution::Unresolved { .. } => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut findings = Vec::new();
+    let mut classification = ProtocolRoleClassification::default();
+
+    for role in doc
+        .edges
+        .iter()
+        .filter(|edge| edge.rel == PROTOCOL_ROLE_REL)
+    {
+        let (Some(member), Some(owner)) = (
+            features.get(role.from.as_str()),
+            features.get(role.to.as_str()),
+        ) else {
+            continue;
+        };
+        let Some(protocol) = owner.anchors.iter().find_map(|anchor| {
+            declarations
+                .get(anchor.as_str())
+                .filter(|fact| fact.role == DeclarationRole::Trait)
+                .map(|fact| fact.module_path.as_str())
+        }) else {
+            continue;
+        };
+        for anchor in &member.anchors {
+            let Some(declaration) = declarations.get(anchor.as_str()) else {
+                continue;
+            };
+            if !matches!(
+                declaration.role,
+                DeclarationRole::Struct | DeclarationRole::Enum
+            ) {
+                continue;
+            }
+            classification.configured_members += 1;
+            if implementations.contains(&(anchor.as_str(), protocol))
+                || has_edge_path(
+                    doc,
+                    member.id.as_str(),
+                    owner.id.as_str(),
+                    &["delegates-to"],
+                )
+            {
+                classification.satisfied_members += 1;
+                continue;
+            }
+            if !has_edge_path(
+                doc,
+                member.id.as_str(),
+                owner.id.as_str(),
+                PROTOCOL_DEPENDENCY_RELS,
+            ) {
+                classification.policy_members += 1;
+                *classification
+                    .policy_causes
+                    .entry("no-protocol-owner-dependency".to_owned())
+                    .or_default() += 1;
+                continue;
+            }
+            classification.gap_members += 1;
+            findings.push(Finding {
+                cluster: format!("protocol-role/{protocol}"),
+                member: None,
+                left: Some(member.id.to_string()),
+                right: Some(owner.id.to_string()),
+                source_classification: Some(declaration.role.as_str().to_owned()),
+                graph_relation: Some(PROTOCOL_ROLE_REL.to_owned()),
+                reason: "protocol-role-gap".to_owned(),
+                detail: format!(
+                    "{} is configured for {protocol} and reaches its owner, but neither implements nor delegates to that protocol",
+                    declaration.module_path
+                ),
+                strict: false,
+            });
+        }
+    }
+    (findings, classification)
+}
+
+fn has_edge_path(doc: &IndexDoc, from: &str, to: &str, relations: &[&str]) -> bool {
+    let mut pending = vec![from];
+    let mut visited = BTreeSet::new();
+    while let Some(node) = pending.pop() {
+        if !visited.insert(node) {
+            continue;
+        }
+        for edge in doc
+            .edges
+            .iter()
+            .filter(|edge| edge.from == node && relations.contains(&edge.rel.as_str()))
+        {
+            if edge.to == to {
+                return true;
+            }
+            pending.push(edge.to.as_str());
+        }
+    }
+    false
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

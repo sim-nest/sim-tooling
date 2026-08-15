@@ -220,6 +220,9 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
             "supports",
             "presents",
             "replaces",
+            "protocol_role",
+            "depends_on",
+            "delegates_to",
             "doc_anchor",
         ],
         &label,
@@ -263,12 +266,19 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
 
 fn relation_lists(table: &Table, label: &str) -> Result<Vec<AuthoredRelation>, String> {
     let mut relations = Vec::new();
-    for key in ["supports", "presents", "replaces"] {
+    for (key, rel) in [
+        ("supports", "supports"),
+        ("presents", "presents"),
+        ("replaces", "replaces"),
+        ("protocol_role", "protocol-role"),
+        ("depends_on", "depends-on"),
+        ("delegates_to", "delegates-to"),
+    ] {
         relations.extend(
             optional_string_list(table, key, label)?
                 .into_iter()
                 .map(|id| AuthoredRelation {
-                    rel: key.to_owned(),
+                    rel: rel.to_owned(),
                     to: FeatureId::new(id),
                 }),
         );

@@ -18,7 +18,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | Feature | Subject | Specimens | Summary |
 | --- | --- | ---: | --- |
 | `feature/sim-tooling/generated-docs` | `crate/xtask` | 2 | Generate repo contracts, feature maps, card indexes, index fragments, and managed vault note namespaces through xtask. |
-| `feature/sim-index/core` | `crate/xtask` | 3 | Generate, query, route, prove, and check duplicate implementation overlap, including normalized public record-shape and resolved protocol implementation-shape candidates, in the SIM Index graph as a checked constellation surface. |
+| `feature/sim-index/core` | `crate/xtask` | 3 | Generate, query, route, prove, and check duplicate implementation overlap, including normalized public record-shape, resolved protocol implementation-shape candidates, and configured protocol-role gaps, in the SIM Index graph as a checked constellation surface. |
 | `feature/sim-index/vault-export` | `crate/xtask` | 1 | Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles. |
 
 ## Surfaces
