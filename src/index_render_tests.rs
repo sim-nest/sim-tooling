@@ -221,6 +221,8 @@ fn fixture_doc() -> IndexDoc {
             title: "demo".to_owned(),
         }],
         anchors: Vec::new(),
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("view-edit/demo"),
             subject: SubjectId::new("crate/demo"),

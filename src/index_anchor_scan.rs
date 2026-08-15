@@ -22,6 +22,11 @@ mod declaration;
 use declaration::{DeclarationEvidence, PublicItemKind};
 use declaration::{DeclarationLimits, declaration_facts};
 
+mod source_facts;
+pub(crate) use source_facts::source_facts;
+
+const SOURCE_SYNTAX_BOUND: usize = 16_384;
+
 /// Discovers deterministic anchors for source and generated contract facts.
 pub(crate) fn discovered(
     repo: &Path,

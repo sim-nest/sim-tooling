@@ -6,7 +6,7 @@ use quote::ToTokens;
 
 use super::{is_public, join_path};
 
-mod protocol;
+pub(super) mod protocol;
 pub(super) use protocol::ProtocolImplFact;
 use protocol::protocol_impl_facts;
 
@@ -39,18 +39,18 @@ pub(super) enum PublicItemKind {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct SourceLocation {
-    file: String,
-    declaration: usize,
+pub(super) struct SourceLocation {
+    pub(super) file: String,
+    pub(super) declaration: usize,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct DeclarationFact {
     pub(super) kind: PublicItemKind,
     pub(super) module_path: String,
-    generics: String,
+    pub(super) generics: String,
     pub(super) members: Vec<String>,
-    location: SourceLocation,
+    pub(super) location: SourceLocation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

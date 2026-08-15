@@ -227,6 +227,8 @@ fn test_doc() -> IndexDoc {
             subject: SubjectId::new("crate/sim-lib-repl"),
             kind: "cli-verb".to_owned(),
         }],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("cli/repl"),
             subject: SubjectId::new("crate/sim-lib-repl"),

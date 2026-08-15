@@ -29,9 +29,9 @@ quote = "1"
 serde_json = "1"
 sha2 = "0.10"
 sim-cookbook = "0.2.0"
-sim-codec-index = { version = "0.2.0", git = "https://github.com/sim-nest/sim-codecs", rev = "89320a0f0158e3399b08c8cf97df194912969233" }
+sim-codec-index = { path = "../sim-codecs/crates/sim-codec-index" }
 sim-codec-json = "0.2.0"
-sim-index-core = { version = "0.1.0", git = "https://github.com/sim-nest/sim-foundation", rev = "545515c9fcbf17d1ed982756788b3f4c2363da3b" }
+sim-index-core = { path = "../sim-foundation/crates/sim-index-core" }
 sim-kernel = "0.2.0"
 sim-lib-net-core = "0.2.0"
 syn = { version = "2", features = ["full"] }
@@ -39,3 +39,6 @@ toml = "0.8"
 
 [lints]
 workspace = true
+
+[patch."https://github.com/sim-nest/sim-foundation"]
+sim-index-core = { path = "../sim-foundation/crates/sim-index-core" }

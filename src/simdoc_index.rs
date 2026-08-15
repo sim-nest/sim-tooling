@@ -272,6 +272,8 @@ mod tests {
                 },
             ],
             anchors: Vec::new(),
+            declarations: Vec::new(),
+            protocol_relations: Vec::new(),
             surfaces: Vec::new(),
             specimens: vec![DiscoveredSpecimen {
                 id: SpecimenId::new("recipe/sim-demo/open"),

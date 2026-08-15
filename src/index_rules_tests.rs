@@ -254,6 +254,8 @@ fn base_doc() -> IndexDoc {
             subject: SubjectId::new("crate/demo"),
             kind: "cli-verb".to_owned(),
         }],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("cli/demo"),
             subject: SubjectId::new("crate/demo"),

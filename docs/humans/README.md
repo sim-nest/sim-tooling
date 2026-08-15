@@ -277,6 +277,8 @@ fn fixture_doc() -> IndexDoc {
             title: "demo".to_owned(),
         }],
         anchors: Vec::new(),
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("view-edit/demo"),
             subject: SubjectId::new("crate/demo"),
@@ -844,6 +846,8 @@ fn self_doc() -> IndexDoc {
             },
         ],
         anchors: Vec::new(),
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![
             DiscoveredSurface {
                 id: SurfaceId::new("cli/xtask"),
@@ -1092,6 +1096,8 @@ fn fixture_doc() -> IndexDoc {
                 kind: "export".to_owned(),
             },
         ],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("syntax/demo"),
             subject: SubjectId::new("crate/demo"),
@@ -1630,6 +1636,8 @@ fn fixture_doc(visibility: Visibility) -> IndexDoc {
                 kind: "export".to_owned(),
             },
         ],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("syntax/demo"),
             subject: SubjectId::new("crate/demo"),

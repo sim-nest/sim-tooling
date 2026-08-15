@@ -182,6 +182,8 @@ fn fixture_doc() -> IndexDoc {
                 kind: "export".to_owned(),
             },
         ],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("syntax/demo"),
             subject: SubjectId::new("crate/demo"),
