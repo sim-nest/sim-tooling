@@ -6,6 +6,10 @@ use quote::ToTokens;
 
 use super::{is_public, join_path};
 
+mod protocol;
+pub(super) use protocol::ProtocolImplFact;
+use protocol::protocol_impl_facts;
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct DeclarationLimits {
     pub(super) max_items: usize,
@@ -74,6 +78,7 @@ pub(super) enum DeclarationEvidence {
 #[derive(Debug, Default)]
 pub(super) struct DeclarationScan {
     pub(super) facts: Vec<DeclarationFact>,
+    pub(super) protocol_impls: Vec<ProtocolImplFact>,
     pub(super) evidence: Vec<DeclarationEvidence>,
 }
 
@@ -97,6 +102,7 @@ pub(super) fn declaration_facts(
     let mut scan = DeclarationScan::default();
     let mut declaration = 0;
     collect_public_items(&parsed.items, "", file, limits, &mut declaration, &mut scan);
+    scan.protocol_impls = protocol_impl_facts(&parsed.items, file);
     scan.facts.sort();
     scan
 }
@@ -304,7 +310,7 @@ fn normalize_variant(variant: &syn::Variant, generics: &syn::Generics) -> String
     format!("{}({fields})", variant.ident)
 }
 
-fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics) -> String {
+pub(super) fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics) -> String {
     let names = generics
         .params
         .iter()
@@ -346,7 +352,7 @@ fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics) -> String 
     compact_tokens(&rewrite(value.to_token_stream(), &names).to_string())
 }
 
-fn compact_tokens(tokens: &str) -> String {
+pub(super) fn compact_tokens(tokens: &str) -> String {
     tokens.split_whitespace().collect()
 }
 
