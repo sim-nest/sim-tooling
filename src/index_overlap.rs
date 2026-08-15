@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use sim_index_core::{FeatureRecord, IndexDoc, SubjectId};
 
 use crate::{
+    index_overlap_record::record_shape_clusters,
     index_overlap_report::{
         CloneCluster, OverlapMember, SourceClassification, read_overlap_report,
     },
@@ -24,7 +25,9 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         options.control_root.as_deref(),
         options.repos_manifest.as_deref(),
     )?;
-    let findings = overlap_findings(&doc, &sources, &report.clusters);
+    let mut clusters = report.clusters;
+    clusters.extend(record_shape_clusters(&doc, &sources)?);
+    let findings = overlap_findings(&doc, &sources, &clusters);
     let strict_findings = findings
         .iter()
         .filter(|finding| finding.strict)
@@ -38,7 +41,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             "strict": options.strict,
             "report_complete": report.complete,
             "roots_scanned": report.roots_scanned,
-            "cluster_count": report.clusters.len(),
+            "cluster_count": clusters.len(),
             "finding_count": findings.len(),
             "strict_finding_count": strict_findings.len(),
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
@@ -49,7 +52,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         let mode = if options.strict { "strict" } else { "advisory" };
         println!(
             "index overlap: {mode} ok ({} cluster(s), 0 findings)",
-            report.clusters.len()
+            clusters.len()
         );
     } else {
         for finding in &findings {
@@ -221,6 +224,8 @@ struct MemberRef {
     path: String,
     line: u64,
     symbol: String,
+    anchor: Option<String>,
+    fingerprint_reason: Option<String>,
     classification: String,
     owner: String,
     replacement: String,
@@ -233,6 +238,8 @@ impl MemberRef {
             path: member.path.clone(),
             line: member.line,
             symbol: member.symbol.clone(),
+            anchor: member.anchor.clone(),
+            fingerprint_reason: member.fingerprint_reason.clone(),
             classification: member.classification.as_str().to_owned(),
             owner: member.owner.clone(),
             replacement: member.replacement.clone(),
@@ -249,6 +256,8 @@ impl MemberRef {
             "path": self.path,
             "line": self.line,
             "symbol": self.symbol,
+            "anchor": self.anchor,
+            "fingerprint_reason": self.fingerprint_reason,
             "classification": self.classification,
             "owner": self.owner,
             "replacement": self.replacement,

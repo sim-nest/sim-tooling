@@ -145,6 +145,40 @@ impl SourceResolver {
             )),
         }
     }
+
+    pub(crate) fn declaration_source(
+        &self,
+        package: &str,
+        path: &str,
+        symbol: &str,
+    ) -> Result<(String, u64), String> {
+        reject_unsafe_relative_path(path)?;
+        let mut matches = Vec::new();
+        for (repo, root) in &self.repos {
+            if self.package_for(repo, path).as_deref() != Ok(package) {
+                continue;
+            }
+            let text = fs::read_to_string(root.join(path))
+                .map_err(|err| format!("read {repo}/{path}: {err}"))?;
+            let needle = symbol.rsplit("::").next().unwrap_or(symbol);
+            if let Some((line, _)) = text
+                .lines()
+                .enumerate()
+                .find(|(_, source)| source.contains(needle))
+            {
+                matches.push((repo.clone(), line as u64 + 1));
+            }
+        }
+        match matches.as_slice() {
+            [found] => Ok(found.clone()),
+            [] => Err(format!(
+                "no source declaration for {package}::{symbol} at {path}"
+            )),
+            _ => Err(format!(
+                "ambiguous source declaration for {package}::{symbol} at {path}"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

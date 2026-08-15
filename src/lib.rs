@@ -60,6 +60,7 @@ mod index_fragment;
 mod index_landed_contract_tests;
 mod index_merge;
 mod index_overlap;
+mod index_overlap_record;
 mod index_overlap_report;
 mod index_render;
 mod index_render_features;
