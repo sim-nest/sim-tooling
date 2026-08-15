@@ -1,9 +1,51 @@
 use sim_index_core::{
-    CanonicalFeatureKey, DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord, IndexDoc,
-    RouteId, RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
+    AnchorId, CanonicalFeatureKey, DeclarationFact, DeclarationRole, DiscoveredAnchor,
+    DiscoveredSpecimen, DiscoveredSurface, FeatureId, FeatureRecord, IndexDoc, ProtocolRelation,
+    ProtocolResolution, RouteId, RouteRecord, RouteStep, SourceLocation, SpecimenId, SubjectId,
+    SubjectRecord, SurfaceId, SyntaxBound, UnresolvedReason, Visibility,
 };
 
 use super::*;
+
+#[test]
+fn filter_only_cli_accepts_implements_and_resolution_state() {
+    let args = [
+        "xtask",
+        "index",
+        "find",
+        "--input",
+        "index.sx",
+        "--implements",
+        "sim_kernel::Callable",
+        "--resolved",
+    ]
+    .map(str::to_owned);
+
+    let options = FindOptions::parse(&args).expect("filter-only query");
+    assert_eq!(options.query, "");
+    assert_eq!(options.implements.as_deref(), Some("sim_kernel::Callable"));
+    assert_eq!(options.resolution, Some(ResolutionFilter::Resolved));
+}
+
+#[test]
+fn cli_rejects_conflicting_resolution_states() {
+    let args = [
+        "xtask",
+        "index",
+        "find",
+        "--input",
+        "index.sx",
+        "--resolved",
+        "--unresolved",
+    ]
+    .map(str::to_owned);
+
+    assert!(
+        FindOptions::parse(&args)
+            .expect_err("conflicting states")
+            .contains("choose only one")
+    );
+}
 
 #[test]
 fn find_matches_feature_summary() {
@@ -59,6 +101,172 @@ fn surface_filter_includes_specimens_claimed_by_matching_feature() {
         .expect("claimed specimen row");
 
     assert_eq!(specimen["kind"], "specimen");
+}
+
+#[test]
+fn protocol_filters_return_provenance_rows_for_frozen_examples() {
+    let mut doc = fixture_doc();
+    for (index, implementor) in [
+        "GuestCallable",
+        "GuestClass",
+        "ManagedObject",
+        "AdmissionEnvelope",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        add_protocol_example(
+            &mut doc,
+            index,
+            implementor,
+            ProtocolResolution::Resolved {
+                protocol: "sim_kernel::Callable".to_owned(),
+            },
+        );
+    }
+    add_protocol_example(
+        &mut doc,
+        4,
+        "ExternalCallable",
+        ProtocolResolution::Unresolved {
+            reason: UnresolvedReason::ExternalMetadataAbsent,
+            candidates: Vec::new(),
+        },
+    );
+
+    let options = FindOptions {
+        input: PathBuf::new(),
+        query: String::new(),
+        json: true,
+        audience: None,
+        surface: None,
+        declaration_kind: None,
+        implements: Some("sim_kernel::Callable".to_owned()),
+        resolution: Some(ResolutionFilter::Resolved),
+        feature: None,
+    };
+    let rows = find_rows(&doc, &options);
+    let anchors = rows
+        .iter()
+        .filter(|row| row["kind"] == "anchor")
+        .collect::<Vec<_>>();
+
+    assert_eq!(anchors.len(), 4);
+    assert!(
+        anchors
+            .iter()
+            .all(|row| row["protocol_relations"][0]["resolution"] == "resolved")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["kind"] == "package" && row["id"] == "crate/demo")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["kind"] == "feature" && row["id"] == "feature/demo")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["kind"] == "specimen" && row["id"] == "recipe/demo/open")
+    );
+
+    let unresolved = find_rows(
+        &doc,
+        &FindOptions {
+            implements: Some("Callable".to_owned()),
+            resolution: Some(ResolutionFilter::Unresolved),
+            ..options
+        },
+    );
+    let edge = &unresolved
+        .iter()
+        .find(|row| row["kind"] == "anchor")
+        .expect("unresolved anchor")["protocol_relations"][0];
+    assert_eq!(edge["resolution"], "unresolved");
+    assert_eq!(edge["unresolved_reason"], "external-metadata-absent");
+    assert!(edge.get("protocol").is_none());
+    assert!(
+        unresolved
+            .iter()
+            .find(|row| row["kind"] == "anchor")
+            .and_then(|row| row["title"].as_str())
+            .is_some_and(|title| title.contains("unresolved protocol edge"))
+    );
+}
+
+#[test]
+fn declaration_and_owning_feature_filters_compose() {
+    let mut doc = fixture_doc();
+    add_protocol_example(
+        &mut doc,
+        0,
+        "GuestCallable",
+        ProtocolResolution::Resolved {
+            protocol: "sim_kernel::Callable".to_owned(),
+        },
+    );
+    doc.declarations.push(DeclarationFact {
+        anchor: AnchorId::new("anchor/rustdoc/demo/example-0"),
+        role: DeclarationRole::Struct,
+        module_path: "guest::GuestCallable".to_owned(),
+        generics: String::new(),
+        members: Vec::new(),
+        location: SourceLocation {
+            file: "src/guest.rs".to_owned(),
+            declaration: 0,
+        },
+        syntax_bound: SyntaxBound {
+            max_bytes: 4096,
+            truncated: false,
+        },
+    });
+
+    let rows = find_rows(
+        &doc,
+        &FindOptions {
+            input: PathBuf::new(),
+            query: String::new(),
+            json: true,
+            audience: None,
+            surface: None,
+            declaration_kind: Some(DeclarationRole::Struct),
+            implements: None,
+            resolution: None,
+            feature: Some("feature/demo".to_owned()),
+        },
+    );
+
+    assert!(rows.iter().any(|row| row["kind"] == "anchor"));
+    assert_eq!(
+        rows.iter().filter(|row| row["kind"] == "feature").count(),
+        1
+    );
+}
+
+fn add_protocol_example(
+    doc: &mut IndexDoc,
+    index: usize,
+    implementor: &str,
+    resolution: ProtocolResolution,
+) {
+    let anchor = AnchorId::new(format!("anchor/rustdoc/demo/example-{index}"));
+    doc.anchors.push(DiscoveredAnchor {
+        id: anchor.clone(),
+        subject: SubjectId::new("crate/demo"),
+        kind: "rustdoc".to_owned(),
+    });
+    doc.protocol_relations.push(ProtocolRelation {
+        anchor: anchor.clone(),
+        implementor: implementor.to_owned(),
+        source_spelling: "Callable".to_owned(),
+        body_fingerprint: "fn call".to_owned(),
+        body_bound: SyntaxBound {
+            max_bytes: 4096,
+            truncated: false,
+        },
+        resolution,
+    });
+    doc.features[0].anchors.push(anchor);
 }
 
 fn fixture_doc() -> IndexDoc {
