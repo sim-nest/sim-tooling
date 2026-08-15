@@ -24,7 +24,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | `feature/sim-tooling/benchmark-sampling` | `crate/xtask` | 0 | Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures. |
 | `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 0 | Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence. |
 | `feature/sim-tooling/robust-benchmark-comparison` | `crate/xtask` | 0 | Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner. |
-| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 0 | Run exact process benchmarks and compare, inspect, or policy-check durable reports through human and JSON views derived from one verified report object. |
+| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run exact process benchmarks and compare, inspect, or policy-check durable reports through human and JSON views derived from one verified report object. |
 
 ## Surfaces
 
@@ -1784,5 +1784,66 @@ impl Drop for TempRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+```
+
+### `feature/sim-tooling/benchmark-cli`
+
+Specimen `spec-test/sim-tooling/src/bench/neutral_allocation_conformance` is checked by `cargo test`.
+
+Source `src/bench/neutral_allocation_conformance.rs`:
+
+```rust
+use super::{
+    DecisionOutcome,
+    neutral_specimen_fixture::{
+        AllocationOperation, assert_local_fingerprint, assert_report_round_trip,
+        assert_retained_failure, dispersed_report, local_environment,
+    },
+};
+
+#[test]
+fn allocation_bound_specimen_retains_inconclusive_and_failure_evidence() {
+    let environment = local_environment();
+    assert_local_fingerprint(&environment);
+
+    let report = dispersed_report("neutral-allocation-bound");
+    assert_eq!(report.comparison.outcome, DecisionOutcome::Inconclusive);
+    assert!(
+        report
+            .comparison
+            .inconclusive_reasons
+            .iter()
+            .any(|reason| { reason.starts_with("maximum-relative-dispersion:") })
+    );
+    assert_report_round_trip(&report);
+    assert_retained_failure(AllocationOperation, "neutral-allocation-bound-failure");
+}
+```
+
+Specimen `spec-test/sim-tooling/src/bench/neutral_cpu_conformance` is checked by `cargo test`.
+
+Source `src/bench/neutral_cpu_conformance.rs`:
+
+```rust
+use super::{
+    DecisionOutcome,
+    neutral_specimen_fixture::{
+        CpuOperation, assert_local_fingerprint, assert_report_round_trip, assert_retained_failure,
+        assert_synthetic_host_refused, local_environment, matched_report,
+    },
+};
+
+#[test]
+fn cpu_bound_specimen_produces_a_matched_browsable_report() {
+    let environment = local_environment();
+    assert_local_fingerprint(&environment);
+
+    let report = matched_report("neutral-cpu-bound");
+    assert_eq!(report.comparison.outcome, DecisionOutcome::Pass);
+    assert!(report.comparison.paired_effect.is_some());
+    assert_report_round_trip(&report);
+    assert_synthetic_host_refused(&report);
+    assert_retained_failure(CpuOperation, "neutral-cpu-bound-failure");
 }
 ```

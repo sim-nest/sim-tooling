@@ -162,9 +162,23 @@ claims_anchors = [
   "anchor/rustdoc/xtask/report-view",
   "anchor/rustdoc/xtask/run-request",
 ]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/neutral_allocation_conformance",
+  "spec-test/sim-tooling/src/bench/neutral_cpu_conformance",
+]
 composes = [
   "feature/sim-tooling/benchmark-process-isolation",
   "feature/sim-tooling/robust-benchmark-comparison",
+]
+
+[[route]]
+id = "route/prove-benchmark-workload-neutrality"
+task = "Prove the benchmark harness is workload neutral"
+audiences = ["user", "code", "framework"]
+steps = [
+  { feature = "feature/sim-tooling/benchmark-cli", why = "The benchmark CLI composes sampling, process isolation, robust comparison, and durable reports without a domain-specific workload contract." },
+  { specimen = "spec-test/sim-tooling/src/bench/neutral_cpu_conformance", why = "The checked CPU-bound specimen proves deterministic sampling, matched comparison, host refusal, retained failure, and Table/Dir browsing without bytecode." },
+  { specimen = "spec-test/sim-tooling/src/bench/neutral_allocation_conformance", why = "The checked allocation-bound specimen proves local fingerprinting, high-dispersion refusal, retained failure, and durable report browsing without bytecode." },
 ]
 
 [[route]]

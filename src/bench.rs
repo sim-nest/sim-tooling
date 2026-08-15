@@ -23,6 +23,16 @@ pub mod report;
 #[path = "bench/run.rs"]
 pub mod run;
 
+#[cfg(test)]
+#[path = "bench/neutral_allocation_conformance.rs"]
+mod neutral_allocation_conformance;
+#[cfg(test)]
+#[path = "bench/neutral_cpu_conformance.rs"]
+mod neutral_cpu_conformance;
+#[cfg(test)]
+#[path = "bench/neutral_specimen_fixture.rs"]
+mod neutral_specimen_fixture;
+
 /// Current revision of the benchmark artifact schema.
 pub const BENCH_SCHEMA_REVISION: u32 = 1;
 
