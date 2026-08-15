@@ -16,6 +16,8 @@ pub mod compare;
 pub mod env;
 #[path = "bench/exec.rs"]
 pub mod exec;
+#[path = "bench/report.rs"]
+pub mod report;
 #[path = "bench/run.rs"]
 pub mod run;
 

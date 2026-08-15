@@ -36,6 +36,7 @@ sim-index-core = { path = "../sim-foundation/crates/sim-index-core" }
 sim-kernel = "0.2.0"
 sim-lib-net-core = "0.2.0"
 sim-lib-numbers-stats = { version = "0.3.1", path = "../sim-numbers/crates/sim-lib-numbers-stats" }
+sim-table-core = { version = "0.1.4", path = "../sim-foundation/crates/sim-table-core" }
 syn = { version = "2", features = ["fold", "full", "visit"] }
 toml = "0.8"
 
