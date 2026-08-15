@@ -12,6 +12,8 @@ use crate::content_digest::content_digest;
 
 #[path = "bench/env.rs"]
 pub mod env;
+#[path = "bench/run.rs"]
+pub mod run;
 
 /// Current revision of the benchmark artifact schema.
 pub const BENCH_SCHEMA_REVISION: u32 = 1;

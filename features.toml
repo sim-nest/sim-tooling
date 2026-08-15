@@ -93,6 +93,24 @@ claims_anchors = [
   "anchor/rustdoc/xtask/probe_environment",
 ]
 
+[[feature]]
+id = "feature/sim-tooling/benchmark-sampling"
+title = "Deterministic benchmark sampling"
+summary = "Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Implement Workload and MonotonicClock adapters, validate RunConfig, and retain the complete RunRecord. Summarize only its successful measured observations; calibration and warmup are execution evidence, not statistical samples."
+claims_anchors = [
+  "anchor/rustdoc/xtask/calibration-decision",
+  "anchor/rustdoc/xtask/monotonic-clock",
+  "anchor/rustdoc/xtask/run-config",
+  "anchor/rustdoc/xtask/run-phase",
+  "anchor/rustdoc/xtask/run-record",
+  "anchor/rustdoc/xtask/sample-record",
+  "anchor/rustdoc/xtask/sample-status",
+  "anchor/rustdoc/xtask/workload",
+]
+
 [[route]]
 id = "route/add-generated-doc"
 task = "Add a generated doc"
