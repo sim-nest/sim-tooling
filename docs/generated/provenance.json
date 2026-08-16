@@ -3,10 +3,10 @@
   "generated_by": "cargo run -p xtask -- simdoc",
   "generation_timestamp": "2026-07-12T22:49:46+02:00",
   "generator": "xtask repo-contract v1",
-  "git_commit": "3db607d8e160959379e3cf7e9ca59b2692a32cf8",
+  "git_commit": "1df2f9731d0b081739608ee7995ab38cecde8a8c",
   "repo": "sim-tooling",
   "schema": "sim.provenance.v1",
-  "source_commit": "3db607d8e160959379e3cf7e9ca59b2692a32cf8",
+  "source_commit": "1df2f9731d0b081739608ee7995ab38cecde8a8c",
   "source_remote": "https://github.com/sim-nest/sim-tooling",
   "validation_commands": [
     "cargo fmt --all --check",
@@ -19,9 +19,9 @@
     "cargo run -p xtask -- validation-matrix --check --repo .",
     "cargo run -p xtask -- crate-catalog --check --repo ."
   ],
-  "workspace_hash": "9b198fabc95d212f",
+  "workspace_hash": "858f9f4e22532c26",
   "workspace_hash_algorithm": "fnv1a64",
-  "workspace_hash_input_count": 131,
+  "workspace_hash_input_count": 132,
   "workspace_hash_inputs": [
     "Cargo.toml",
     "features.toml",
@@ -68,6 +68,7 @@
     "src/bench/compare.rs",
     "src/bench/env.rs",
     "src/bench/exec.rs",
+    "src/bench/jvm_baseline.rs",
     "src/bench/neutral_allocation_conformance.rs",
     "src/bench/neutral_cpu_conformance.rs",
     "src/bench/neutral_specimen_fixture.rs",

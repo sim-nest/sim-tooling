@@ -15,14 +15,14 @@ use super::{
     compare::{ComparisonSample, RobustComparisonPolicy},
     env::{CompatibilityPolicy, EnvironmentProbe},
     exec::{ProcessDeclaration, execute},
-    report::{BenchReport, FsReportDir, ReportCodec, write_report},
+    report::{BenchReport, CounterSample, FsReportDir, ReportCodec, write_report},
     run::{self as sampler, Arm, MonotonicClock, RunConfig, RunPhase, Workload},
 };
 
 const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Serializable, shell-free process declaration accepted by `bench run`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CommandSpec {
     /// Executable name or path.
     pub program: String,
@@ -42,7 +42,7 @@ pub struct CommandSpec {
 }
 
 /// Complete data contract for `bench run`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunRequest {
     /// Validated benchmark declaration.
     pub spec: BenchSpec,
@@ -149,6 +149,7 @@ fn run_command(args: &[String]) -> Result<(), String> {
     let record = sampler::run(&request.spec, &request.run_config, &clock, &mut workload)?;
     let mut baseline = Vec::new();
     let mut candidate = Vec::new();
+    let mut counters = Vec::new();
     for sample in record.samples {
         if !matches!(sample.status, sampler::SampleStatus::Completed) {
             continue;
@@ -162,13 +163,19 @@ fn run_command(args: &[String]) -> Result<(), String> {
             Arm::Baseline => baseline.push(row),
             Arm::Candidate => candidate.push(row),
         }
+        counters.push(CounterSample {
+            sample_index: sample.schedule_index,
+            arm: sample.arm,
+            counters: sample.counters,
+        });
     }
-    let report = BenchReport::new(
+    let report = BenchReport::new_attributed(
         request.spec,
         request.baseline_environment,
         request.candidate_environment,
         baseline,
         candidate,
+        counters,
         request.direction,
         request.comparison_policy,
         request.environment_policy,
@@ -295,7 +302,11 @@ impl<C: MonotonicClock> Workload<C> for ProcessWorkload {
                 sample.status()
             ));
         }
-        Ok(BTreeMap::new())
+        if sample.stdout_truncated() {
+            return Err("workload counter output exceeded its retention limit".to_owned());
+        }
+        serde_json::from_slice(sample.stdout())
+            .map_err(|error| format!("decode workload counters as JSON object: {error}"))
     }
 }
 

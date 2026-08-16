@@ -18,6 +18,8 @@ pub mod compare;
 pub mod env;
 #[path = "bench/exec.rs"]
 pub mod exec;
+#[path = "bench/jvm_baseline.rs"]
+pub mod jvm_baseline;
 #[path = "bench/report.rs"]
 pub mod report;
 #[path = "bench/run.rs"]

@@ -24,7 +24,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | `feature/sim-tooling/benchmark-sampling` | `crate/xtask` | 0 | Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures. |
 | `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 0 | Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence. |
 | `feature/sim-tooling/robust-benchmark-comparison` | `crate/xtask` | 0 | Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner. |
-| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run exact process benchmarks and compare, inspect, or policy-check durable reports through human and JSON views derived from one verified report object. |
+| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run exact process benchmarks and compare, inspect, or policy-check durable reports whose raw durations and workload counters are derived from one verified report object. |
 
 ## Surfaces
 

@@ -4,6 +4,7 @@ use super::{
     BenchContentKey, BenchSpec, MetricDirection,
     compare::{ComparisonReport, ComparisonSample, RobustComparisonPolicy, compare},
     env::{CompatibilityPolicy, EnvironmentProbe},
+    run::Arm,
 };
 use crate::content_digest::content_digest;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,18 @@ use std::{
 };
 
 /// Current complete report schema.
-pub const REPORT_SCHEMA_REVISION: u32 = 1;
+pub const REPORT_SCHEMA_REVISION: u32 = 2;
+
+/// Raw counters emitted by one measured workload invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CounterSample {
+    /// Position in the interleaved measured schedule.
+    pub sample_index: u32,
+    /// Comparison arm that produced the counters.
+    pub arm: Arm,
+    /// Exact named counts emitted by the workload adapter.
+    pub counters: std::collections::BTreeMap<String, u64>,
+}
 
 /// One self-contained benchmark artifact: declaration, environments, raw data,
 /// policies, summaries, exclusions, effects, and decision.
@@ -35,6 +47,8 @@ pub struct BenchReport {
     pub baseline_samples: Vec<ComparisonSample>,
     /// Raw, indexed candidate values.
     pub candidate_samples: Vec<ComparisonSample>,
+    /// Unaggregated workload counters retained for attribution.
+    pub counter_samples: Vec<CounterSample>,
     /// Metric preference used to interpret change.
     pub direction: MetricDirection,
     /// Statistical policy used to derive aggregates.
@@ -58,6 +72,32 @@ impl BenchReport {
         comparison_policy: RobustComparisonPolicy,
         environment_policy: CompatibilityPolicy,
     ) -> Result<Self, String> {
+        Self::new_attributed(
+            spec,
+            baseline_environment,
+            candidate_environment,
+            baseline_samples,
+            candidate_samples,
+            Vec::new(),
+            direction,
+            comparison_policy,
+            environment_policy,
+        )
+    }
+
+    /// Derives and seals a report while retaining every measured workload counter.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_attributed(
+        spec: BenchSpec,
+        baseline_environment: EnvironmentProbe,
+        candidate_environment: EnvironmentProbe,
+        baseline_samples: Vec<ComparisonSample>,
+        candidate_samples: Vec<ComparisonSample>,
+        counter_samples: Vec<CounterSample>,
+        direction: MetricDirection,
+        comparison_policy: RobustComparisonPolicy,
+        environment_policy: CompatibilityPolicy,
+    ) -> Result<Self, String> {
         let comparison = compare(
             &baseline_samples,
             &candidate_samples,
@@ -75,6 +115,7 @@ impl BenchReport {
             candidate_environment,
             baseline_samples,
             candidate_samples,
+            counter_samples,
             direction,
             comparison_policy,
             environment_policy,
@@ -118,6 +159,18 @@ impl BenchReport {
                 "report content key {} does not match canonical contents {}",
                 self.content_key.0, expected_key.0
             ));
+        }
+        for sample in &self.counter_samples {
+            if sample.counters.is_empty() {
+                return Err(format!("counter sample {} is empty", sample.sample_index));
+            }
+            for name in sample.counters.keys() {
+                if !self.spec.metrics.iter().any(|metric| metric.name == *name) {
+                    return Err(format!(
+                        "counter {name} is not declared by the benchmark spec"
+                    ));
+                }
+            }
         }
         let actual = compare(
             &self.baseline_samples,

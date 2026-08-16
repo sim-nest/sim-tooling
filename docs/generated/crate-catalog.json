@@ -12,6 +12,7 @@
       "root": ".",
       "target_kinds": [
         "bin",
+        "example",
         "lib",
         "test"
       ]
