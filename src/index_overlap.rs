@@ -20,6 +20,9 @@ use crate::{
 #[path = "index_overlap_policy.rs"]
 mod policy;
 use policy::{CoveragePolicy, protocol_coverage_findings};
+#[path = "index_overlap_benchmark.rs"]
+mod benchmark;
+use benchmark::benchmark_ownership_findings;
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = OverlapOptions::parse(&args)?;
@@ -40,6 +43,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let mut findings = overlap_findings(&doc, &sources, &clusters);
     findings.extend(role_findings);
     findings.extend(coverage_findings);
+    findings.extend(benchmark_ownership_findings(&doc));
     let strict_findings = findings
         .iter()
         .filter(|finding| finding.strict)

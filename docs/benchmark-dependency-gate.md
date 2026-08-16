@@ -33,6 +33,24 @@ benchmark runners. Domain means and variances (signal preprocessing, audio
 analysis, loudness, fitting, and physical reduction) encode domain semantics and
 are not benchmark-summary duplication.
 
+## Reconciled runner inventory
+
+| Inventory row | Classification | Ownership disposition |
+|---|---|---|
+| `sim-tooling/src/bench/` and `xtask bench` | canonical runner | Sole sampling, comparison, report, and policy owner. |
+| `sim-codec-compare/src/speed.rs` | legacy workload adapter | Frozen as the pre-product inventory row; it may define codec work, but no new runner or summary implementation may copy it. Migration requires the sim-codecs owner envelope. |
+| `sim-codec-compare/src/report.rs` | legacy presentation adapter | Table rendering is presentation; its local summary formulas are non-canonical and must not be reused. |
+| timed tensor assertions | correctness workload | Remain tests; elapsed time is an assertion input, not durable benchmark evidence. |
+| acceptance and timeout tests | bounded behavior workload | Remain tests; deadlines classify behavior and do not implement benchmark sampling. |
+| domain reductions in signal, audio, fitting, and physics code | domain statistic | Retained because their means and variances are product semantics, not benchmark summaries. |
+| external dependencies' Criterion harnesses | upstream external harness | Excluded from SIM ownership; vendored/registry source is never a constellation implementation. |
+
+The Index overlap board now raises public `mean`, `median`, `variance`, robust
+benchmark-summary, or benchmark-runner declarations outside their canonical
+subjects. A feature may expose an adapter only through an explicit checked
+`reuses`, `composes`, or `delegates-to` path to the canonical owner. Workload
+definitions are deliberately silent because they neither sample nor summarize.
+
 ## Dependency proof and measured cost
 
 Cargo accepts no cyclic package graph. The standalone proof is:
