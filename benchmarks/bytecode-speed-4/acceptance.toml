@@ -1,0 +1,40 @@
+schema = "sim.bytecode-speed.acceptance/v1"
+scope = "BYTECODE_SPEED_4"
+characterization = "BYTECODESPEED4.02"
+scope_decision = "BYTECODESPEED4.03"
+inconclusive_is_pass = false
+aggregate_improvement_floor = 0.04062324464900812
+aggregate_derivation = "sum of the two case regression ceilings"
+
+[host]
+required_equal = ["host-inventory-id", "architecture", "build-target"]
+inventory_id = "tiger"
+architecture = "x86_64"
+build_target = "x86_64-unknown-linux-gnu"
+
+[sampling]
+minimum_samples = 20
+maximum_relative_dispersion = 0.022779728136124593
+outlier_mad_multiplier = "none"
+confidence_level = 0.95
+bootstrap_seed = 19
+bootstrap_resamples = 128
+bootstrap_max_work = 20000
+
+[[cases]]
+workload = "jvm-bytecode-cold-preparation"
+baseline_report = "tiger-cold-preparation.json"
+baseline_content_key = "sha256:4bc7d2383522c22f9b937ad4552259deb61dffdfca2cd223b0b5fe10a50a0360"
+baseline_relative_dispersion = 0.01119174169511252
+candidate_relative_dispersion = 0.022779728136124593
+required_threshold = 0.022779728136124593
+derivation = "max(baseline_relative_dispersion, candidate_relative_dispersion)"
+
+[[cases]]
+workload = "jvm-bytecode-warm-execution"
+baseline_report = "tiger-warm-execution.json"
+baseline_content_key = "sha256:3410df991be855eebeb1b3acdd54440168575470e643b6c93ba4dc606376ae7d"
+baseline_relative_dispersion = 0.006853468220180778
+candidate_relative_dispersion = 0.017843516512883528
+required_threshold = 0.017843516512883528
+derivation = "max(baseline_relative_dispersion, candidate_relative_dispersion)"
