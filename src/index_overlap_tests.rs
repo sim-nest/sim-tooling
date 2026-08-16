@@ -365,6 +365,45 @@ fn configured_protocol_coverage_is_finite_and_fail_closed() {
 }
 
 #[test]
+fn protocol_coverage_accepts_package_level_feature_ownership() {
+    let mut doc = IndexDoc::public("protocol-package-coverage");
+    add_protocol_owner(&mut doc, "class", "sim_kernel::Class");
+    add_role_member(&mut doc, "PackageClass", "class", true, true);
+    let implementation = AnchorId::new("anchor/member/PackageClass");
+    let package = SubjectId::new("crate/package");
+    doc.anchors.push(DiscoveredAnchor {
+        id: implementation,
+        subject: package.clone(),
+        kind: "rust-impl".to_owned(),
+    });
+    doc.anchors.push(DiscoveredAnchor {
+        id: AnchorId::new("anchor/crate/package"),
+        subject: package,
+        kind: "crate".to_owned(),
+    });
+    doc.features.clear();
+    doc.features.push(FeatureRecord {
+        id: FeatureId::new("feature/package/runtime"),
+        key: CanonicalFeatureKey::new("repo/package/runtime"),
+        subject: SubjectId::new("repo/package"),
+        title: "Package runtime".to_owned(),
+        summary: "Own the package runtime implementation.".to_owned(),
+        anchors: vec![AnchorId::new("anchor/crate/package")],
+        surfaces: Vec::new(),
+        specimens: Vec::new(),
+        grammar_contracts: Vec::new(),
+        doc_anchor: None,
+    });
+    let mut policy = CoveragePolicy::default();
+    policy.protocols.insert("sim_kernel::Class".to_owned());
+
+    let (findings, classification) = protocol_coverage_findings(&doc, &policy);
+
+    assert!(findings.is_empty());
+    assert_eq!(classification.covered, 1);
+}
+
+#[test]
 fn stale_protocol_coverage_exemption_fails() {
     let mut policy = CoveragePolicy::default();
     policy.protocols.insert("sim_kernel::Function".to_owned());
@@ -484,6 +523,7 @@ fn strict_options(clusters: Option<PathBuf>) -> OverlapOptions {
         input: PathBuf::from("index.sx"),
         clusters,
         policy: None,
+        exceptions: None,
         control_root: None,
         repos_manifest: None,
         json: false,

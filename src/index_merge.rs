@@ -121,7 +121,7 @@ pub(crate) fn merge_fragment_paths(
         let source =
             fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
         let doc = IndexCodec
-            .decode(IndexForm::Sx, &source)
+            .decode_fragment(IndexForm::Sx, &source)
             .map_err(|err| format!("decode {}: {err}", path.display()))?;
         if public_only && doc.visibility != Visibility::Public {
             continue;

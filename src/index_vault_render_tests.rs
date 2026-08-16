@@ -31,6 +31,24 @@ fn compact_and_full_render_valid_artifact_sets_for_every_profile() {
 }
 
 #[test]
+fn fragment_render_does_not_count_external_references_as_local_rows() {
+    let mut doc = fixture_doc();
+    doc.routes[0].steps.push(RouteStep::Specimen {
+        id: SpecimenId::new("spec-test/other-repo/tests/runtime"),
+        why: "The downstream repository proves the composition.".to_owned(),
+    });
+    let graph = VaultGraph::from_fragment(&doc).unwrap();
+
+    for profile in PROFILES {
+        for granularity in [VaultGranularity::Compact, VaultGranularity::Full] {
+            let rendered = render_vault(&graph, profile, granularity).unwrap();
+            assert_eq!(rendered.coverage().unrepresented_rows(), 0);
+            assert_eq!(rendered.coverage().represented_rows(), graph.nodes.len());
+        }
+    }
+}
+
+#[test]
 fn compact_embeds_anchors_and_full_adds_anchor_notes() {
     let graph = VaultGraph::from_index(&fixture_doc()).unwrap();
     let profile = resolve_profile("portable").unwrap();

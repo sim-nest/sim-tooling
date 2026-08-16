@@ -4,6 +4,8 @@
 //! samples; adapters can prepare files and return a declaration, but never
 //! receive a mutable sample.
 
+// conformance: exact process declarations produce bounded, auditable samples.
+
 use std::{
     collections::BTreeMap,
     fs,

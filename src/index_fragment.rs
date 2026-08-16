@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::Value;
 use sim_codec_index::{IndexCodec, IndexForm};
-use sim_index_core::{IndexDoc, IndexEdge, SubjectId, SubjectRecord, check_index_doc};
+use sim_index_core::{IndexDoc, IndexEdge, SubjectId, SubjectRecord, check_index_fragment};
 use sim_kernel::EncodePosition;
 
 use crate::repo_contract::{GENERATOR, PackageContract};
@@ -21,7 +21,7 @@ pub(crate) fn artifact(
 ) -> Result<String, String> {
     let doc = index_doc(repo, packages, cards)?;
     IndexCodec
-        .encode(&doc, EncodePosition::Data, IndexForm::Sx)
+        .encode_fragment(&doc, EncodePosition::Data, IndexForm::Sx)
         .map_err(|err| format!("encode sim-index-fragment.sx: {err}"))
 }
 
@@ -55,7 +55,7 @@ pub(crate) fn index_doc(
         crate::index_composition::check_authored_composition(repo, packages, &doc, &overlay)?;
         doc = crate::index_author::merge_authored(doc, overlay)?;
     }
-    check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
+    check_index_fragment(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
     Ok(doc)
 }
 

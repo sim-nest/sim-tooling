@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use sim_index_core::{
     AnchorId, DiscoveredSpecimen, DiscoveredSurface, FeatureDraft, FeatureRecord, GrammarContract,
     IndexDoc, IndexEdge, RouteRecord, RouteStep, SubjectRecord, Visibility, check_index_doc,
-    shape::is_index_id,
+    check_index_fragment, shape::is_index_id,
 };
 
 pub(crate) use crate::index_vault_graph_model::{
@@ -21,7 +21,37 @@ impl VaultGraph {
 
         let nodes = sorted_nodes(doc);
         let endpoints = endpoint_index(&nodes)?;
-        let relations = sorted_relations(derive_relations(doc, &endpoints)?);
+        let relations = sorted_relations(derive_relations(doc, &endpoints, false)?);
+        let reverse_relations = sorted_relations(relations.iter().map(VaultRelation::reversed));
+        let coverage = VaultCoverage::from_nodes(&nodes);
+        let graph = Self {
+            schema: doc.schema.clone(),
+            generated_by: doc.generated_by.clone(),
+            nodes,
+            relations,
+            reverse_relations,
+            coverage,
+        };
+        graph.check(VaultGranularity::Full)?;
+        Ok(graph)
+    }
+
+    pub(crate) fn from_fragment(doc: &IndexDoc) -> Result<Self, String> {
+        if doc.visibility != Visibility::Public {
+            return Err("vault graph requires a public IndexDoc".to_owned());
+        }
+        check_index_fragment(doc).map_err(|err| format!("invalid index fragment: {err}"))?;
+
+        let nodes = sorted_nodes(doc);
+        let endpoints = endpoint_index(&nodes)?;
+        let present = nodes
+            .iter()
+            .map(VaultNode::endpoint)
+            .collect::<BTreeSet<_>>();
+        let relations =
+            sorted_relations(derive_relations(doc, &endpoints, true)?.into_iter().filter(
+                |relation| present.contains(&relation.from) && present.contains(&relation.to),
+            ));
         let reverse_relations = sorted_relations(relations.iter().map(VaultRelation::reversed));
         let coverage = VaultCoverage::from_nodes(&nodes);
         let graph = Self {
@@ -239,6 +269,7 @@ fn endpoint_index(nodes: &[VaultNode]) -> Result<BTreeMap<String, VaultEndpoint>
 fn derive_relations(
     doc: &IndexDoc,
     endpoints: &BTreeMap<String, VaultEndpoint>,
+    allow_deferred_targets: bool,
 ) -> Result<Vec<VaultRelation>, String> {
     let mut relations = Vec::new();
     for anchor in &doc.anchors {
@@ -332,6 +363,9 @@ fn derive_relations(
         push_doc_anchor(&mut relations, route_endpoint, &route.doc_anchor);
     }
     for edge in &doc.edges {
+        if allow_deferred_targets && !endpoints.contains_key(&edge.to) {
+            continue;
+        }
         relations.push(index_edge_relation(edge, endpoints)?);
     }
     Ok(relations)

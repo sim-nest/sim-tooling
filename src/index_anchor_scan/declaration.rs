@@ -382,7 +382,11 @@ fn public_use_paths(tree: &syn::UseTree) -> Vec<String> {
                 .items
                 .iter()
                 .for_each(|item| walk(item, prefix, paths)),
-            syn::UseTree::Glob(_) => paths.push(join_path(prefix, "*")),
+            // A glob names no stable public declaration of its own. Its
+            // exported items are discovered from their declarations; emitting
+            // the punctuation-only "*" path would normalize to an empty
+            // rustdoc anchor and leave the graph internally inconsistent.
+            syn::UseTree::Glob(_) => {}
         }
     }
     let mut paths = vec![];
@@ -404,5 +408,33 @@ fn item_kind(item: &syn::Item) -> &'static str {
         syn::Item::Macro(_) => "macro",
         syn::Item::Union(_) => "union",
         _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_reexports_do_not_emit_empty_declarations() {
+        let scan = declaration_facts(
+            "src/lib.rs",
+            "mod inner { pub struct Named; }\npub use inner::*;\npub use inner::Named as PublicNamed;\n",
+            DeclarationLimits::default(),
+        );
+
+        assert!(
+            scan.facts
+                .iter()
+                .all(|declaration| !declaration.module_path.is_empty())
+        );
+        assert!(
+            scan.facts.iter().any(|declaration| {
+                declaration.kind == PublicItemKind::ReExport
+                    && declaration.module_path == "public-named"
+            }),
+            "unexpected declaration facts: {:?}",
+            scan.facts
+        );
     }
 }

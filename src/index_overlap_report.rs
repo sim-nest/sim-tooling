@@ -57,7 +57,7 @@ pub(crate) enum SourceClassification {
 }
 
 impl SourceClassification {
-    fn parse(value: &str) -> Result<Self, String> {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
         match value {
             "candidate" => Ok(Self::Candidate),
             "keep" => Ok(Self::Keep),

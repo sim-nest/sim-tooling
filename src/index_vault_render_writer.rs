@@ -417,7 +417,9 @@ impl<'a> RenderState<'a> {
     }
 
     fn represent(&mut self, endpoint: &VaultEndpoint) {
-        self.represented.insert(endpoint.clone());
+        if self.graph.coverage.rows.contains(endpoint) {
+            self.represented.insert(endpoint.clone());
+        }
     }
 
     fn header(&self, title: &str, properties: &[(&str, String)]) -> String {

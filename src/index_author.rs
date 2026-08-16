@@ -6,9 +6,11 @@ use std::{
     path::Path,
 };
 
+#[cfg(test)]
+use sim_index_core::check_index_doc;
 use sim_index_core::{
     AnchorId, FeatureDraft, FeatureId, GrammarContract, IndexDoc, IndexEdge, RouteId, RouteRecord,
-    RouteStep, SpecimenId, SubjectId, SurfaceId, check_index_doc, draft::materialize_draft,
+    RouteStep, SpecimenId, SubjectId, SurfaceId, check_index_fragment, draft::materialize_draft,
 };
 use toml::{Table, Value};
 
@@ -100,7 +102,7 @@ pub(crate) fn merge_authored(
     remove_covered_drafts(&mut doc);
     doc.routes.extend(overlay.routes);
     doc.edges.extend(relation_edges);
-    check_index_doc(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
+    check_index_fragment(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
     Ok(doc)
 }
 

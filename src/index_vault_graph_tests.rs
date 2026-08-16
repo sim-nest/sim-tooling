@@ -87,6 +87,30 @@ fn invalid_unchecked_index_is_rejected_before_graphing() {
 }
 
 #[test]
+fn fragment_graph_defers_external_relations_until_constellation_merge() {
+    let mut doc = fixture_doc();
+    doc.edges.push(IndexEdge::relates(
+        FeatureId::new("feature/demo"),
+        "presents",
+        FeatureId::new("feature/other-repo/runtime"),
+    ));
+    doc.routes[0].steps.push(RouteStep::Specimen {
+        id: SpecimenId::new("spec-test/other-repo/tests/demo"),
+        why: "The downstream repository proves the composition.".to_owned(),
+    });
+
+    let graph = VaultGraph::from_fragment(&doc).expect("valid repository fragment");
+    assert_eq!(graph.unresolved_relations().count(), 0);
+    assert!(
+        graph
+            .relations
+            .iter()
+            .all(|relation| !relation.to.id.contains("other-repo"))
+    );
+    assert!(VaultGraph::from_index(&doc).is_err());
+}
+
+#[test]
 fn duplicate_index_edges_are_rejected_as_duplicate_relations() {
     let mut doc = fixture_doc();
     doc.edges.push(IndexEdge::relates(

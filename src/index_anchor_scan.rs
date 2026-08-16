@@ -124,6 +124,14 @@ fn insert_cli_anchors(
     if package.target_kinds.iter().any(|kind| kind == "bin") {
         insert_anchor(anchors, "anchor/cli", &package.name, subject, "cli-verb");
     }
+    for target in &package.targets {
+        let is_binary = target["kind"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")));
+        if is_binary && let Some(name) = target["name"].as_str() {
+            insert_anchor(anchors, "anchor/bin", name, subject, "binary-target");
+        }
+    }
     for verb in cli_verbs(repo, package) {
         insert_anchor(anchors, "anchor/cli", &verb, subject, "cli-verb");
     }
@@ -593,7 +601,13 @@ mod tests {
              const PATH: &str = \"docs/generated/repo-contract.json\";\n",
         )
         .unwrap();
-        let package = package("sim-demo", "");
+        let mut package = package("sim-demo", "");
+        package.targets = vec![json!({
+            "name": "demo",
+            "kind": ["bin"],
+            "crate_types": ["bin"],
+            "src": "src/main.rs"
+        })];
         let cards = vec![json!({
             "id": "browse/catalog",
             "kind": "browse-root",
@@ -607,6 +621,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
 
         assert!(ids.contains("anchor/card/browse/catalog"));
+        assert!(ids.contains("anchor/bin/demo"));
         assert!(ids.contains("anchor/cli/demo"));
         assert!(ids.contains("anchor/export/sim-demo/surface/demo"));
         assert!(!ids.contains("anchor/export/sim-demo/agent/attach-expects-a-slot-name"));

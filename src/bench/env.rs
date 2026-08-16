@@ -4,6 +4,8 @@
 //! inventory. Probing augments that identity with observations; it never
 //! invents identity from an observed hostname or a display label.
 
+// conformance: typed host evidence refuses unavailable or incompatible comparisons.
+
 use std::collections::BTreeSet;
 use std::fs;
 

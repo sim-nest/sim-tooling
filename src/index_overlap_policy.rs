@@ -8,7 +8,7 @@ use std::{
 use serde::Deserialize;
 use sim_index_core::{IndexDoc, ProtocolResolution};
 
-use super::Finding;
+use super::{Finding, OwnerIndex, features_for_subject};
 
 const SCHEMA: &str = "sim.index-overlap-policy/v1";
 
@@ -115,6 +115,12 @@ pub(super) fn protocol_coverage_findings(
         .iter()
         .flat_map(|feature| feature.anchors.iter().map(|anchor| anchor.as_str()))
         .collect::<BTreeSet<_>>();
+    let owners = OwnerIndex::from_doc(doc);
+    let anchor_subjects = doc
+        .anchors
+        .iter()
+        .map(|anchor| (anchor.id.as_str(), &anchor.subject))
+        .collect::<BTreeMap<_, _>>();
     let mut applicable = BTreeSet::new();
     let mut findings = Vec::new();
     let mut classification = CoverageClassification::default();
@@ -128,7 +134,11 @@ pub(super) fn protocol_coverage_findings(
         let anchor = relation.anchor.as_str();
         applicable.insert(anchor);
         classification.applicable += 1;
-        if claimed.contains(anchor) {
+        let reachable = claimed.contains(anchor)
+            || anchor_subjects
+                .get(anchor)
+                .is_some_and(|subject| !features_for_subject(doc, &owners, subject).is_empty());
+        if reachable {
             classification.covered += 1;
         } else if policy.exemptions.contains_key(anchor) {
             classification.exempt += 1;

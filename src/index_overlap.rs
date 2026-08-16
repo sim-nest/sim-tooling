@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use sim_index_core::{DeclarationRole, FeatureRecord, IndexDoc, ProtocolResolution, SubjectId};
 
 use crate::{
+    index_overlap_exception::StructuralExceptions,
     index_overlap_record::{implementation_shape_clusters, record_shape_clusters},
     index_overlap_report::{
         CloneCluster, OverlapMember, SourceClassification, read_overlap_report,
@@ -34,10 +35,13 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         options.repos_manifest.as_deref(),
     )?;
     let mut clusters = report.clusters;
-    clusters.extend(record_shape_clusters(&doc, &sources)?);
+    let mut structural_clusters = record_shape_clusters(&doc, &sources)?;
     let (implementation_clusters, implementation_classification) =
         implementation_shape_clusters(&doc, &sources)?;
-    clusters.extend(implementation_clusters);
+    structural_clusters.extend(implementation_clusters);
+    StructuralExceptions::read(options.exceptions.as_ref(), options.strict)?
+        .classify(&mut structural_clusters)?;
+    clusters.extend(structural_clusters);
     let (role_findings, role_classification) = protocol_role_findings(&doc);
     let (coverage_findings, coverage_classification) = protocol_coverage_findings(&doc, &policy);
     let mut findings = overlap_findings(&doc, &sources, &clusters);
@@ -240,6 +244,7 @@ struct OverlapOptions {
     input: PathBuf,
     clusters: Option<PathBuf>,
     policy: Option<PathBuf>,
+    exceptions: Option<PathBuf>,
     control_root: Option<PathBuf>,
     repos_manifest: Option<PathBuf>,
     json: bool,
@@ -257,6 +262,7 @@ impl OverlapOptions {
         let mut input = None;
         let mut clusters = None;
         let mut policy = None;
+        let mut exceptions = None;
         let mut control_root = None;
         let mut repos_manifest = None;
         let mut json = false;
@@ -280,6 +286,12 @@ impl OverlapOptions {
                     index += 1;
                     policy = Some(PathBuf::from(
                         args.get(index).ok_or("--policy requires a path")?,
+                    ));
+                }
+                "--exceptions" => {
+                    index += 1;
+                    exceptions = Some(PathBuf::from(
+                        args.get(index).ok_or("--exceptions requires a path")?,
                     ));
                 }
                 "--control-root" => {
@@ -311,6 +323,7 @@ impl OverlapOptions {
                 .ok_or_else(|| format!("index overlap requires --input; {}", usage(program)))?,
             clusters,
             policy,
+            exceptions,
             control_root,
             repos_manifest,
             json,
@@ -321,7 +334,7 @@ impl OverlapOptions {
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--policy <policy.toml>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
+        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--policy <policy.toml>] [--exceptions <classifications.tsv>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
     )
 }
 

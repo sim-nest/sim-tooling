@@ -4,6 +4,9 @@
 //! only sample alignment, declared exclusion policy, environment admission,
 //! and the final benchmark threshold decision.
 
+// conformance: robust comparison retains exclusions and refuses incompatible
+// or statistically inconclusive evidence under an explicit policy.
+
 use serde::{Deserialize, Serialize};
 use sim_lib_numbers_stats::{
     BootstrapControl, bootstrap_mean_difference_interval, exact_quantile, mean,

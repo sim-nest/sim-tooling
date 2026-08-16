@@ -181,6 +181,7 @@ fn recipe_toml_files(repo: &Path) -> Vec<PathBuf> {
 fn conformance_rust_files(repo: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     collect_ext_files(&repo.join("src"), "rs", &mut files);
+    collect_ext_files(&repo.join("tests"), "rs", &mut files);
     collect_ext_files(&repo.join("crates"), "rs", &mut files);
     files.retain(|path| {
         let rel = rel_path(repo, path);
@@ -328,10 +329,12 @@ mod tests {
         let checked_dir = root.join("recipes/01-basics/checked");
         let loose_dir = root.join("crates/sim-loose/recipes/01-basics/not-run");
         let conformance_dir = root.join("crates/sim-codec-doc/tests");
+        let root_conformance_dir = root.join("tests");
         let xtask_dir = root.join("xtask/src");
         fs::create_dir_all(&checked_dir).unwrap();
         fs::create_dir_all(&loose_dir).unwrap();
         fs::create_dir_all(&conformance_dir).unwrap();
+        fs::create_dir_all(&root_conformance_dir).unwrap();
         fs::create_dir_all(&xtask_dir).unwrap();
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"sim-demo\"\n").unwrap();
         fs::write(root.join("recipes/book.toml"), "book = \"sim-demo\"\n").unwrap();
@@ -355,6 +358,11 @@ mod tests {
             "#[test]\nfn all_implemented_backends_roundtrip_simple_fixture() {}\n",
         )
         .unwrap();
+        fs::write(
+            root_conformance_dir.join("behavior.rs"),
+            "// conformance: the root package preserves its public behavior.\n#[test]\nfn public_behavior_is_stable() {}\n",
+        )
+        .unwrap();
         let packages = vec![
             package("sim-demo", ""),
             package("sim-codec-doc", "crates/sim-codec-doc"),
@@ -375,6 +383,7 @@ mod tests {
             &specimens,
             "spec-test/sim-demo-repo/crates/sim-codec-doc/tests/conformance",
         );
+        let root_spec_test = find(&specimens, "spec-test/sim-demo-repo/tests/behavior");
 
         assert_eq!(ids, sorted(ids.clone()));
         assert_eq!(checked.subject.as_str(), "crate/sim-demo");
@@ -393,6 +402,8 @@ mod tests {
         assert_eq!(spec_test.subject.as_str(), "crate/sim-codec-doc");
         assert_eq!(spec_test.language.as_deref(), Some("doc"));
         assert_eq!(spec_test.checked_by.as_deref(), Some("cargo test"));
+        assert_eq!(root_spec_test.subject.as_str(), "crate/sim-demo");
+        assert_eq!(root_spec_test.checked_by.as_deref(), Some("cargo test"));
         assert_eq!(
             ids,
             discovered(&root, &packages)

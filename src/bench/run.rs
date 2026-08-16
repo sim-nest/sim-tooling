@@ -276,6 +276,9 @@ fn arm_name(arm: Arm) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    // conformance: deterministic sampling retains lifecycle, calibration, scheduling,
+    // timeout, failure, and counter evidence under an injected monotonic clock.
+
     use std::{cell::Cell, collections::BTreeMap};
 
     use super::*;

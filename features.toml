@@ -92,6 +92,9 @@ claims_anchors = [
   "anchor/rustdoc/xtask/environment-probe",
   "anchor/rustdoc/xtask/probe_environment",
 ]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/env",
+]
 
 [[feature]]
 id = "feature/sim-tooling/benchmark-sampling"
@@ -110,6 +113,9 @@ claims_anchors = [
   "anchor/rustdoc/xtask/sample-status",
   "anchor/rustdoc/xtask/workload",
 ]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/run",
+]
 
 [[feature]]
 id = "feature/sim-tooling/benchmark-process-isolation"
@@ -126,6 +132,9 @@ claims_anchors = [
   "anchor/rustdoc/xtask/process-declaration",
   "anchor/rustdoc/xtask/process-sample",
   "anchor/rustdoc/xtask/workload-adapter",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/exec",
 ]
 composes = [
   "feature/sim-tooling/benchmark-sampling",
@@ -144,6 +153,9 @@ claims_anchors = [
   "anchor/rustdoc/xtask/excluded-sample",
   "anchor/rustdoc/xtask/robust-comparison-policy",
   "anchor/rustdoc/xtask/robust-summary",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/compare",
 ]
 composes = [
   "feature/sim-tooling/benchmark-environment-compatibility",
