@@ -2362,7 +2362,11 @@ mod tests {
     #[test]
     fn unreadable_governor_is_recorded_as_unavailable() {
         let result = probe_environment(
-            DeclaredHost::new("ru".to_owned(), "ru".to_owned()).unwrap(),
+            DeclaredHost::new(
+                "unreadable-governor-fixture".to_owned(),
+                "governor-fixture.example.invalid".to_owned(),
+            )
+            .unwrap(),
             &build(),
             &FixtureProbe {
                 governor: Err("permission denied".to_owned()),

@@ -160,7 +160,11 @@ fn build() -> BuildIdentity {
 
 pub(super) fn local_environment() -> EnvironmentProbe {
     probe_environment(
-        DeclaredHost::new("local-ci-machine".to_owned(), "localhost".to_owned()).unwrap(),
+        DeclaredHost::new(
+            "local-ci-machine".to_owned(),
+            "local-ci.example.invalid".to_owned(),
+        )
+        .unwrap(),
         &build(),
         &LocalHostProbe,
     )
@@ -168,7 +172,7 @@ pub(super) fn local_environment() -> EnvironmentProbe {
 
 pub(super) fn assert_local_fingerprint(environment: &EnvironmentProbe) {
     assert_eq!(environment.host.host.inventory_id, "local-ci-machine");
-    assert_eq!(environment.host.host.ssh_host, "localhost");
+    assert_eq!(environment.host.host.ssh_host, "local-ci.example.invalid");
     assert!(matches!(
         environment.host.architecture,
         ProbeEvidence::Available { ref value } if value == std::env::consts::ARCH
