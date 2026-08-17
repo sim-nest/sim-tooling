@@ -6,8 +6,8 @@ use std::{
 
 use serde_json::json;
 use sim_index_core::{
-    AnchorId, CanonicalFeatureKey, DiscoveredAnchor, FeatureId, FeatureRecord, IndexDoc, SubjectId,
-    SubjectRecord,
+    AnchorId, CanonicalFeatureKey, DeclarationFact, DiscoveredAnchor, FeatureId, FeatureRecord,
+    IndexDoc, IndexEdge, ProtocolRelation, SourceLocation, SubjectId, SubjectRecord, SyntaxBound,
 };
 
 use crate::index_overlap_report::read_overlap_report;
@@ -106,7 +106,7 @@ fn classified_source_members_resolve_without_graph_findings() {
 }
 
 #[test]
-fn mapped_candidate_members_remain_advisory() {
+fn mapped_candidate_members_fail_the_complete_board() {
     let fixture = OverlapFixture::new("sim-tooling-overlap-candidate");
     let report_path = fixture.report(&json!({
         "schema": "sim.overlap-report/v1",
@@ -128,15 +128,18 @@ fn mapped_candidate_members_remain_advisory() {
 
     let findings = overlap_findings(&fixture.doc(false), &sources, &report.clusters);
 
+    assert_eq!(findings.len(), 2);
+    assert!(findings.iter().all(|finding| finding.strict));
     assert!(
-        findings.is_empty(),
-        "candidate source rows map but do not become strict graph findings"
+        findings
+            .iter()
+            .all(|finding| finding.reason == "unresolved-candidate")
     );
     fixture.cleanup();
 }
 
 #[test]
-fn mapped_candidate_without_feature_is_advisory_finding() {
+fn mapped_candidate_without_feature_is_unresolved_finding() {
     let fixture = OverlapFixture::new("sim-tooling-overlap-unindexed-candidate");
     let report_path = fixture.report(&json!({
         "schema": "sim.overlap-report/v1",
@@ -158,8 +161,8 @@ fn mapped_candidate_without_feature_is_advisory_finding() {
     let findings = overlap_findings(&doc, &sources, &report.clusters);
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].reason, "unindexed-source-member");
-    assert!(!findings[0].strict);
+    assert_eq!(findings[0].reason, "unresolved-candidate");
+    assert!(findings[0].strict);
     fixture.cleanup();
 }
 
@@ -197,12 +200,7 @@ fn unmapped_and_ambiguous_candidate_members_are_strict_findings() {
     assert!(
         findings
             .iter()
-            .any(|finding| finding.reason == "unmapped-source-member")
-    );
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.reason == "ambiguous-source-member")
+            .all(|finding| finding.reason == "unresolved-candidate")
     );
     fixture.cleanup();
 }
@@ -265,10 +263,267 @@ fn features_can_be_found_through_claimed_anchor_ownership() {
     fixture.cleanup();
 }
 
+#[test]
+fn protocol_roles_raise_real_gaps_and_reject_policy_categories() {
+    let mut doc = IndexDoc::public("protocol-role-fixture");
+    add_protocol_owner(&mut doc, "function", "sim_kernel::Function");
+    add_protocol_owner(&mut doc, "class", "sim_kernel::Class");
+    for (name, protocol, depends, implements) in [
+        ("JavascriptFunction", "function", true, false),
+        ("PythonClass", "class", true, false),
+        ("LuaClosure", "function", true, true),
+        ("TypeclassDictionary", "function", false, false),
+        ("PrologPredicate", "function", false, false),
+        ("JavascriptPrototype", "class", false, false),
+        ("LuaMetatable", "class", false, false),
+    ] {
+        add_role_member(&mut doc, name, protocol, depends, implements);
+    }
+
+    let (findings, classification) = protocol_role_findings(&doc);
+
+    assert_eq!(classification.configured_members, 7);
+    assert_eq!(classification.gap_members, 2);
+    assert_eq!(classification.satisfied_members, 1);
+    assert_eq!(classification.policy_members, 4);
+    assert_eq!(
+        classification.policy_causes["no-protocol-owner-dependency"],
+        4
+    );
+    let details = findings
+        .iter()
+        .map(|finding| finding.detail.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("JavascriptFunction"))
+    );
+    assert!(details.iter().any(|detail| detail.contains("PythonClass")));
+    for category_error in [
+        "TypeclassDictionary",
+        "PrologPredicate",
+        "JavascriptPrototype",
+        "LuaMetatable",
+    ] {
+        assert!(!details.iter().any(|detail| detail.contains(category_error)));
+    }
+}
+
+#[test]
+fn explicit_delegation_satisfies_a_protocol_role() {
+    let mut doc = IndexDoc::public("protocol-role-delegation");
+    add_protocol_owner(&mut doc, "function", "sim_kernel::Function");
+    add_role_member(&mut doc, "IslispGeneric", "function", true, false);
+    doc.edges.push(IndexEdge::new(
+        "feature/member/IslispGeneric",
+        "delegates-to",
+        "feature/protocol/function",
+    ));
+
+    let (findings, classification) = protocol_role_findings(&doc);
+
+    assert!(findings.is_empty());
+    assert_eq!(classification.satisfied_members, 1);
+}
+
+#[test]
+fn configured_protocol_coverage_is_finite_and_fail_closed() {
+    let mut doc = IndexDoc::public("protocol-coverage");
+    add_protocol_owner(&mut doc, "function", "sim_kernel::Function");
+    add_role_member(&mut doc, "CoveredFunction", "function", true, true);
+    add_role_member(&mut doc, "ExemptFunction", "function", true, true);
+    add_role_member(&mut doc, "UncoveredFunction", "function", true, true);
+    for name in ["ExemptFunction", "UncoveredFunction"] {
+        let feature = doc
+            .features
+            .iter_mut()
+            .find(|feature| feature.id.as_str() == format!("feature/member/{name}"))
+            .unwrap();
+        feature.anchors.clear();
+    }
+    let exempt_anchor = "anchor/member/ExemptFunction".to_owned();
+    let mut policy = CoveragePolicy::default();
+    policy.protocols.insert("sim_kernel::Function".to_owned());
+    policy.exemptions.insert(
+        exempt_anchor.clone(),
+        policy::CoverageExemption {
+            anchor: exempt_anchor,
+            reason: "generated adapter is intentionally internal to its claimed facade".to_owned(),
+        },
+    );
+
+    let (findings, classification) = protocol_coverage_findings(&doc, &policy);
+
+    assert_eq!(classification.applicable, 3);
+    assert_eq!(classification.covered, 1);
+    assert_eq!(classification.exempt, 1);
+    assert_eq!(classification.uncovered, 1);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].reason, "uncovered-protocol");
+    assert!(findings[0].strict);
+}
+
+#[test]
+fn protocol_coverage_accepts_package_level_feature_ownership() {
+    let mut doc = IndexDoc::public("protocol-package-coverage");
+    add_protocol_owner(&mut doc, "class", "sim_kernel::Class");
+    add_role_member(&mut doc, "PackageClass", "class", true, true);
+    let implementation = AnchorId::new("anchor/member/PackageClass");
+    let package = SubjectId::new("crate/package");
+    doc.anchors.push(DiscoveredAnchor {
+        id: implementation,
+        subject: package.clone(),
+        kind: "rust-impl".to_owned(),
+    });
+    doc.anchors.push(DiscoveredAnchor {
+        id: AnchorId::new("anchor/crate/package"),
+        subject: package,
+        kind: "crate".to_owned(),
+    });
+    doc.features.clear();
+    doc.features.push(FeatureRecord {
+        id: FeatureId::new("feature/package/runtime"),
+        key: CanonicalFeatureKey::new("repo/package/runtime"),
+        subject: SubjectId::new("repo/package"),
+        title: "Package runtime".to_owned(),
+        summary: "Own the package runtime implementation.".to_owned(),
+        anchors: vec![AnchorId::new("anchor/crate/package")],
+        surfaces: Vec::new(),
+        specimens: Vec::new(),
+        grammar_contracts: Vec::new(),
+        doc_anchor: None,
+    });
+    let mut policy = CoveragePolicy::default();
+    policy.protocols.insert("sim_kernel::Class".to_owned());
+
+    let (findings, classification) = protocol_coverage_findings(&doc, &policy);
+
+    assert!(findings.is_empty());
+    assert_eq!(classification.covered, 1);
+}
+
+#[test]
+fn stale_protocol_coverage_exemption_fails() {
+    let mut policy = CoveragePolicy::default();
+    policy.protocols.insert("sim_kernel::Function".to_owned());
+    policy.exemptions.insert(
+        "anchor/missing".to_owned(),
+        policy::CoverageExemption {
+            anchor: "anchor/missing".to_owned(),
+            reason: "fixture proves exemptions cannot silently outlive source".to_owned(),
+        },
+    );
+
+    let (findings, classification) =
+        protocol_coverage_findings(&IndexDoc::public("empty"), &policy);
+
+    assert_eq!(classification.applicable, 0);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].reason, "stale-coverage-exemption");
+    assert!(findings[0].strict);
+}
+
+fn add_protocol_owner(doc: &mut IndexDoc, key: &str, protocol: &str) {
+    let anchor = AnchorId::new(format!("anchor/protocol/{key}"));
+    doc.declarations.push(declaration_fact(
+        anchor.clone(),
+        DeclarationRole::Trait,
+        protocol,
+    ));
+    doc.features.push(feature_record(
+        FeatureId::new(format!("feature/protocol/{key}")),
+        anchor,
+    ));
+}
+
+fn add_role_member(
+    doc: &mut IndexDoc,
+    name: &str,
+    protocol: &str,
+    depends: bool,
+    implements: bool,
+) {
+    let anchor = AnchorId::new(format!("anchor/member/{name}"));
+    let member = FeatureId::new(format!("feature/member/{name}"));
+    let owner = format!("feature/protocol/{protocol}");
+    doc.declarations.push(declaration_fact(
+        anchor.clone(),
+        DeclarationRole::Struct,
+        name,
+    ));
+    doc.features
+        .push(feature_record(member.clone(), anchor.clone()));
+    doc.edges.push(IndexEdge::new(
+        member.to_string(),
+        "protocol-role",
+        owner.clone(),
+    ));
+    if depends {
+        doc.edges
+            .push(IndexEdge::new(member.to_string(), "depends-on", owner));
+    }
+    if implements {
+        let protocol_name = if protocol == "function" {
+            "Function"
+        } else {
+            "Class"
+        };
+        doc.protocol_relations.push(ProtocolRelation {
+            anchor,
+            implementor: name.to_owned(),
+            source_spelling: protocol_name.to_owned(),
+            body_fingerprint: "fn invoke(&self) { shared_protocol(); }".to_owned(),
+            body_bound: SyntaxBound {
+                max_bytes: 16_384,
+                truncated: false,
+            },
+            resolution: ProtocolResolution::Resolved {
+                protocol: format!("sim_kernel::{protocol_name}"),
+            },
+        });
+    }
+}
+
+fn declaration_fact(anchor: AnchorId, role: DeclarationRole, path: &str) -> DeclarationFact {
+    DeclarationFact {
+        anchor,
+        role,
+        module_path: path.to_owned(),
+        generics: String::new(),
+        members: Vec::new(),
+        location: SourceLocation {
+            file: "src/lib.rs".to_owned(),
+            declaration: 0,
+        },
+        syntax_bound: SyntaxBound {
+            max_bytes: 16_384,
+            truncated: false,
+        },
+    }
+}
+
+fn feature_record(id: FeatureId, anchor: AnchorId) -> FeatureRecord {
+    FeatureRecord {
+        key: CanonicalFeatureKey::new(id.to_string()),
+        subject: SubjectId::new(format!("subject/{}", id.as_str())),
+        title: id.to_string(),
+        summary: "protocol role fixture".to_owned(),
+        id,
+        anchors: vec![anchor],
+        surfaces: Vec::new(),
+        specimens: Vec::new(),
+        grammar_contracts: Vec::new(),
+        doc_anchor: None,
+    }
+}
+
 fn strict_options(clusters: Option<PathBuf>) -> OverlapOptions {
     OverlapOptions {
         input: PathBuf::from("index.sx"),
         clusters,
+        policy: None,
+        exceptions: None,
         control_root: None,
         repos_manifest: None,
         json: false,

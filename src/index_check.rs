@@ -6,7 +6,9 @@ use std::{
 };
 
 use sim_codec_index::{IndexCodec, IndexForm};
-use sim_index_core::{IndexDoc, check_index_doc};
+#[cfg(test)]
+use sim_index_core::check_index_doc;
+use sim_index_core::{IndexDoc, check_index_fragment};
 
 use crate::{
     index_author,
@@ -102,9 +104,9 @@ pub(crate) fn index_check(
 ) -> Result<IndexCheckReport, String> {
     let source = read_generated_fragment(repo)?;
     let doc = decode_fragment(repo, &source)?;
-    check_index_doc(&doc).map_err(|err| format!("invalid index fragment: {err}"))?;
+    check_index_fragment(&doc).map_err(|err| format!("invalid index fragment: {err}"))?;
     let vault_graph =
-        VaultGraph::from_index(&doc).map_err(|err| format!("invalid vault graph: {err}"))?;
+        VaultGraph::from_fragment(&doc).map_err(|err| format!("invalid vault graph: {err}"))?;
     vault_graph
         .check(VaultGranularity::Compact)
         .map_err(|err| format!("invalid vault graph: {err}"))?;
@@ -131,12 +133,14 @@ fn read_generated_fragment(repo: &Path) -> Result<String, String> {
 }
 
 fn decode_fragment(repo: &Path, source: &str) -> Result<IndexDoc, String> {
-    IndexCodec.decode(IndexForm::Sx, source).map_err(|err| {
-        format!(
-            "decode generated index fragment {}: {err}",
-            fragment_path(repo).display()
-        )
-    })
+    IndexCodec
+        .decode_fragment(IndexForm::Sx, source)
+        .map_err(|err| {
+            format!(
+                "decode generated index fragment {}: {err}",
+                fragment_path(repo).display()
+            )
+        })
 }
 
 fn assert_fragment_fresh(repo: &Path, current: &str) -> Result<(), String> {
@@ -207,6 +211,8 @@ mod tests {
                 title: "demo".to_owned(),
             }],
             anchors: Vec::new(),
+            declarations: Vec::new(),
+            protocol_relations: Vec::new(),
             surfaces: Vec::new(),
             specimens: vec![DiscoveredSpecimen {
                 id: SpecimenId::new("recipe/demo/manual"),

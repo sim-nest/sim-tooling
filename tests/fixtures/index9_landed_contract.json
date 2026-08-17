@@ -1,0 +1,84 @@
+{
+  "schema": "sim.index-landed-contract-fixture/v1",
+  "frozen_head": "4308d0165087c299467b147128c45505f055a228",
+  "owners": {
+    "anchor_parser": "src/index_anchor_scan.rs::insert_rustdoc_anchors[syn::parse_file]",
+    "fragment_emitter": "src/index_fragment.rs",
+    "graph_model": "sim-foundation/crates/sim-index-core",
+    "graph_codec": "sim-codecs/crates/sim-codec-index",
+    "report_parser": "src/index_overlap_report.rs::read_overlap_report",
+    "classifier": "src/index_overlap.rs::overlap_findings",
+    "report_producer": "sim-private/bin/simctl-overlap",
+    "exceptions": "sim-private/scripts/overlap-exceptions.tsv"
+  },
+  "anchor_schema": {
+    "record": "sim_index_core::DiscoveredAnchor",
+    "namespace": "anchor/rustdoc",
+    "kind": "rustdoc-item",
+    "identity": "<crate>/<public-module-path>/<public-item>"
+  },
+  "report_schema": {
+    "id": "sim.overlap-report/v1",
+    "required_root_fields": ["schema", "complete", "roots_scanned", "clusters"],
+    "required_cluster_fields": ["id", "owner", "replacement", "members"],
+    "required_member_fields": ["repo", "path", "line", "symbol", "classification"],
+    "optional_member_fields": ["reason", "owner", "replacement"]
+  },
+  "classification_vocabulary": {
+    "report": ["candidate", "keep", "delegated", "regression"],
+    "authored_exceptions": ["keep", "delegated"]
+  },
+  "scan_bounds": {
+    "repository_set": "sim-private/repos.toml kind=code rows",
+    "source_roots": "each code row's source_paths",
+    "anchor_files": "Cargo package Rust targets beneath package_rust_files",
+    "anchor_visibility": "public items only; test source excluded",
+    "report_completeness": "complete=true and roots_scanned>0"
+  },
+  "generated_output_owners": {
+    "repository_fragment": "<owner-repo>/docs/generated/sim-index-fragment.sx",
+    "merged_graph_and_views": "sim-say/docs/index",
+    "runtime_snapshot": "sim-run/crates/sim-lib-index/src/snapshot/index.sx"
+  },
+  "source_fixtures": [
+    {
+      "family": "admission-envelope",
+      "detector": "record-shape",
+      "declarations": [
+        "sim-runtime/crates/sim-lib-lang-javascript/src/modules.rs::JavascriptModuleAdmission(root_id:Symbol,root:Arc<dyn Dir>,read_policy:ReadPolicy,requires:Vec<CapabilityName>,allow:CapabilitySet)",
+        "sim-runtime/crates/sim-lib-lang-python/src/library_core.rs::PythonModuleAdmission(root_id:Symbol,root:Arc<dyn Dir>,read_policy:ReadPolicy,requires:Vec<CapabilityName>,allow:CapabilitySet)"
+      ]
+    },
+    {
+      "family": "managed-payload",
+      "detector": "impl-shape",
+      "protocol": "sim_lib_mutation::ManagedObject",
+      "declarations": [
+        "sim-runtime/crates/sim-lib-lang-javascript/src/managed.rs::JavascriptManagedObject(kind:JavascriptManagedKind,edges:Vec<ManagedId>)",
+        "sim-runtime/crates/sim-lib-lang-python/src/managed.rs::PythonManagedObject(kind:PythonManagedKind,edges:Vec<ManagedId>)"
+      ],
+      "expected_operations": ["trace_edges:strong-enumerated", "clear_weak_edge:false", "clear_ephemeron_edge:false"]
+    },
+    {
+      "family": "guest-function",
+      "detector": "protocol-role",
+      "protocol": "sim_kernel::Function",
+      "declarations": [
+        "sim-runtime/crates/sim-lib-lang-javascript/src/objects.rs::JavascriptFunction",
+        "sim-runtime/crates/sim-lib-lang-python/src/runtime.rs::PythonFunction",
+        "sim-runtime/crates/sim-lib-lang-lua/src/closure.rs::LuaClosure",
+        "sim-runtime/crates/sim-lib-lang-islisp/src/generic.rs::IslispGeneric",
+        "sim-runtime/crates/sim-lib-lang-typed-lazy/src/runtime.rs::TypeclassDictionary"
+      ]
+    },
+    {
+      "family": "guest-class",
+      "detector": "protocol-role",
+      "protocol": "sim_kernel::Class",
+      "declarations": [
+        "sim-runtime/crates/sim-lib-lang-python/src/objects.rs::PythonClass"
+      ],
+      "historical_expectation": "the landed public survivor plus eliminated private guest class records remain a protocol-role family; do not invent replacement declarations"
+    }
+  ]
+}

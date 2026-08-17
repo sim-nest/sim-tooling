@@ -14,6 +14,9 @@ use sim_index_core::{
 };
 use sim_kernel::EncodePosition;
 
+mod source_facts;
+use source_facts::merge_source_facts;
+
 use crate::{
     index_vault_graph::{VaultGranularity, VaultGraph},
     index_vault_render::check_all_vault_renders,
@@ -118,7 +121,7 @@ pub(crate) fn merge_fragment_paths(
         let source =
             fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
         let doc = IndexCodec
-            .decode(IndexForm::Sx, &source)
+            .decode_fragment(IndexForm::Sx, &source)
             .map_err(|err| format!("decode {}: {err}", path.display()))?;
         if public_only && doc.visibility != Visibility::Public {
             continue;
@@ -150,6 +153,7 @@ fn merge_fragments(fragments: &[Fragment]) -> Result<IndexDoc, String> {
         let mut doc = rewrite_doc(&fragment.doc, &maps);
         merged.subjects.append(&mut doc.subjects);
         merged.anchors.append(&mut doc.anchors);
+        merge_source_facts(&mut merged, doc.declarations, doc.protocol_relations)?;
         merged.surfaces.append(&mut doc.surfaces);
         merged.specimens.append(&mut doc.specimens);
         merged.drafts.append(&mut doc.drafts);
@@ -374,6 +378,24 @@ fn rewrite_doc(doc: &IndexDoc, maps: &IdMaps) -> IndexDoc {
             kind: record.kind.clone(),
         })
         .collect();
+    out.declarations = doc
+        .declarations
+        .iter()
+        .map(|record| {
+            let mut record = record.clone();
+            record.anchor = AnchorId::new(map(&maps.anchors, record.anchor.as_str()));
+            record
+        })
+        .collect();
+    out.protocol_relations = doc
+        .protocol_relations
+        .iter()
+        .map(|record| {
+            let mut record = record.clone();
+            record.anchor = AnchorId::new(map(&maps.anchors, record.anchor.as_str()));
+            record
+        })
+        .collect();
     out.surfaces = doc
         .surfaces
         .iter()
@@ -580,6 +602,8 @@ fn map(ids: &BTreeMap<String, String>, id: &str) -> String {
 fn sort_doc(doc: &mut IndexDoc) {
     doc.subjects.sort_by(|left, right| left.id.cmp(&right.id));
     doc.anchors.sort_by(|left, right| left.id.cmp(&right.id));
+    doc.declarations.sort();
+    doc.protocol_relations.sort();
     doc.surfaces.sort_by(|left, right| left.id.cmp(&right.id));
     doc.specimens.sort_by(|left, right| left.id.cmp(&right.id));
     doc.drafts.sort_by(|left, right| left.id.cmp(&right.id));

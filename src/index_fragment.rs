@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::Value;
 use sim_codec_index::{IndexCodec, IndexForm};
-use sim_index_core::{IndexDoc, IndexEdge, SubjectId, SubjectRecord, check_index_doc};
+use sim_index_core::{IndexDoc, IndexEdge, SubjectId, SubjectRecord, check_index_fragment};
 use sim_kernel::EncodePosition;
 
 use crate::repo_contract::{GENERATOR, PackageContract};
@@ -21,7 +21,7 @@ pub(crate) fn artifact(
 ) -> Result<String, String> {
     let doc = index_doc(repo, packages, cards)?;
     IndexCodec
-        .encode(&doc, EncodePosition::Data, IndexForm::Sx)
+        .encode_fragment(&doc, EncodePosition::Data, IndexForm::Sx)
         .map_err(|err| format!("encode sim-index-fragment.sx: {err}"))
 }
 
@@ -34,20 +34,28 @@ pub(crate) fn index_doc(
     let (card_subjects, card_edges) = card_owner_subjects(repo, cards);
     subjects.extend(card_subjects);
     let edges = merge_edges(package_edges, card_edges);
-    let anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
+    let mut anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
+    let (source_anchors, declarations, protocol_relations) =
+        crate::index_anchor_scan::source_facts(repo, packages);
+    anchors.extend(source_anchors);
     let discovered = crate::index_surface_scan::discovered(repo, packages, &anchors);
     let specimens = crate::index_specimen_scan::discovered(repo, packages);
     let mut doc = IndexDoc::public(GENERATOR);
     doc.subjects = merge_subjects(subjects, discovered.subjects);
     doc.anchors = anchors.into_iter().chain(discovered.anchors).collect();
+    doc.anchors.sort_by(|left, right| left.id.cmp(&right.id));
+    doc.anchors.dedup_by(|left, right| left.id == right.id);
+    doc.declarations = declarations;
+    doc.protocol_relations = protocol_relations;
     doc.surfaces = discovered.surfaces;
     doc.specimens = specimens;
     doc.drafts = discovered.drafts;
     doc.edges = edges;
     if let Some(overlay) = crate::index_author::load_optional(repo)? {
+        crate::index_composition::check_authored_composition(repo, packages, &doc, &overlay)?;
         doc = crate::index_author::merge_authored(doc, overlay)?;
     }
-    check_index_doc(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
+    check_index_fragment(&doc).map_err(|err| format!("invalid generated index fragment: {err}"))?;
     Ok(doc)
 }
 
@@ -519,7 +527,11 @@ mod tests {
     fn fragment_artifact_round_trips_through_codec_index() {
         let root = temp_root("sim-tooling-index-fragment-roundtrip");
         fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src/lib.rs"), "pub fn run() {}\n").unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub trait Run {}\npub struct Worker;\nimpl Run for Worker {}\npub fn run() {}\n",
+        )
+        .unwrap();
         let sx = artifact(&root, &[package("xtask", "")], &[]).expect("fragment artifact");
         let doc = IndexCodec
             .decode(IndexForm::Sx, &sx)
@@ -531,6 +543,15 @@ mod tests {
             doc.edges
                 .iter()
                 .any(|edge| edge.rel == "contains" && edge.to == "crate/xtask")
+        );
+        assert!(doc.declarations.iter().any(|fact| {
+            fact.anchor.as_str() == "anchor/rustdoc/xtask/run"
+                && fact.role == sim_index_core::DeclarationRole::Trait
+        }));
+        assert_eq!(doc.protocol_relations.len(), 1);
+        assert_eq!(
+            doc.protocol_relations[0].anchor.as_str(),
+            "anchor/rust-impl/xtask/src/lib.rs-declaration-2"
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -597,6 +618,7 @@ steps = [
                 "src": if root.is_empty() { "src/lib.rs".to_owned() } else { format!("{root}/src/lib.rs") },
             })],
             dependencies: Vec::new(),
+            source_dependencies: Vec::new(),
             features: Vec::new(),
             rustdoc_summary: format!("{name} docs"),
         }

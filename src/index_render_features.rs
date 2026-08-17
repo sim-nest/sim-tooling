@@ -173,6 +173,8 @@ mod tests {
                 title: "demo".to_owned(),
             }],
             anchors: Vec::new(),
+            declarations: Vec::new(),
+            protocol_relations: Vec::new(),
             surfaces: Vec::new(),
             specimens: vec![DiscoveredSpecimen {
                 id: SpecimenId::new("recipe/demo/open"),

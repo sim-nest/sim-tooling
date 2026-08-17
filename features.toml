@@ -46,10 +46,10 @@ claims_specimens = [
 [[feature]]
 id = "feature/sim-index/core"
 title = "SIM Index core"
-summary = "Generate, query, route, prove, and check duplicate implementation overlap in the SIM Index graph as a checked constellation surface."
+summary = "Generate, query, route, prove, and check duplicate implementation overlap, benchmark ownership, and source-backed authored composition claims in the SIM Index graph as a checked constellation surface."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, reviewing overlap, or proving the generated index is current."
+guidance = "Use this row when checking whether a feature exists, tracing routes, finding reuse owners, preventing duplicate implementation code, enforcing the single benchmark runner and statistics owners, reviewing source, normalized record-shape, conservative protocol implementation-shape overlap, authored protocol-role coverage, and authored reuses or composes relations on one board, or proving the generated index is current. Benchmark workloads remain definitions; runner or summary implementations belong to sim-tooling or sim-lib-numbers-stats unless a checked reuse, composition, or delegation path names that owner. Implementation candidates require the same resolved protocol and alpha-normalized body shape; protocol-role questions additionally require an authored role plus a graph dependency path to its trait owner, so policy records, prototypes, predicates, and metatables are not inferred from nominal similarity. Reuse and composition claims resolve to owner packages and require both a normal dependency and a reachable production call, impl, or type-use fact unless an explicit checked delegation edge records the indirection."
 claims_anchors = [
   "anchor/cli/xtask",
 ]
@@ -76,6 +76,122 @@ claims_specimens = [
 supports = [
   "feature/sim-index/core",
   "feature/sim-tooling/generated-docs",
+]
+
+[[feature]]
+id = "feature/sim-tooling/benchmark-environment-compatibility"
+title = "Benchmark environment compatibility"
+summary = "Probe typed host and build evidence and refuse benchmark comparisons when policy-required material fields are unavailable or differ."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use the inventory-backed DeclaredHost identity with probe_environment, then apply a CompatibilityPolicy before comparing benchmark results. Treat unavailable evidence as a refusal; never substitute a hostname label or guessed host property."
+claims_anchors = [
+  "anchor/rustdoc/xtask/compatibility-policy",
+  "anchor/rustdoc/xtask/compatibility_mismatches",
+  "anchor/rustdoc/xtask/declared-host",
+  "anchor/rustdoc/xtask/environment-probe",
+  "anchor/rustdoc/xtask/probe_environment",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/env",
+]
+
+[[feature]]
+id = "feature/sim-tooling/benchmark-sampling"
+title = "Deterministic benchmark sampling"
+summary = "Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Implement Workload and MonotonicClock adapters, validate RunConfig, and retain the complete RunRecord. Summarize only its successful measured observations; calibration and warmup are execution evidence, not statistical samples."
+claims_anchors = [
+  "anchor/rustdoc/xtask/calibration-decision",
+  "anchor/rustdoc/xtask/monotonic-clock",
+  "anchor/rustdoc/xtask/run-config",
+  "anchor/rustdoc/xtask/run-phase",
+  "anchor/rustdoc/xtask/run-record",
+  "anchor/rustdoc/xtask/sample-record",
+  "anchor/rustdoc/xtask/sample-status",
+  "anchor/rustdoc/xtask/workload",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/run",
+]
+
+[[feature]]
+id = "feature/sim-tooling/benchmark-process-isolation"
+title = "Bounded benchmark process isolation"
+summary = "Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use ProcessDeclaration and execute for process-backed workloads. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample; never introduce shell interpolation or give adapters a recorded result to mutate."
+claims_anchors = [
+  "anchor/rustdoc/xtask/cpu-affinity",
+  "anchor/rustdoc/xtask/execute",
+  "anchor/rustdoc/xtask/execute_adapter",
+  "anchor/rustdoc/xtask/isolation-record",
+  "anchor/rustdoc/xtask/process-declaration",
+  "anchor/rustdoc/xtask/process-sample",
+  "anchor/rustdoc/xtask/workload-adapter",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/exec",
+]
+composes = [
+  "feature/sim-tooling/benchmark-sampling",
+]
+
+[[feature]]
+id = "feature/sim-tooling/robust-benchmark-comparison"
+title = "Robust benchmark comparison"
+summary = "Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use compare with raw indexed samples, typed environment probes, and an explicit RobustComparisonPolicy. Inspect exclusions and inconclusive reasons before consuming the outcome; incompatible or high-dispersion evidence never becomes a threshold pass."
+claims_anchors = [
+  "anchor/rustdoc/xtask/compare",
+  "anchor/rustdoc/xtask/comparison-report",
+  "anchor/rustdoc/xtask/excluded-sample",
+  "anchor/rustdoc/xtask/robust-comparison-policy",
+  "anchor/rustdoc/xtask/robust-summary",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/compare",
+]
+composes = [
+  "feature/sim-tooling/benchmark-environment-compatibility",
+  "feature/sim-tooling/benchmark-sampling",
+]
+
+[[feature]]
+id = "feature/sim-tooling/benchmark-cli"
+title = "Benchmark artifact CLI"
+summary = "Run exact process benchmarks and compare, inspect, or policy-check durable reports whose raw durations and workload counters are derived from one verified report object."
+owner = "crate/xtask"
+audiences = ["user", "code", "framework"]
+guidance = "Use bench run with a declared JSON request to create an atomic artifact; workload stdout must be one exact JSON counter object and every counter must be declared by the BenchSpec. Use bench compare or bench show to inspect it, and bench check for read-only policy enforcement. Select --json when automation needs the same ReportView fields shown concisely to humans. Reuse jvm_baseline::corpus for the BYTECODE_SPEED_4 cold-preparation and warm-execution workload declarations, and jvm_acceptance for its baseline-derived frozen acceptance policy."
+claims_anchors = [
+  "anchor/rustdoc/xtask/command-spec",
+  "anchor/rustdoc/xtask/counter-sample",
+  "anchor/rustdoc/xtask/report-view",
+  "anchor/rustdoc/xtask/run-request",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/bench/neutral_allocation_conformance",
+  "spec-test/sim-tooling/src/bench/neutral_cpu_conformance",
+]
+composes = [
+  "feature/sim-tooling/benchmark-process-isolation",
+  "feature/sim-tooling/robust-benchmark-comparison",
+]
+
+[[route]]
+id = "route/prove-benchmark-workload-neutrality"
+task = "Prove the benchmark harness is workload neutral"
+audiences = ["user", "code", "framework"]
+steps = [
+  { feature = "feature/sim-tooling/benchmark-cli", why = "The benchmark CLI composes sampling, process isolation, robust comparison, and durable reports without a domain-specific workload contract." },
+  { specimen = "spec-test/sim-tooling/src/bench/neutral_cpu_conformance", why = "The checked CPU-bound specimen proves deterministic sampling, matched comparison, host refusal, retained failure, and Table/Dir browsing without bytecode." },
+  { specimen = "spec-test/sim-tooling/src/bench/neutral_allocation_conformance", why = "The checked allocation-bound specimen proves local fingerprinting, high-dispersion refusal, retained failure, and durable report browsing without bytecode." },
 ]
 
 [[route]]

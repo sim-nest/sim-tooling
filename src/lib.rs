@@ -21,6 +21,8 @@
 //!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
+//! - `bench run`, `bench compare`, `bench show`, and `bench check` -- execute,
+//!   inspect, and enforce durable benchmark artifacts.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
 //! - `atelier-cassette`, `atelier-capsule`, and `atelier-index` -- check caches.
 //! - `atelier-radar` -- query ranked confidence hints over the Atelier index.
@@ -36,6 +38,7 @@
 #![deny(missing_docs)]
 
 pub mod atelier;
+pub mod bench;
 
 mod cardspine;
 mod cardspine_state;
@@ -52,12 +55,17 @@ mod generator_options;
 mod index_anchor_scan;
 mod index_author;
 mod index_check;
+mod index_composition;
 mod index_doctor;
 mod index_find;
 mod index_fixpoint;
 mod index_fragment;
+#[cfg(test)]
+mod index_landed_contract_tests;
 mod index_merge;
 mod index_overlap;
+mod index_overlap_exception;
+mod index_overlap_record;
 mod index_overlap_report;
 mod index_render;
 mod index_render_features;

@@ -86,6 +86,14 @@ fn discover_cli_surfaces(
     if package.target_kinds.iter().any(|kind| kind == "bin") {
         insert_surface(surfaces, "cli", &package.name, subject, "cli");
     }
+    for target in &package.targets {
+        let is_binary = target["kind"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")));
+        if is_binary && let Some(name) = target["name"].as_str() {
+            insert_surface(surfaces, "cli", name, subject, "cli");
+        }
+    }
     for verb in cli_verbs(repo, package) {
         insert_surface(surfaces, "cli", &verb, subject, "cli");
     }
@@ -344,6 +352,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -357,9 +367,18 @@ mod tests {
              pub fn surface() { let _ = \"SurfaceCaps::from_preset\"; }\n",
         )
         .unwrap();
+        let mut binary = package("sim-run", "crates/sim-run");
+        binary.target_kinds = vec!["bin".to_owned()];
+        binary.targets = vec![json!({
+            "name": "sim",
+            "kind": ["bin"],
+            "crate_types": ["bin"],
+            "src": "crates/sim-run/src/main.rs"
+        })];
         let packages = vec![
             package("sim-codec-demo", "crates/sim-codec-demo"),
             package("sim-lib-agent-openai", ""),
+            binary,
         ];
         let anchors = Vec::new();
 
@@ -381,6 +400,7 @@ mod tests {
 
         assert!(surfaces.contains(&(docs_surface.as_str(), "docs")));
         assert!(surfaces.contains(&("cli/demo", "cli")));
+        assert!(surfaces.contains(&("cli/sim", "cli")));
         assert!(surfaces.contains(&("syntax/demo", "syntax")));
         assert!(surfaces.contains(&("model/sim-lib-agent-openai", "model-exchange")));
         assert!(subjects.contains("language/demo"));
@@ -454,6 +474,7 @@ mod tests {
             target_kinds: vec!["lib".to_owned()],
             targets: Vec::new(),
             dependencies: Vec::new(),
+            source_dependencies: Vec::new(),
             features: Vec::new(),
             rustdoc_summary: format!("{name} docs"),
         }

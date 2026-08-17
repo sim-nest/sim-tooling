@@ -93,7 +93,7 @@ fn load_fragment(repo: &Path) -> Result<IndexDoc, String> {
     let source = fs::read_to_string(&path)
         .map_err(|err| format!("read generated index fragment {}: {err}", path.display()))?;
     IndexCodec
-        .decode(IndexForm::Sx, &source)
+        .decode_fragment(IndexForm::Sx, &source)
         .map_err(|err| format!("decode generated index fragment {}: {err}", path.display()))
 }
 
@@ -215,6 +215,8 @@ mod tests {
                 subject: SubjectId::new("crate/sim-demo"),
                 kind: "cli-verb".to_owned(),
             }],
+            declarations: Vec::new(),
+            protocol_relations: Vec::new(),
             surfaces: vec![DiscoveredSurface {
                 id: SurfaceId::new("cli/repl"),
                 subject: SubjectId::new("crate/sim-demo"),

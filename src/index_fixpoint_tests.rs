@@ -106,6 +106,8 @@ fn self_doc() -> IndexDoc {
             },
         ],
         anchors: Vec::new(),
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![
             DiscoveredSurface {
                 id: SurfaceId::new("cli/xtask"),

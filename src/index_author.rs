@@ -6,9 +6,11 @@ use std::{
     path::Path,
 };
 
+#[cfg(test)]
+use sim_index_core::check_index_doc;
 use sim_index_core::{
     AnchorId, FeatureDraft, FeatureId, GrammarContract, IndexDoc, IndexEdge, RouteId, RouteRecord,
-    RouteStep, SpecimenId, SubjectId, SurfaceId, check_index_doc, draft::materialize_draft,
+    RouteStep, SpecimenId, SubjectId, SurfaceId, check_index_fragment, draft::materialize_draft,
 };
 use toml::{Table, Value};
 
@@ -31,6 +33,26 @@ struct AuthoredFeature {
 struct AuthoredRelation {
     rel: String,
     to: FeatureId,
+}
+
+impl AuthoredOverlay {
+    pub(crate) fn features(&self) -> impl Iterator<Item = (&str, &SubjectId)> {
+        self.features
+            .iter()
+            .map(|feature| (feature.draft.id.as_str(), &feature.draft.subject))
+    }
+
+    pub(crate) fn relations(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.features.iter().flat_map(|feature| {
+            feature.relations.iter().map(move |relation| {
+                (
+                    feature.draft.id.as_str(),
+                    relation.rel.as_str(),
+                    relation.to.as_str(),
+                )
+            })
+        })
+    }
 }
 
 pub(crate) fn load_optional(repo: &Path) -> Result<Option<AuthoredOverlay>, String> {
@@ -80,7 +102,7 @@ pub(crate) fn merge_authored(
     remove_covered_drafts(&mut doc);
     doc.routes.extend(overlay.routes);
     doc.edges.extend(relation_edges);
-    check_index_doc(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
+    check_index_fragment(&doc).map_err(|err| format!("invalid authored feature overlay: {err}"))?;
     Ok(doc)
 }
 
@@ -220,6 +242,11 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
             "supports",
             "presents",
             "replaces",
+            "protocol_role",
+            "depends_on",
+            "delegates_to",
+            "reuses",
+            "composes",
             "doc_anchor",
         ],
         &label,
@@ -263,12 +290,21 @@ fn feature_from_table(table: &Table, index: usize) -> Result<AuthoredFeature, St
 
 fn relation_lists(table: &Table, label: &str) -> Result<Vec<AuthoredRelation>, String> {
     let mut relations = Vec::new();
-    for key in ["supports", "presents", "replaces"] {
+    for (key, rel) in [
+        ("supports", "supports"),
+        ("presents", "presents"),
+        ("replaces", "replaces"),
+        ("protocol_role", "protocol-role"),
+        ("depends_on", "depends-on"),
+        ("delegates_to", "delegates-to"),
+        ("reuses", "reuses"),
+        ("composes", "composes"),
+    ] {
         relations.extend(
             optional_string_list(table, key, label)?
                 .into_iter()
                 .map(|id| AuthoredRelation {
-                    rel: key.to_owned(),
+                    rel: rel.to_owned(),
                     to: FeatureId::new(id),
                 }),
         );

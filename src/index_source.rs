@@ -1,7 +1,7 @@
 //! Source lookup for generated SIM Index specimen examples.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -9,6 +9,8 @@ use std::{
 use serde_json::Value as JsonValue;
 use sim_index_core::DiscoveredSpecimen;
 use toml::Value;
+
+use crate::index_fragment::slug_ident;
 
 /// Resolved source text for a specimen row.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,12 +147,160 @@ impl SourceResolver {
             )),
         }
     }
+
+    pub(crate) fn declaration_source(
+        &self,
+        package: &str,
+        path: &str,
+        symbol: &str,
+    ) -> Result<(String, u64), String> {
+        reject_unsafe_relative_path(path)?;
+        let mut matches = Vec::new();
+        for (repo, root) in &self.repos {
+            if self.package_for(repo, path).as_deref() != Ok(package) {
+                continue;
+            }
+            let text = fs::read_to_string(root.join(path))
+                .map_err(|err| format!("read {repo}/{path}: {err}"))?;
+            let needle = symbol.rsplit("::").next().unwrap_or(symbol);
+            if let Some((line, _)) = text
+                .lines()
+                .enumerate()
+                .find(|(_, source)| declaration_line_matches(source, needle))
+            {
+                matches.push((repo.clone(), line as u64 + 1));
+            }
+        }
+        match matches.as_slice() {
+            [found] => Ok(found.clone()),
+            [] => Err(format!(
+                "no source declaration for {package}::{symbol} at {path}"
+            )),
+            _ => Err(format!(
+                "ambiguous source declaration for {package}::{symbol} at {path}"
+            )),
+        }
+    }
+
+    pub(crate) fn implementation_source(
+        &self,
+        package: &str,
+        protocol_spelling: &str,
+        implementor: &str,
+    ) -> Result<(String, String, u64), String> {
+        let needle = rust_type_identifier(implementor);
+        let mut matches = Vec::new();
+        for (repo, root) in &self.repos {
+            let packages = repo_contract_packages(root, repo)?;
+            for source_package in packages.iter().filter(|row| row.name == package) {
+                let source_roots = if source_package.source_roots.is_empty() {
+                    vec![source_package.root.clone()]
+                } else {
+                    source_package.source_roots.clone()
+                };
+                let mut paths = BTreeSet::new();
+                for source_root in source_roots {
+                    paths.extend(rust_sources(&root.join(source_root))?);
+                }
+                for path in paths {
+                    let text = fs::read_to_string(&path)
+                        .map_err(|err| format!("read {}: {err}", path.display()))?;
+                    let Some((line, _)) = text.lines().enumerate().find(|(_, source)| {
+                        source.contains("impl")
+                            && source.contains(" for ")
+                            && source.contains(protocol_spelling)
+                            && contains_rust_identifier(source, needle)
+                    }) else {
+                        continue;
+                    };
+                    let relative = path
+                        .strip_prefix(root)
+                        .map_err(|err| format!("relativize {}: {err}", path.display()))?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    matches.push((repo.clone(), relative, line as u64 + 1));
+                }
+            }
+        }
+        match matches.as_slice() {
+            [found] => Ok(found.clone()),
+            [] => Err(format!(
+                "no implementation source for {package}::{protocol_spelling} for {implementor}"
+            )),
+            _ => Err(format!(
+                "ambiguous implementation source for {package}::{protocol_spelling} for {implementor}"
+            )),
+        }
+    }
+}
+
+fn declaration_line_matches(source: &str, symbol: &str) -> bool {
+    let source = slug_ident(source);
+    let symbol = slug_ident(symbol);
+    source.contains(&format!("struct-{symbol}"))
+}
+
+fn contains_rust_identifier(source: &str, identifier: &str) -> bool {
+    source.match_indices(identifier).any(|(start, matched)| {
+        let end = start + matched.len();
+        let before = source[..start].chars().next_back();
+        let after = source[end..].chars().next();
+        !before.is_some_and(is_rust_identifier_continue)
+            && !after.is_some_and(is_rust_identifier_continue)
+    })
+}
+
+fn rust_type_identifier(spelling: &str) -> &str {
+    spelling
+        .split('<')
+        .next()
+        .unwrap_or(spelling)
+        .rsplit("::")
+        .next()
+        .unwrap_or(spelling)
+        .trim()
+        .trim_start_matches('&')
+        .trim()
+}
+
+fn is_rust_identifier_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn rust_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
+    const EXCLUDED_DIRECTORIES: &[&str] = &[".git", ".meta-workspace", ".sim", "target"];
+    let mut pending = vec![root.to_path_buf()];
+    let mut sources = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let entries = fs::read_dir(&directory)
+            .map_err(|err| format!("read directory {}: {err}", directory.display()))?;
+        for entry in entries {
+            let path = entry
+                .map_err(|err| format!("read directory entry in {}: {err}", directory.display()))?
+                .path();
+            if path.is_dir() {
+                if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| EXCLUDED_DIRECTORIES.contains(&name))
+                {
+                    continue;
+                }
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push(path);
+            }
+        }
+    }
+    sources.sort();
+    Ok(sources)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourcePackage {
     name: String,
     root: String,
+    source_roots: Vec<String>,
 }
 
 fn resolve_path(control_root: &Path, value: &str) -> PathBuf {
@@ -187,9 +337,26 @@ fn repo_contract_packages(repo_root: &Path, repo: &str) -> Result<Vec<SourcePack
                 .ok_or_else(|| format!("{label} missing root"))?;
             reject_unsafe_relative_path(root)
                 .map_err(|err| format!("{label} has unsafe root for repo {repo}: {err}"))?;
+            let mut source_roots = package
+                .get("targets")
+                .and_then(JsonValue::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|target| target.get("src").and_then(JsonValue::as_str))
+                .filter_map(|source| Path::new(source).parent())
+                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>();
+            source_roots.sort();
+            source_roots.dedup();
+            for source_root in &source_roots {
+                reject_unsafe_relative_path(source_root).map_err(|err| {
+                    format!("{label} has unsafe target source root for repo {repo}: {err}")
+                })?;
+            }
             Ok(SourcePackage {
                 name: name.to_owned(),
                 root: root.to_owned(),
+                source_roots,
             })
         })
         .collect()
@@ -349,6 +516,113 @@ mod tests {
             .unwrap_err();
 
         assert!(err.contains("unsafe relative path"));
+    }
+
+    #[test]
+    fn declaration_source_resolves_kebab_case_generated_struct_names() {
+        let root = temp_root("sim-tooling-declaration-source");
+        let repo = root.join("sim-demo");
+        fs::create_dir_all(repo.join("crates/sim-demo/src")).unwrap();
+        fs::create_dir_all(repo.join("docs/generated")).unwrap();
+        fs::write(
+            repo.join("crates/sim-demo/src/lib.rs"),
+            "/// Registry row.\npub struct CitizenInfo {\n    pub name: &'static str,\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            repo.join("docs/generated/repo-contract.json"),
+            r#"{
+  "schema": "sim.repo-contract.v1",
+  "packages": [
+    { "name": "sim-demo", "root": "crates/sim-demo" }
+  ]
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("repos.toml"),
+            "[[repo]]\nname = \"sim-demo\"\ncontains_code = true\nlocal_path = \"sim-demo\"\n",
+        )
+        .unwrap();
+        let resolver = SourceResolver::from_manifest(&root, &root.join("repos.toml")).unwrap();
+
+        assert_eq!(
+            resolver
+                .declaration_source("sim-demo", "crates/sim-demo/src/lib.rs", "citizen-info",)
+                .unwrap(),
+            ("sim-demo".to_owned(), 2)
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rust_identifier_match_rejects_longer_type_names() {
+        assert!(contains_rust_identifier(
+            "impl crate::ObjectCompat for CatalogTable {",
+            "CatalogTable",
+        ));
+        assert!(!contains_rust_identifier(
+            "impl crate::ObjectCompat for CatalogTableView {",
+            "CatalogTable",
+        ));
+        assert!(!contains_rust_identifier(
+            "impl crate::ObjectCompat for WrappedCatalogTable {",
+            "CatalogTable",
+        ));
+        assert_eq!(
+            rust_type_identifier("crate::ManagedException<P,R>"),
+            "ManagedException"
+        );
+    }
+
+    #[test]
+    fn implementation_source_scans_only_generated_target_roots() {
+        let root = temp_root("sim-tooling-implementation-source");
+        let repo = root.join("sim-demo");
+        fs::create_dir_all(repo.join("src")).unwrap();
+        fs::create_dir_all(repo.join("target/package/sim-demo/src")).unwrap();
+        fs::create_dir_all(repo.join("docs/generated")).unwrap();
+        let implementation = "impl crate::ObjectCompat for CatalogTable {}\n";
+        fs::write(repo.join("src/catalog.rs"), implementation).unwrap();
+        fs::write(
+            repo.join("target/package/sim-demo/src/catalog.rs"),
+            implementation,
+        )
+        .unwrap();
+        fs::write(
+            repo.join("docs/generated/repo-contract.json"),
+            r#"{
+  "schema": "sim.repo-contract.v1",
+  "packages": [
+    {
+      "name": "sim-demo",
+      "root": "",
+      "targets": [
+        { "name": "sim_demo", "kind": ["lib"], "crate_types": ["lib"], "src": "src/lib.rs" }
+      ]
+    }
+  ]
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("repos.toml"),
+            "[[repo]]\nname = \"sim-demo\"\ncontains_code = true\nlocal_path = \"sim-demo\"\n",
+        )
+        .unwrap();
+        let resolver = SourceResolver::from_manifest(&root, &root.join("repos.toml")).unwrap();
+
+        assert_eq!(
+            resolver
+                .implementation_source("sim-demo", "crate::ObjectCompat", "CatalogTable")
+                .unwrap(),
+            ("sim-demo".to_owned(), "src/catalog.rs".to_owned(), 1)
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn temp_root(name: &str) -> PathBuf {

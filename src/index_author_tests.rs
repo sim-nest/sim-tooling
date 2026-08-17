@@ -147,7 +147,7 @@ fn authored_feature_relations_cover_supported_labels() {
         r#"
 schema = "sim.features"
 feature = [
-  { id = "feature/demo/facade", title = "Facade", summary = "Presents a local implementation feature.", owner = "crate/sim-lib-repl", claims_surfaces = ["cli/repl"], presents = ["feature/demo/implementation"] },
+  { id = "feature/demo/facade", title = "Facade", summary = "Presents a local implementation feature.", owner = "crate/sim-lib-repl", claims_surfaces = ["cli/repl"], presents = ["feature/demo/implementation"], protocol_role = ["feature/demo/implementation"], depends_on = ["feature/demo/implementation"], delegates_to = ["feature/demo/implementation"] },
   { id = "feature/demo/implementation", title = "Implementation", summary = "Implements the local facade behavior.", owner = "crate/sim-lib-repl", claims_specimens = ["recipe/sim-run/01-basics/version"] },
 ]
 "#,
@@ -163,6 +163,9 @@ feature = [
 
     assert_eq!(edge.from, "feature/demo/facade");
     assert_eq!(edge.to, "feature/demo/implementation");
+    for relation in ["protocol-role", "depends-on", "delegates-to"] {
+        assert!(merged.edges.iter().any(|edge| edge.rel == relation));
+    }
 }
 
 #[test]
@@ -227,6 +230,8 @@ fn test_doc() -> IndexDoc {
             subject: SubjectId::new("crate/sim-lib-repl"),
             kind: "cli-verb".to_owned(),
         }],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("cli/repl"),
             subject: SubjectId::new("crate/sim-lib-repl"),

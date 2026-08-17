@@ -6,4 +6,4 @@ Generated from Cargo metadata by `xtask crate-catalog v1`.
 
 | Package | Publish | Targets | Description |
 | --- | --- | --- | --- |
-| `xtask` | `false` | `bin, lib, test` | Repository maintenance tasks. |
+| `xtask` | `false` | `bin, example, lib, test` | Repository maintenance tasks. |

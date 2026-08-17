@@ -18,8 +18,13 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | Feature | Subject | Specimens | Summary |
 | --- | --- | ---: | --- |
 | `feature/sim-tooling/generated-docs` | `crate/xtask` | 2 | Generate repo contracts, feature maps, card indexes, index fragments, and managed vault note namespaces through xtask. |
-| `feature/sim-index/core` | `crate/xtask` | 3 | Generate, query, route, prove, and check duplicate implementation overlap in the SIM Index graph as a checked constellation surface. |
+| `feature/sim-index/core` | `crate/xtask` | 3 | Generate, query, route, prove, and check duplicate implementation overlap, benchmark ownership, and source-backed authored composition claims in the SIM Index graph as a checked constellation surface. |
 | `feature/sim-index/vault-export` | `crate/xtask` | 1 | Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles. |
+| `feature/sim-tooling/benchmark-environment-compatibility` | `crate/xtask` | 1 | Probe typed host and build evidence and refuse benchmark comparisons when policy-required material fields are unavailable or differ. |
+| `feature/sim-tooling/benchmark-sampling` | `crate/xtask` | 1 | Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures. |
+| `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 1 | Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence. |
+| `feature/sim-tooling/robust-benchmark-comparison` | `crate/xtask` | 1 | Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner. |
+| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run exact process benchmarks and compare, inspect, or policy-check durable reports whose raw durations and workload counters are derived from one verified report object. |
 
 ## Surfaces
 
@@ -277,6 +282,8 @@ fn fixture_doc() -> IndexDoc {
             title: "demo".to_owned(),
         }],
         anchors: Vec::new(),
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("view-edit/demo"),
             subject: SubjectId::new("crate/demo"),
@@ -844,6 +851,8 @@ fn self_doc() -> IndexDoc {
             },
         ],
         anchors: Vec::new(),
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![
             DiscoveredSurface {
                 id: SurfaceId::new("cli/xtask"),
@@ -997,6 +1006,30 @@ fn invalid_unchecked_index_is_rejected_before_graphing() {
 }
 
 #[test]
+fn fragment_graph_defers_external_relations_until_constellation_merge() {
+    let mut doc = fixture_doc();
+    doc.edges.push(IndexEdge::relates(
+        FeatureId::new("feature/demo"),
+        "presents",
+        FeatureId::new("feature/other-repo/runtime"),
+    ));
+    doc.routes[0].steps.push(RouteStep::Specimen {
+        id: SpecimenId::new("spec-test/other-repo/tests/demo"),
+        why: "The downstream repository proves the composition.".to_owned(),
+    });
+
+    let graph = VaultGraph::from_fragment(&doc).expect("valid repository fragment");
+    assert_eq!(graph.unresolved_relations().count(), 0);
+    assert!(
+        graph
+            .relations
+            .iter()
+            .all(|relation| !relation.to.id.contains("other-repo"))
+    );
+    assert!(VaultGraph::from_index(&doc).is_err());
+}
+
+#[test]
 fn duplicate_index_edges_are_rejected_as_duplicate_relations() {
     let mut doc = fixture_doc();
     doc.edges.push(IndexEdge::relates(
@@ -1092,6 +1125,8 @@ fn fixture_doc() -> IndexDoc {
                 kind: "export".to_owned(),
             },
         ],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("syntax/demo"),
             subject: SubjectId::new("crate/demo"),
@@ -1630,6 +1665,8 @@ fn fixture_doc(visibility: Visibility) -> IndexDoc {
                 kind: "export".to_owned(),
             },
         ],
+        declarations: Vec::new(),
+        protocol_relations: Vec::new(),
         surfaces: vec![DiscoveredSurface {
             id: SurfaceId::new("syntax/demo"),
             subject: SubjectId::new("crate/demo"),
@@ -1771,5 +1808,2133 @@ impl Drop for TempRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+```
+
+### `feature/sim-tooling/benchmark-environment-compatibility`
+
+Specimen `spec-test/sim-tooling/src/bench/env` is checked by `cargo test`.
+
+Source `src/bench/env.rs`:
+
+```rust
+//! Typed environment evidence and fail-closed benchmark compatibility.
+//!
+//! A [`DeclaredHost`] is supplied by the control plane's `test-hosts.toml`
+//! inventory. Probing augments that identity with observations; it never
+//! invents identity from an observed hostname or a display label.
+
+// conformance: typed host evidence refuses unavailable or incompatible comparisons.
+
+use std::collections::BTreeSet;
+use std::fs;
+
+use serde::{Deserialize, Serialize};
+
+use super::BuildIdentity;
+
+/// Stable, structured identity copied from one `test-hosts.toml` host row.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredHost {
+    /// Stable inventory key of the host row.
+    pub inventory_id: String,
+    /// Declared SSH host, kept separate from the inventory identity.
+    pub ssh_host: String,
+}
+
+impl DeclaredHost {
+    /// Constructs an inventory-backed host identity.
+    pub fn new(inventory_id: String, ssh_host: String) -> Result<Self, String> {
+        let mut errors = Vec::new();
+        required("host.inventory_id", &inventory_id, &mut errors);
+        required("host.ssh_host", &ssh_host, &mut errors);
+        if errors.is_empty() {
+            Ok(Self {
+                inventory_id,
+                ssh_host,
+            })
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+}
+
+/// Evidence for one probed field. Unavailability is data, not a guessed value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum ProbeEvidence<T> {
+    /// The probe returned an explicit value.
+    Available {
+        /// Observed field value.
+        value: T,
+    },
+    /// The probe could not establish a value.
+    Unavailable {
+        /// Exact reason the field could not be established.
+        reason: String,
+    },
+}
+
+impl<T> ProbeEvidence<T> {
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self::Unavailable {
+            reason: reason.into(),
+        }
+    }
+}
+
+/// Material execution-host observations used to admit benchmark comparisons.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostEnvironment {
+    /// Inventory-backed identity, not a free-form machine label.
+    pub host: DeclaredHost,
+    /// Operating-system family.
+    pub operating_system: ProbeEvidence<String>,
+    /// CPU architecture.
+    pub architecture: ProbeEvidence<String>,
+    /// CPU model reported by the operating system.
+    pub cpu_model: ProbeEvidence<String>,
+    /// Number of logical CPUs available to the process.
+    pub logical_cpus: ProbeEvidence<u32>,
+    /// Total physical memory in bytes.
+    pub memory_bytes: ProbeEvidence<u64>,
+    /// Active CPU frequency governor.
+    pub cpu_governor: ProbeEvidence<String>,
+}
+
+/// Build observations paired with the host evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildEnvironment {
+    /// Source revision.
+    pub source_revision: ProbeEvidence<String>,
+    /// Rust compilation target.
+    pub target: ProbeEvidence<String>,
+    /// Cargo profile.
+    pub profile: ProbeEvidence<String>,
+    /// Canonically ordered enabled features.
+    pub features: ProbeEvidence<Vec<String>>,
+    /// Rust toolchain identity.
+    pub toolchain: ProbeEvidence<String>,
+}
+
+/// Complete material environment evidence for one benchmark run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentProbe {
+    /// Execution-host evidence.
+    pub host: HostEnvironment,
+    /// Executable-build evidence.
+    pub build: BuildEnvironment,
+}
+
+/// Injectable source for host observations, allowing unavailable reads to be tested.
+pub trait HostProbeSource {
+    /// Reads a UTF-8 operating-system file.
+    fn read(&self, path: &str) -> Result<String, String>;
+    /// Returns the process architecture.
+    fn architecture(&self) -> Result<String, String>;
+    /// Returns the process-visible logical CPU count.
+    fn logical_cpus(&self) -> Result<u32, String>;
+}
+
+/// Host probe source backed by the local operating system.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalHostProbe;
+
+impl HostProbeSource for LocalHostProbe {
+    fn read(&self, path: &str) -> Result<String, String> {
+        fs::read_to_string(path).map_err(|error| error.to_string())
+    }
+
+    fn architecture(&self) -> Result<String, String> {
+        Ok(std::env::consts::ARCH.to_owned())
+    }
+
+    fn logical_cpus(&self) -> Result<u32, String> {
+        std::thread::available_parallelism()
+            .map_err(|error| error.to_string())
+            .and_then(|count| {
+                u32::try_from(count.get()).map_err(|_| "logical CPU count exceeds u32".to_owned())
+            })
+    }
+}
+
+/// Probes every material host and build field without substituting defaults.
+pub fn probe_environment(
+    host: DeclaredHost,
+    build: &BuildIdentity,
+    source: &impl HostProbeSource,
+) -> EnvironmentProbe {
+    let operating_system = source
+        .read("/etc/os-release")
+        .and_then(|text| os_release_value(&text, "ID"))
+        .map_or_else(ProbeEvidence::unavailable, available);
+    let architecture = source
+        .architecture()
+        .and_then(non_empty)
+        .map_or_else(ProbeEvidence::unavailable, available);
+    let cpu_model = source
+        .read("/proc/cpuinfo")
+        .and_then(|text| cpuinfo_value(&text, "model name"))
+        .map_or_else(ProbeEvidence::unavailable, available);
+    let logical_cpus = source
+        .logical_cpus()
+        .and_then(|count| {
+            (count > 0)
+                .then_some(count)
+                .ok_or("reported zero logical CPUs".to_owned())
+        })
+        .map_or_else(ProbeEvidence::unavailable, available);
+    let memory_bytes = source
+        .read("/proc/meminfo")
+        .and_then(|text| memory_bytes(&text))
+        .map_or_else(ProbeEvidence::unavailable, available);
+    let cpu_governor = source
+        .read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+        .and_then(non_empty)
+        .map_or_else(ProbeEvidence::unavailable, available);
+
+    EnvironmentProbe {
+        host: HostEnvironment {
+            host,
+            operating_system,
+            architecture,
+            cpu_model,
+            logical_cpus,
+            memory_bytes,
+            cpu_governor,
+        },
+        build: BuildEnvironment::from(build),
+    }
+}
+
+impl From<&BuildIdentity> for BuildEnvironment {
+    fn from(build: &BuildIdentity) -> Self {
+        let mut features = build.features.clone();
+        features.sort();
+        features.dedup();
+        Self {
+            source_revision: evidence_string(
+                &build.source_revision,
+                "build source revision is empty",
+            ),
+            target: evidence_string(&build.target, "build target is empty"),
+            profile: evidence_string(&build.profile, "build profile is empty"),
+            features: ProbeEvidence::Available { value: features },
+            toolchain: evidence_string(&build.toolchain, "build toolchain is empty"),
+        }
+    }
+}
+
+/// Typed material field understood by compatibility policy.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvironmentField {
+    /// Inventory host key.
+    HostInventoryId,
+    /// Declared SSH host.
+    HostSshHost,
+    /// Operating-system family.
+    OperatingSystem,
+    /// CPU architecture.
+    Architecture,
+    /// CPU model.
+    CpuModel,
+    /// Logical CPU count.
+    LogicalCpus,
+    /// Physical memory.
+    MemoryBytes,
+    /// CPU frequency governor.
+    CpuGovernor,
+    /// Source revision.
+    BuildSourceRevision,
+    /// Rust target.
+    BuildTarget,
+    /// Cargo profile.
+    BuildProfile,
+    /// Enabled features.
+    BuildFeatures,
+    /// Toolchain identity.
+    BuildToolchain,
+}
+
+impl EnvironmentField {
+    /// Stable diagnostic name for this field.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::HostInventoryId => "host.inventory-id",
+            Self::HostSshHost => "host.ssh-host",
+            Self::OperatingSystem => "host.operating-system",
+            Self::Architecture => "host.architecture",
+            Self::CpuModel => "host.cpu-model",
+            Self::LogicalCpus => "host.logical-cpus",
+            Self::MemoryBytes => "host.memory-bytes",
+            Self::CpuGovernor => "host.cpu-governor",
+            Self::BuildSourceRevision => "build.source-revision",
+            Self::BuildTarget => "build.target",
+            Self::BuildProfile => "build.profile",
+            Self::BuildFeatures => "build.features",
+            Self::BuildToolchain => "build.toolchain",
+        }
+    }
+}
+
+/// Policy controlling which material fields must match.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompatibilityPolicy {
+    required_equal: BTreeSet<EnvironmentField>,
+}
+
+impl CompatibilityPolicy {
+    /// Constructs a policy from external field names, rejecting unknown names.
+    pub fn from_required_names<'a>(
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, String> {
+        let mut required_equal = BTreeSet::new();
+        let mut errors = Vec::new();
+        for name in names {
+            match field_named(name) {
+                Some(field) => {
+                    required_equal.insert(field);
+                }
+                None => errors.push(format!("unknown required environment field `{name}`")),
+            }
+        }
+        if errors.is_empty() {
+            Ok(Self { required_equal })
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    /// Constructs a policy from typed fields.
+    pub fn requiring(fields: impl IntoIterator<Item = EnvironmentField>) -> Self {
+        Self {
+            required_equal: fields.into_iter().collect(),
+        }
+    }
+}
+
+/// One reason why two runs cannot be compared.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompatibilityMismatch {
+    /// Material field which failed admission.
+    pub field: EnvironmentField,
+    /// Explicit refusal reason.
+    pub reason: String,
+}
+
+/// Applies policy and returns every incompatibility instead of stopping at the first.
+pub fn compatibility_mismatches(
+    policy: &CompatibilityPolicy,
+    baseline: &EnvironmentProbe,
+    candidate: &EnvironmentProbe,
+) -> Vec<CompatibilityMismatch> {
+    policy
+        .required_equal
+        .iter()
+        .filter_map(|field| compare_field(field, baseline, candidate))
+        .collect()
+}
+
+fn compare_field(
+    field: &EnvironmentField,
+    baseline: &EnvironmentProbe,
+    candidate: &EnvironmentProbe,
+) -> Option<CompatibilityMismatch> {
+    let result = match field {
+        EnvironmentField::HostInventoryId => compare_values(
+            &baseline.host.host.inventory_id,
+            &candidate.host.host.inventory_id,
+        ),
+        EnvironmentField::HostSshHost => {
+            compare_values(&baseline.host.host.ssh_host, &candidate.host.host.ssh_host)
+        }
+        EnvironmentField::OperatingSystem => compare_evidence(
+            &baseline.host.operating_system,
+            &candidate.host.operating_system,
+        ),
+        EnvironmentField::Architecture => {
+            compare_evidence(&baseline.host.architecture, &candidate.host.architecture)
+        }
+        EnvironmentField::CpuModel => {
+            compare_evidence(&baseline.host.cpu_model, &candidate.host.cpu_model)
+        }
+        EnvironmentField::LogicalCpus => {
+            compare_evidence(&baseline.host.logical_cpus, &candidate.host.logical_cpus)
+        }
+        EnvironmentField::MemoryBytes => {
+            compare_evidence(&baseline.host.memory_bytes, &candidate.host.memory_bytes)
+        }
+        EnvironmentField::CpuGovernor => {
+            compare_evidence(&baseline.host.cpu_governor, &candidate.host.cpu_governor)
+        }
+        EnvironmentField::BuildSourceRevision => compare_evidence(
+            &baseline.build.source_revision,
+            &candidate.build.source_revision,
+        ),
+        EnvironmentField::BuildTarget => {
+            compare_evidence(&baseline.build.target, &candidate.build.target)
+        }
+        EnvironmentField::BuildProfile => {
+            compare_evidence(&baseline.build.profile, &candidate.build.profile)
+        }
+        EnvironmentField::BuildFeatures => {
+            compare_evidence(&baseline.build.features, &candidate.build.features)
+        }
+        EnvironmentField::BuildToolchain => {
+            compare_evidence(&baseline.build.toolchain, &candidate.build.toolchain)
+        }
+    };
+    result.map(|detail| CompatibilityMismatch {
+        field: field.clone(),
+        reason: format!("{}: {detail}", field.name()),
+    })
+}
+
+fn compare_values<T: PartialEq>(baseline: &T, candidate: &T) -> Option<String> {
+    (baseline != candidate).then(|| "baseline and candidate differ".to_owned())
+}
+
+fn compare_evidence<T: PartialEq>(
+    baseline: &ProbeEvidence<T>,
+    candidate: &ProbeEvidence<T>,
+) -> Option<String> {
+    match (baseline, candidate) {
+        (ProbeEvidence::Available { value: left }, ProbeEvidence::Available { value: right }) => {
+            compare_values(left, right)
+        }
+        (ProbeEvidence::Unavailable { reason }, _) => {
+            Some(format!("baseline unavailable: {reason}"))
+        }
+        (_, ProbeEvidence::Unavailable { reason }) => {
+            Some(format!("candidate unavailable: {reason}"))
+        }
+    }
+}
+
+fn available<T>(value: T) -> ProbeEvidence<T> {
+    ProbeEvidence::Available { value }
+}
+
+fn evidence_string(value: &str, reason: &str) -> ProbeEvidence<String> {
+    if value.trim().is_empty() {
+        ProbeEvidence::unavailable(reason)
+    } else {
+        available(value.trim().to_owned())
+    }
+}
+
+fn non_empty(value: String) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err("field was empty".to_owned())
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
+fn os_release_value(text: &str, key: &str) -> Result<String, String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+        .map(|value| value.trim_matches('"').to_owned())
+        .ok_or_else(|| format!("{key} is absent from os-release"))
+        .and_then(non_empty)
+}
+
+fn cpuinfo_value(text: &str, key: &str) -> Result<String, String> {
+    text.lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            (name.trim() == key).then(|| value.trim().to_owned())
+        })
+        .ok_or_else(|| format!("{key} is absent from cpuinfo"))
+        .and_then(non_empty)
+}
+
+fn memory_bytes(text: &str) -> Result<u64, String> {
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("MemTotal:"))
+        .ok_or_else(|| "MemTotal is absent from meminfo".to_owned())?;
+    let mut words = line.split_whitespace();
+    let _label = words.next();
+    let kib = words
+        .next()
+        .ok_or_else(|| "MemTotal has no value".to_owned())?
+        .parse::<u64>()
+        .map_err(|error| format!("MemTotal is invalid: {error}"))?;
+    match words.next() {
+        Some("kB") => kib
+            .checked_mul(1024)
+            .ok_or_else(|| "MemTotal overflows bytes".to_owned()),
+        unit => Err(format!("MemTotal has unsupported unit {unit:?}")),
+    }
+}
+
+fn field_named(name: &str) -> Option<EnvironmentField> {
+    [
+        EnvironmentField::HostInventoryId,
+        EnvironmentField::HostSshHost,
+        EnvironmentField::OperatingSystem,
+        EnvironmentField::Architecture,
+        EnvironmentField::CpuModel,
+        EnvironmentField::LogicalCpus,
+        EnvironmentField::MemoryBytes,
+        EnvironmentField::CpuGovernor,
+        EnvironmentField::BuildSourceRevision,
+        EnvironmentField::BuildTarget,
+        EnvironmentField::BuildProfile,
+        EnvironmentField::BuildFeatures,
+        EnvironmentField::BuildToolchain,
+    ]
+    .into_iter()
+    .find(|field| field.name() == name)
+}
+
+fn required(field: &str, value: &str, errors: &mut Vec<String>) {
+    if value.trim().is_empty() {
+        errors.push(format!("{field} must not be empty"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FixtureProbe {
+        governor: Result<String, String>,
+    }
+
+    impl HostProbeSource for FixtureProbe {
+        fn read(&self, path: &str) -> Result<String, String> {
+            match path {
+                "/etc/os-release" => Ok("ID=linux\n".to_owned()),
+                "/proc/cpuinfo" => Ok("model name: Fixture CPU\n".to_owned()),
+                "/proc/meminfo" => Ok("MemTotal: 1024 kB\n".to_owned()),
+                _ => self.governor.clone(),
+            }
+        }
+
+        fn architecture(&self) -> Result<String, String> {
+            Ok("x86_64".to_owned())
+        }
+
+        fn logical_cpus(&self) -> Result<u32, String> {
+            Ok(8)
+        }
+    }
+
+    fn build() -> BuildIdentity {
+        BuildIdentity {
+            source_revision: "abc".to_owned(),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            profile: "release".to_owned(),
+            features: Vec::new(),
+            toolchain: "rustc 1.90".to_owned(),
+        }
+    }
+
+    fn probe() -> EnvironmentProbe {
+        probe_environment(
+            DeclaredHost::new("tiger".to_owned(), "tiger".to_owned()).unwrap(),
+            &build(),
+            &FixtureProbe {
+                governor: Ok("performance\n".to_owned()),
+            },
+        )
+    }
+
+    #[test]
+    fn different_cpu_models_are_refused_and_name_the_field() {
+        let baseline = probe();
+        let mut candidate = probe();
+        candidate.host.cpu_model = available("Different CPU".to_owned());
+        let mismatches = compatibility_mismatches(
+            &CompatibilityPolicy::requiring([EnvironmentField::CpuModel]),
+            &baseline,
+            &candidate,
+        );
+        assert_eq!(mismatches.len(), 1);
+        assert_eq!(mismatches[0].field, EnvironmentField::CpuModel);
+        assert!(mismatches[0].reason.contains("host.cpu-model"));
+    }
+
+    #[test]
+    fn unreadable_governor_is_recorded_as_unavailable() {
+        let result = probe_environment(
+            DeclaredHost::new(
+                "unreadable-governor-fixture".to_owned(),
+                "governor-fixture.example.invalid".to_owned(),
+            )
+            .unwrap(),
+            &build(),
+            &FixtureProbe {
+                governor: Err("permission denied".to_owned()),
+            },
+        );
+        assert_eq!(
+            result.host.cpu_governor,
+            ProbeEvidence::Unavailable {
+                reason: "permission denied".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_required_policy_field_is_a_construction_error() {
+        let error =
+            CompatibilityPolicy::from_required_names(["host.cpu-model", "host.label"]).unwrap_err();
+        assert!(error.contains("unknown required environment field `host.label`"));
+    }
+
+    #[test]
+    fn reports_every_required_mismatch() {
+        let baseline = probe();
+        let mut candidate = probe();
+        candidate.host.cpu_model = available("other".to_owned());
+        candidate.build.profile = available("debug".to_owned());
+        let mismatches = compatibility_mismatches(
+            &CompatibilityPolicy::requiring([
+                EnvironmentField::CpuModel,
+                EnvironmentField::BuildProfile,
+            ]),
+            &baseline,
+            &candidate,
+        );
+        assert_eq!(mismatches.len(), 2);
+    }
+
+    #[test]
+    fn build_probe_covers_all_identity_fields() {
+        let evidence = BuildEnvironment::from(&BuildIdentity { ..build() });
+        assert!(matches!(
+            evidence.source_revision,
+            ProbeEvidence::Available { .. }
+        ));
+        assert!(matches!(evidence.target, ProbeEvidence::Available { .. }));
+        assert!(matches!(evidence.profile, ProbeEvidence::Available { .. }));
+        assert!(matches!(evidence.features, ProbeEvidence::Available { .. }));
+        assert!(matches!(
+            evidence.toolchain,
+            ProbeEvidence::Available { .. }
+        ));
+    }
+}
+```
+
+### `feature/sim-tooling/benchmark-sampling`
+
+Specimen `spec-test/sim-tooling/src/bench/run` is checked by `cargo test`.
+
+Source `src/bench/run.rs`:
+
+```rust
+//! Deterministic benchmark calibration and sampling state machine.
+//!
+//! Time is supplied by [`MonotonicClock`]. The runner never sleeps, which
+//! keeps both execution policy and tests independent of wall-clock behavior.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use super::{BenchSpec, MetricUnit, RawObservation};
+
+/// One side of a benchmark comparison.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Arm {
+    /// Previously accepted implementation.
+    Baseline,
+    /// Implementation under evaluation.
+    Candidate,
+}
+
+/// Distinct lifecycle states entered by the runner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunPhase {
+    /// One-time workload preparation.
+    Setup,
+    /// Iteration-count selection; never contributes observations.
+    Calibration,
+    /// Unrecorded steady-state execution.
+    Warmup,
+    /// Recorded comparison samples.
+    Measured,
+}
+
+/// Monotonic time source used at sample boundaries.
+pub trait MonotonicClock {
+    /// Returns nanoseconds from an arbitrary, stable epoch.
+    fn now_ns(&self) -> u64;
+}
+
+/// Work performed by the state machine.
+pub trait Workload<C: MonotonicClock> {
+    /// Performs one-time setup.
+    fn setup(&mut self, clock: &C) -> Result<(), String>;
+
+    /// Runs `iterations` and returns additional named counters.
+    fn sample(
+        &mut self,
+        arm: Arm,
+        phase: RunPhase,
+        iterations: u64,
+        clock: &C,
+    ) -> Result<BTreeMap<String, u64>, String>;
+}
+
+/// Validated execution limits that are intentionally separate from statistics.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunConfig {
+    /// Desired duration used to choose the measured iteration count.
+    pub calibration_target_ns: u64,
+    /// Maximum permitted iterations in any invocation.
+    pub max_iterations: u64,
+    /// Duration after which a completed sample is classified as timed out.
+    pub sample_timeout_ns: u64,
+}
+
+impl RunConfig {
+    /// Refuses zero limits, which would make calibration ambiguous or unsafe.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if self.calibration_target_ns == 0 {
+            errors.push("calibration_target_ns must be greater than zero");
+        }
+        if self.max_iterations == 0 {
+            errors.push("max_iterations must be greater than zero");
+        }
+        if self.sample_timeout_ns == 0 {
+            errors.push("sample_timeout_ns must be greater than zero");
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+}
+
+/// Recorded calibration input and selected iteration count.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalibrationDecision {
+    /// Iterations used by the calibration probe.
+    pub probe_iterations: u64,
+    /// Elapsed probe duration.
+    pub probe_duration_ns: u64,
+    /// Desired sample duration.
+    pub target_duration_ns: u64,
+    /// Iterations selected for warmup and measurement.
+    pub selected_iterations: u64,
+}
+
+/// Status retained for every attempted measured sample.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SampleStatus {
+    /// Workload completed within its timeout.
+    Completed,
+    /// Workload completed, but elapsed time exceeded the declared timeout.
+    TimedOut,
+    /// Workload returned an error.
+    Failed(String),
+}
+
+/// Complete raw record for a measured invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SampleRecord {
+    /// Position in the realized interleaving.
+    pub schedule_index: u32,
+    /// Comparison arm invoked at this position.
+    pub arm: Arm,
+    /// Iterations requested.
+    pub iterations: u64,
+    /// Raw monotonic duration, including failed invocations.
+    pub duration_ns: u64,
+    /// Workload counters, retained without aggregation.
+    pub counters: BTreeMap<String, u64>,
+    /// Completion classification.
+    pub status: SampleStatus,
+}
+
+/// Auditable output of a benchmark run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunRecord {
+    /// States in the order entered.
+    pub phases: Vec<RunPhase>,
+    /// Calibration evidence and choice.
+    pub calibration: CalibrationDecision,
+    /// Exact measured arm order produced from the specification seed.
+    pub realized_schedule: Vec<Arm>,
+    /// Every measured attempt, including failures and timeouts.
+    pub samples: Vec<SampleRecord>,
+    /// Successful duration observations suitable for summary input.
+    pub observations: Vec<RawObservation>,
+}
+
+/// Executes the complete benchmark lifecycle.
+pub fn run<C: MonotonicClock, W: Workload<C>>(
+    spec: &BenchSpec,
+    config: &RunConfig,
+    clock: &C,
+    workload: &mut W,
+) -> Result<RunRecord, String> {
+    config.validate()?;
+    let mut phases = vec![RunPhase::Setup];
+    workload
+        .setup(clock)
+        .map_err(|error| format!("setup failed: {error}"))?;
+
+    phases.push(RunPhase::Calibration);
+    let start = clock.now_ns();
+    workload
+        .sample(Arm::Candidate, RunPhase::Calibration, 1, clock)
+        .map_err(|error| format!("calibration failed: {error}"))?;
+    let probe_duration_ns = elapsed(start, clock.now_ns())?;
+    let selected_iterations = calibrated_iterations(probe_duration_ns, config)?;
+    let calibration = CalibrationDecision {
+        probe_iterations: 1,
+        probe_duration_ns,
+        target_duration_ns: config.calibration_target_ns,
+        selected_iterations,
+    };
+
+    phases.push(RunPhase::Warmup);
+    for index in 0..spec.sampling_plan.warmup_samples {
+        let arm = if index % 2 == 0 {
+            Arm::Baseline
+        } else {
+            Arm::Candidate
+        };
+        workload
+            .sample(arm, RunPhase::Warmup, selected_iterations, clock)
+            .map_err(|error| format!("warmup sample {index} failed: {error}"))?;
+    }
+
+    phases.push(RunPhase::Measured);
+    let realized_schedule = schedule(spec.sampling_plan.measured_samples, spec.sampling_plan.seed)?;
+    let mut samples = Vec::with_capacity(realized_schedule.len());
+    let mut observations = Vec::with_capacity(realized_schedule.len());
+    for (index, &arm) in realized_schedule.iter().enumerate() {
+        let start = clock.now_ns();
+        let result = workload.sample(arm, RunPhase::Measured, selected_iterations, clock);
+        let duration_ns = elapsed(start, clock.now_ns())?;
+        let (counters, status) = match result {
+            Ok(counters) if duration_ns > config.sample_timeout_ns => {
+                (counters, SampleStatus::TimedOut)
+            }
+            Ok(counters) => (counters, SampleStatus::Completed),
+            Err(error) => (BTreeMap::new(), SampleStatus::Failed(error)),
+        };
+        if status == SampleStatus::Completed {
+            observations.push(RawObservation::new(
+                spec.content_key.clone(),
+                u32::try_from(index).map_err(|_| "measured schedule exceeds u32")?,
+                format!("{}-duration", arm_name(arm)),
+                MetricUnit::Nanoseconds,
+                duration_ns as f64,
+            )?);
+        }
+        samples.push(SampleRecord {
+            schedule_index: u32::try_from(index).map_err(|_| "measured schedule exceeds u32")?,
+            arm,
+            iterations: selected_iterations,
+            duration_ns,
+            counters,
+            status,
+        });
+    }
+    Ok(RunRecord {
+        phases,
+        calibration,
+        realized_schedule,
+        samples,
+        observations,
+    })
+}
+
+fn elapsed(start: u64, end: u64) -> Result<u64, String> {
+    end.checked_sub(start)
+        .ok_or_else(|| "monotonic clock moved backwards".to_owned())
+}
+
+fn calibrated_iterations(probe_ns: u64, config: &RunConfig) -> Result<u64, String> {
+    if probe_ns == 0 {
+        return Err("calibration probe duration was zero".to_owned());
+    }
+    let numerator = config
+        .calibration_target_ns
+        .checked_add(probe_ns - 1)
+        .ok_or_else(|| "calibration iteration arithmetic overflowed".to_owned())?;
+    Ok((numerator / probe_ns).clamp(1, config.max_iterations))
+}
+
+fn schedule(samples_per_arm: u32, seed: u64) -> Result<Vec<Arm>, String> {
+    let capacity = usize::try_from(samples_per_arm)
+        .ok()
+        .and_then(|count| count.checked_mul(2))
+        .ok_or_else(|| "measured schedule size overflowed".to_owned())?;
+    let mut arms = Vec::with_capacity(capacity);
+    for _ in 0..samples_per_arm {
+        arms.extend([Arm::Baseline, Arm::Candidate]);
+    }
+    let mut state = seed;
+    for upper in (1..arms.len()).rev() {
+        let random = splitmix64(&mut state);
+        let index =
+            (random % u64::try_from(upper + 1).map_err(|_| "schedule index overflowed")?) as usize;
+        arms.swap(upper, index);
+    }
+    Ok(arms)
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut value = *state;
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn arm_name(arm: Arm) -> &'static str {
+    match arm {
+        Arm::Baseline => "baseline",
+        Arm::Candidate => "candidate",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // conformance: deterministic sampling retains lifecycle, calibration, scheduling,
+    // timeout, failure, and counter evidence under an injected monotonic clock.
+
+    use std::{cell::Cell, collections::BTreeMap};
+
+    use super::*;
+    use crate::bench::{
+        BuildIdentity, ComparisonPolicy, EnvironmentRequirements, MetricDirection, MetricSpec,
+        SamplingPlan, WorkloadIdentity,
+    };
+
+    #[derive(Default)]
+    struct FakeClock(Cell<u64>);
+    impl FakeClock {
+        fn advance(&self, ns: u64) {
+            self.0.set(self.0.get() + ns);
+        }
+    }
+    impl MonotonicClock for FakeClock {
+        fn now_ns(&self) -> u64 {
+            self.0.get()
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeWorkload {
+        calls: Vec<RunPhase>,
+        measured: u32,
+    }
+    impl Workload<FakeClock> for FakeWorkload {
+        fn setup(&mut self, _clock: &FakeClock) -> Result<(), String> {
+            self.calls.push(RunPhase::Setup);
+            Ok(())
+        }
+        fn sample(
+            &mut self,
+            _arm: Arm,
+            phase: RunPhase,
+            iterations: u64,
+            clock: &FakeClock,
+        ) -> Result<BTreeMap<String, u64>, String> {
+            self.calls.push(phase);
+            let duration = if phase == RunPhase::Calibration {
+                10
+            } else {
+                iterations * 10
+            };
+            clock.advance(duration);
+            if phase == RunPhase::Measured {
+                self.measured += 1;
+            }
+            if self.measured == 3 {
+                return Err("fixture failure".to_owned());
+            }
+            Ok(BTreeMap::from([("operations".to_owned(), iterations)]))
+        }
+    }
+
+    fn spec(seed: u64) -> BenchSpec {
+        BenchSpec::new(
+            WorkloadIdentity {
+                name: "fixture".into(),
+                revision: "1".into(),
+                parameters: BTreeMap::new(),
+            },
+            BuildIdentity {
+                source_revision: "abc".into(),
+                target: "test".into(),
+                profile: "release".into(),
+                features: vec![],
+                toolchain: "rustc".into(),
+            },
+            vec![MetricSpec {
+                name: "latency".into(),
+                unit: MetricUnit::Nanoseconds,
+                direction: MetricDirection::LowerIsBetter,
+            }],
+            SamplingPlan {
+                warmup_samples: 2,
+                measured_samples: 4,
+                seed,
+            },
+            ComparisonPolicy {
+                required_threshold: None,
+                noise_floor: 0.0,
+                confidence_level: 0.95,
+            },
+            EnvironmentRequirements {
+                operating_system: None,
+                architecture: None,
+                minimum_logical_cpus: 1,
+                minimum_memory_bytes: 0,
+                capabilities: vec![],
+                network_isolation: true,
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn lifecycle_is_clock_driven_and_calibration_is_not_observed() {
+        let clock = FakeClock::default();
+        let mut workload = FakeWorkload::default();
+        let record = run(
+            &spec(17),
+            &RunConfig {
+                calibration_target_ns: 50,
+                max_iterations: 100,
+                sample_timeout_ns: 60,
+            },
+            &clock,
+            &mut workload,
+        )
+        .unwrap();
+        assert_eq!(
+            record.phases,
+            [
+                RunPhase::Setup,
+                RunPhase::Calibration,
+                RunPhase::Warmup,
+                RunPhase::Measured
+            ]
+        );
+        assert_eq!(record.calibration.selected_iterations, 5);
+        assert_eq!(record.samples.len(), 8);
+        assert_eq!(record.observations.len(), 7);
+        assert!(
+            record
+                .observations
+                .iter()
+                .all(|sample| sample.value == 50.0)
+        );
+        assert_eq!(
+            workload
+                .calls
+                .iter()
+                .filter(|phase| **phase == RunPhase::Calibration)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn interleaving_is_seeded_balanced_and_reproducible() {
+        let first = schedule(12, 99).unwrap();
+        assert_eq!(first, schedule(12, 99).unwrap());
+        assert_ne!(first, schedule(12, 100).unwrap());
+        assert_eq!(
+            first.iter().filter(|arm| **arm == Arm::Baseline).count(),
+            12
+        );
+        assert_eq!(
+            first.iter().filter(|arm| **arm == Arm::Candidate).count(),
+            12
+        );
+    }
+
+    #[test]
+    fn records_timeouts_failures_and_counters() {
+        let clock = FakeClock::default();
+        let mut workload = FakeWorkload::default();
+        let record = run(
+            &spec(1),
+            &RunConfig {
+                calibration_target_ns: 100,
+                max_iterations: 100,
+                sample_timeout_ns: 50,
+            },
+            &clock,
+            &mut workload,
+        )
+        .unwrap();
+        assert!(
+            record
+                .samples
+                .iter()
+                .any(|sample| sample.status == SampleStatus::TimedOut)
+        );
+        assert!(
+            record
+                .samples
+                .iter()
+                .any(|sample| matches!(sample.status, SampleStatus::Failed(_)))
+        );
+        assert!(
+            record
+                .samples
+                .iter()
+                .any(|sample| sample.counters.get("operations") == Some(&10))
+        );
+    }
+
+    #[test]
+    fn checked_calibration_rejects_zero_time_and_overflow() {
+        let config = RunConfig {
+            calibration_target_ns: u64::MAX,
+            max_iterations: u64::MAX,
+            sample_timeout_ns: 1,
+        };
+        assert!(
+            calibrated_iterations(0, &config)
+                .unwrap_err()
+                .contains("zero")
+        );
+        assert!(
+            calibrated_iterations(2, &config)
+                .unwrap_err()
+                .contains("overflow")
+        );
+    }
+}
+```
+
+### `feature/sim-tooling/benchmark-process-isolation`
+
+Specimen `spec-test/sim-tooling/src/bench/exec` is checked by `cargo test`.
+
+Source `src/bench/exec.rs`:
+
+```rust
+//! Bounded, argv-exact process execution for benchmark workloads.
+//!
+//! Commands are never interpreted by a shell. The executor owns recorded
+//! samples; adapters can prepare files and return a declaration, but never
+//! receive a mutable sample.
+
+// conformance: exact process declarations produce bounded, auditable samples.
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::{self, Read},
+    path::{Path, PathBuf},
+    process::{Child, Command, ExitStatus, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+/// A complete, explicit process invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessDeclaration {
+    /// Executable path or name. It is passed directly to [`Command::new`].
+    pub program: String,
+    /// Exact argument vector; no shell parsing or interpolation occurs.
+    pub arguments: Vec<String>,
+    /// Controlled working directory.
+    pub working_directory: PathBuf,
+    /// Complete child environment when `inherit_environment` is false.
+    pub environment: BTreeMap<String, String>,
+    /// Whether to retain the ambient environment before applying `environment`.
+    pub inherit_environment: bool,
+    /// Maximum retained bytes from stdout.
+    pub stdout_limit: usize,
+    /// Maximum retained bytes from stderr.
+    pub stderr_limit: usize,
+    /// Wall-clock deadline for the child.
+    pub timeout: Duration,
+    /// Optional CPU affinity request.
+    pub affinity: Option<CpuAffinity>,
+}
+
+/// Requested logical CPUs for a process workload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CpuAffinity {
+    /// Non-empty list of logical CPU indices.
+    pub logical_cpus: Vec<usize>,
+}
+
+/// Requested versus achieved isolation evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IsolationRecord {
+    requested_affinity: Option<Vec<usize>>,
+    achieved_affinity: bool,
+    detail: String,
+}
+
+impl IsolationRecord {
+    /// Requested logical CPUs, if any.
+    pub fn requested_affinity(&self) -> Option<&[usize]> {
+        self.requested_affinity.as_deref()
+    }
+
+    /// Whether the platform mechanism reported successful affinity application.
+    pub fn achieved_affinity(&self) -> bool {
+        self.achieved_affinity
+    }
+
+    /// Human-readable achievement or gap evidence.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+/// Immutable result recorded by the executor.
+#[derive(Debug)]
+pub struct ProcessSample {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+    status: Option<ExitStatus>,
+    timed_out: bool,
+    elapsed: Duration,
+    isolation: IsolationRecord,
+}
+
+impl ProcessSample {
+    /// Retained stdout prefix.
+    pub fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+    /// Retained stderr prefix.
+    pub fn stderr(&self) -> &[u8] {
+        &self.stderr
+    }
+    /// Whether stdout exceeded its retention limit.
+    pub fn stdout_truncated(&self) -> bool {
+        self.stdout_truncated
+    }
+    /// Whether stderr exceeded its retention limit.
+    pub fn stderr_truncated(&self) -> bool {
+        self.stderr_truncated
+    }
+    /// Exit status, absent only when a killed child could not be reaped.
+    pub fn status(&self) -> Option<ExitStatus> {
+        self.status
+    }
+    /// Whether the deadline caused termination.
+    pub fn timed_out(&self) -> bool {
+        self.timed_out
+    }
+    /// Wall-clock process duration.
+    pub fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+    /// Requested versus achieved isolation.
+    pub fn isolation(&self) -> &IsolationRecord {
+        &self.isolation
+    }
+}
+
+/// Preparation-only workload adapter.
+pub trait WorkloadAdapter {
+    /// Prepare inputs beneath `artifact_directory` and declare the invocation.
+    fn prepare(&mut self, artifact_directory: &Path) -> Result<ProcessDeclaration, String>;
+}
+
+/// Prepares and executes a workload while keeping the resulting sample private
+/// from the adapter.
+pub fn execute_adapter<A: WorkloadAdapter>(
+    adapter: &mut A,
+    artifact_directory: &Path,
+) -> Result<ProcessSample, String> {
+    fs::create_dir_all(artifact_directory)
+        .map_err(|error| format!("create artifact directory: {error}"))?;
+    let declaration = adapter.prepare(artifact_directory)?;
+    execute(&declaration)
+}
+
+/// Executes one declaration with bounded output and time.
+pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String> {
+    validate(declaration)?;
+    let requested = declaration
+        .affinity
+        .as_ref()
+        .map(|value| value.logical_cpus.clone());
+    let (mut command, mechanism) = command_for(declaration);
+    command.current_dir(&declaration.working_directory);
+    if !declaration.inherit_environment {
+        command.env_clear();
+    }
+    command.envs(&declaration.environment);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let started = Instant::now();
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("spawn workload: {error}"))?;
+    let stdout = drain(
+        child.stdout.take().ok_or("workload stdout was not piped")?,
+        declaration.stdout_limit,
+    );
+    let stderr = drain(
+        child.stderr.take().ok_or("workload stderr was not piped")?,
+        declaration.stderr_limit,
+    );
+    let (status, timed_out) = wait_bounded(&mut child, declaration.timeout)?;
+    let (stdout, stdout_truncated) = stdout
+        .join()
+        .map_err(|_| "stdout reader panicked")?
+        .map_err(|error| format!("read workload stdout: {error}"))?;
+    let (stderr, stderr_truncated) = stderr
+        .join()
+        .map_err(|_| "stderr reader panicked")?
+        .map_err(|error| format!("read workload stderr: {error}"))?;
+    let achieved = requested.is_some() && mechanism && status.is_some_and(|value| value.success());
+    let detail = match (&requested, mechanism, achieved) {
+        (None, _, _) => "CPU affinity was not requested".to_owned(),
+        (Some(_), false, _) => {
+            "CPU affinity requested but this platform has no supported mechanism".to_owned()
+        }
+        (Some(_), true, true) => "CPU affinity applied by the platform mechanism".to_owned(),
+        (Some(_), true, false) => {
+            "CPU affinity mechanism did not report successful execution".to_owned()
+        }
+    };
+    Ok(ProcessSample {
+        stdout,
+        stderr,
+        stdout_truncated,
+        stderr_truncated,
+        status,
+        timed_out,
+        elapsed: started.elapsed(),
+        isolation: IsolationRecord {
+            requested_affinity: requested,
+            achieved_affinity: achieved,
+            detail,
+        },
+    })
+}
+
+fn validate(declaration: &ProcessDeclaration) -> Result<(), String> {
+    if declaration.program.is_empty() {
+        return Err("program must not be empty".to_owned());
+    }
+    if !declaration.working_directory.is_dir() {
+        return Err("working_directory must exist and be a directory".to_owned());
+    }
+    if declaration.timeout.is_zero() {
+        return Err("timeout must be greater than zero".to_owned());
+    }
+    if declaration
+        .affinity
+        .as_ref()
+        .is_some_and(|value| value.logical_cpus.is_empty())
+    {
+        return Err("affinity logical_cpus must not be empty".to_owned());
+    }
+    Ok(())
+}
+
+fn command_for(declaration: &ProcessDeclaration) -> (Command, bool) {
+    #[cfg(target_os = "linux")]
+    if let Some(affinity) = &declaration.affinity {
+        let taskset = ["/usr/bin/taskset", "/bin/taskset"]
+            .into_iter()
+            .find(|path| Path::new(path).is_file());
+        if let Some(taskset) = taskset {
+            let mut command = Command::new(taskset);
+            let cpus = affinity
+                .logical_cpus
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            command.args(["--cpu-list", &cpus, "--", &declaration.program]);
+            command.args(&declaration.arguments);
+            return (command, true);
+        }
+    }
+    let mut command = Command::new(&declaration.program);
+    command.args(&declaration.arguments);
+    (command, false)
+}
+
+fn drain<R: Read + Send + 'static>(
+    mut reader: R,
+    limit: usize,
+) -> thread::JoinHandle<io::Result<(Vec<u8>, bool)>> {
+    thread::spawn(move || {
+        let mut retained = Vec::with_capacity(limit.min(8192));
+        let mut truncated = false;
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let available = limit.saturating_sub(retained.len());
+            retained.extend_from_slice(&buffer[..read.min(available)]);
+            truncated |= read > available;
+        }
+        Ok((retained, truncated))
+    })
+}
+
+fn wait_bounded(
+    child: &mut Child,
+    timeout: Duration,
+) -> Result<(Option<ExitStatus>, bool), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("wait for workload: {error}"))?
+        {
+            return Ok((Some(status), false));
+        }
+        if Instant::now() >= deadline {
+            child
+                .kill()
+                .map_err(|error| format!("terminate timed-out workload: {error}"))?;
+            let status = child
+                .wait()
+                .map_err(|error| format!("reap timed-out workload: {error}"))?;
+            return Ok((Some(status), true));
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn declaration(arguments: Vec<String>) -> ProcessDeclaration {
+        ProcessDeclaration {
+            program: "/bin/sh".to_owned(),
+            arguments,
+            working_directory: std::env::temp_dir(),
+            environment: BTreeMap::new(),
+            inherit_environment: false,
+            stdout_limit: 8,
+            stderr_limit: 8,
+            timeout: Duration::from_secs(2),
+            affinity: None,
+        }
+    }
+
+    #[test]
+    fn shell_metacharacters_are_one_literal_argument() {
+        let marker = "$(touch should-not-exist); * | &";
+        let sample = execute(&declaration(vec![
+            "-c".into(),
+            "printf '%s' \"$1\"".into(),
+            "argv0".into(),
+            marker.into(),
+        ]))
+        .unwrap();
+        assert_eq!(sample.stdout(), b"$(touch ");
+        assert!(sample.stdout_truncated());
+        assert!(sample.status().unwrap().success());
+    }
+
+    #[test]
+    fn unsupported_affinity_records_the_gap() {
+        let requested = vec![0];
+        let record = IsolationRecord {
+            requested_affinity: Some(requested.clone()),
+            achieved_affinity: false,
+            detail: "CPU affinity requested but this platform has no supported mechanism"
+                .to_owned(),
+        };
+        assert_eq!(record.requested_affinity(), Some(requested.as_slice()));
+        assert!(!record.achieved_affinity());
+        assert!(record.detail().contains("no supported mechanism"));
+    }
+
+    #[test]
+    fn output_and_timeout_are_bounded() {
+        let output = execute(&declaration(vec![
+            "-c".into(),
+            "printf 123456789; printf abcdefghi >&2".into(),
+        ]))
+        .unwrap();
+        assert_eq!(output.stdout(), b"12345678");
+        assert_eq!(output.stderr(), b"abcdefgh");
+        assert!(output.stdout_truncated() && output.stderr_truncated());
+
+        let mut slow = declaration(vec!["2".into()]);
+        slow.program = "/bin/sleep".to_owned();
+        slow.timeout = Duration::from_millis(10);
+        assert!(execute(&slow).unwrap().timed_out());
+    }
+
+    struct Adapter;
+    impl WorkloadAdapter for Adapter {
+        fn prepare(&mut self, artifact_directory: &Path) -> Result<ProcessDeclaration, String> {
+            fs::write(artifact_directory.join("input"), b"prepared")
+                .map_err(|error| error.to_string())?;
+            let mut declaration = declaration(vec!["-c".into(), "test -f input".into()]);
+            declaration.working_directory = artifact_directory.to_owned();
+            Ok(declaration)
+        }
+    }
+
+    #[test]
+    fn adapter_only_prepares_before_executor_records_sample() {
+        let root = std::env::temp_dir().join(format!("sim-bench-exec-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut adapter = Adapter;
+        let command = adapter.prepare(&root).unwrap_err();
+        assert!(command.contains("No such file") || command.contains("not found"));
+        fs::create_dir_all(&root).unwrap();
+        let sample = execute_adapter(&mut adapter, &root).unwrap();
+        assert!(!sample.timed_out());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+```
+
+### `feature/sim-tooling/robust-benchmark-comparison`
+
+Specimen `spec-test/sim-tooling/src/bench/compare` is checked by `cargo test`.
+
+Source `src/bench/compare.rs`:
+
+```rust
+//! Auditable policy application for robust benchmark comparisons.
+//!
+//! Statistical formulas remain in `sim-lib-numbers-stats`. This module owns
+//! only sample alignment, declared exclusion policy, environment admission,
+//! and the final benchmark threshold decision.
+
+// conformance: robust comparison retains exclusions and refuses incompatible
+// or statistically inconclusive evidence under an explicit policy.
+
+use serde::{Deserialize, Serialize};
+use sim_lib_numbers_stats::{
+    BootstrapControl, bootstrap_mean_difference_interval, exact_quantile, mean,
+    median_absolute_deviation, sample_variance,
+};
+
+use super::env::{
+    CompatibilityMismatch, CompatibilityPolicy, EnvironmentProbe, compatibility_mismatches,
+};
+use super::{DecisionOutcome, MetricDirection};
+
+/// A measured value with the stable position needed to audit pairing.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonSample {
+    /// Measured sample index retained in the raw run artifact.
+    pub sample_index: u32,
+    /// Finite metric value.
+    pub value: f64,
+}
+
+/// Declared robust-comparison rules.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RobustComparisonPolicy {
+    /// Minimum retained observations required on each side.
+    pub minimum_samples: usize,
+    /// Maximum admitted MAD divided by the absolute median.
+    pub maximum_relative_dispersion: f64,
+    /// Exclude observations farther than this many MADs from their median.
+    pub outlier_mad_multiplier: Option<f64>,
+    /// Maximum permitted direction-adjusted relative regression.
+    pub required_threshold: f64,
+    /// Deterministic bootstrap interval mass.
+    pub confidence_level: f64,
+    /// Deterministic bootstrap seed.
+    pub bootstrap_seed: u64,
+    /// Number of bootstrap resamples.
+    pub bootstrap_resamples: usize,
+    /// Hard bound on bootstrap sampled observations.
+    pub bootstrap_max_work: u64,
+}
+
+/// The side from which an observation was excluded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SampleSide {
+    /// Baseline run.
+    Baseline,
+    /// Candidate run.
+    Candidate,
+}
+
+/// One excluded observation and the exact declared rule that excluded it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExcludedSample {
+    /// Source run.
+    pub side: SampleSide,
+    /// Stable raw sample index.
+    pub sample_index: u32,
+    /// Original value retained for inspection.
+    pub value: f64,
+    /// Stable rule name.
+    pub rule: String,
+    /// Concrete rule evaluation.
+    pub reason: String,
+}
+
+/// Statistics computed by `sim-lib-numbers-stats` for retained observations.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RobustSummary {
+    /// Retained observation count.
+    pub sample_count: usize,
+    /// Arithmetic mean.
+    pub mean: f64,
+    /// Exact median.
+    pub median: f64,
+    /// Sample variance.
+    pub sample_variance: f64,
+    /// Raw median absolute deviation.
+    pub median_absolute_deviation: f64,
+    /// MAD divided by absolute median; infinity when a non-zero MAD has zero median.
+    pub relative_dispersion: f64,
+}
+
+/// Absolute effect and deterministic uncertainty in source units.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectEstimate {
+    /// Candidate-minus-baseline point effect.
+    pub point: f64,
+    /// Lower endpoint of the deterministic percentile interval.
+    pub lower: f64,
+    /// Upper endpoint of the deterministic percentile interval.
+    pub upper: f64,
+    /// Requested central interval mass.
+    pub confidence_level: f64,
+}
+
+/// Evidence sufficient to defend a comparison decision without raw recomputation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonReport {
+    /// Baseline retained-sample summary, when enough valid input remained.
+    pub baseline: Option<RobustSummary>,
+    /// Candidate retained-sample summary, when enough valid input remained.
+    pub candidate: Option<RobustSummary>,
+    /// Effect over independently resampled interleaved runs.
+    pub interleaved_effect: Option<EffectEstimate>,
+    /// Effect over sample-index-aligned pairs.
+    pub paired_effect: Option<EffectEstimate>,
+    /// Direction-adjusted relative regression used by threshold policy.
+    pub relative_regression: Option<f64>,
+    /// Every raw observation excluded by declared policy.
+    pub excluded_samples: Vec<ExcludedSample>,
+    /// Every environment field that refused admission.
+    pub environment_mismatches: Vec<CompatibilityMismatch>,
+    /// Stable reasons why a threshold decision was impossible.
+    pub inconclusive_reasons: Vec<String>,
+    /// Pass, fail, or explicitly inconclusive.
+    pub outcome: DecisionOutcome,
+}
+
+/// Applies robust comparison policy to two raw sample sets.
+#[allow(clippy::too_many_arguments)]
+pub fn compare(
+    baseline: &[ComparisonSample],
+    candidate: &[ComparisonSample],
+    direction: MetricDirection,
+    policy: RobustComparisonPolicy,
+    environment_policy: &CompatibilityPolicy,
+    baseline_environment: &EnvironmentProbe,
+    candidate_environment: &EnvironmentProbe,
+) -> Result<ComparisonReport, String> {
+    validate_policy(policy)?;
+    validate_samples("baseline", baseline)?;
+    validate_samples("candidate", candidate)?;
+
+    let environment_mismatches = compatibility_mismatches(
+        environment_policy,
+        baseline_environment,
+        candidate_environment,
+    );
+    let (baseline, mut excluded_samples) = exclude_outliers(
+        SampleSide::Baseline,
+        baseline,
+        policy.outlier_mad_multiplier,
+    )?;
+    let (candidate, candidate_exclusions) = exclude_outliers(
+        SampleSide::Candidate,
+        candidate,
+        policy.outlier_mad_multiplier,
+    )?;
+    excluded_samples.extend(candidate_exclusions);
+
+    let baseline_summary = summarize(&baseline)?;
+    let candidate_summary = summarize(&candidate)?;
+    let mut inconclusive_reasons = Vec::new();
+    if baseline.len() < policy.minimum_samples {
+        inconclusive_reasons.push(format!(
+            "minimum-samples: baseline retained {} but requires {}",
+            baseline.len(),
+            policy.minimum_samples
+        ));
+    }
+    if candidate.len() < policy.minimum_samples {
+        inconclusive_reasons.push(format!(
+            "minimum-samples: candidate retained {} but requires {}",
+            candidate.len(),
+            policy.minimum_samples
+        ));
+    }
+    for (side, summary) in [
+        ("baseline", baseline_summary),
+        ("candidate", candidate_summary),
+    ] {
+        if let Some(summary) = summary
+            && summary.relative_dispersion > policy.maximum_relative_dispersion
+        {
+            inconclusive_reasons.push(format!(
+                "maximum-relative-dispersion: {side} {} exceeds {}",
+                summary.relative_dispersion, policy.maximum_relative_dispersion
+            ));
+        }
+    }
+    if !environment_mismatches.is_empty() {
+        inconclusive_reasons.push(
+            "environment-compatibility: required fields differ or are unavailable".to_owned(),
+        );
+    }
+
+    let control = BootstrapControl::new(
+        policy.bootstrap_seed,
+        policy.bootstrap_resamples,
+        policy.confidence_level,
+        policy.bootstrap_max_work,
+    )
+    .map_err(|error| error.to_string())?;
+    let interleaved_effect = effect(&baseline, &candidate, control)?;
+    let (paired_zero, paired_differences) = aligned_pair_differences(&baseline, &candidate);
+    let paired_effect = effect(&paired_zero, &paired_differences, control)?;
+    if paired_zero.len() < policy.minimum_samples {
+        inconclusive_reasons.push(format!(
+            "minimum-pairs: retained {} aligned pairs but requires {}",
+            paired_zero.len(),
+            policy.minimum_samples
+        ));
+    }
+
+    let relative_regression = match (baseline_summary, candidate_summary) {
+        (Some(baseline), Some(candidate))
+            if match direction {
+                MetricDirection::LowerIsBetter => baseline.mean != 0.0,
+                MetricDirection::HigherIsBetter => candidate.mean != 0.0,
+            } =>
+        {
+            Some(match direction {
+                MetricDirection::LowerIsBetter => candidate.mean / baseline.mean - 1.0,
+                MetricDirection::HigherIsBetter => baseline.mean / candidate.mean - 1.0,
+            })
+        }
+        (Some(_), Some(_)) => {
+            inconclusive_reasons.push("relative-effect: reference mean is zero".to_owned());
+            None
+        }
+        _ => None,
+    };
+
+    let outcome = if !inconclusive_reasons.is_empty() {
+        DecisionOutcome::Inconclusive
+    } else if relative_regression.is_some_and(|effect| effect > policy.required_threshold) {
+        DecisionOutcome::Fail
+    } else {
+        DecisionOutcome::Pass
+    };
+
+    Ok(ComparisonReport {
+        baseline: baseline_summary,
+        candidate: candidate_summary,
+        interleaved_effect,
+        paired_effect,
+        relative_regression,
+        excluded_samples,
+        environment_mismatches,
+        inconclusive_reasons,
+        outcome,
+    })
+}
+
+fn validate_policy(policy: RobustComparisonPolicy) -> Result<(), String> {
+    if policy.minimum_samples < 2 {
+        return Err("minimum_samples must be at least two".to_owned());
+    }
+    for (name, value) in [
+        (
+            "maximum_relative_dispersion",
+            policy.maximum_relative_dispersion,
+        ),
+        ("required_threshold", policy.required_threshold),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{name} must be finite and non-negative"));
+        }
+    }
+    if policy
+        .outlier_mad_multiplier
+        .is_some_and(|value| !value.is_finite() || value <= 0.0)
+    {
+        return Err("outlier_mad_multiplier must be finite and positive".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_samples(name: &str, samples: &[ComparisonSample]) -> Result<(), String> {
+    for (position, sample) in samples.iter().enumerate() {
+        if !sample.value.is_finite() {
+            return Err(format!("{name}[{position}] value must be finite"));
+        }
+        if position > 0 && samples[position - 1].sample_index >= sample.sample_index {
+            return Err(format!("{name} sample indices must be strictly increasing"));
+        }
+    }
+    Ok(())
+}
+
+fn exclude_outliers(
+    side: SampleSide,
+    samples: &[ComparisonSample],
+    multiplier: Option<f64>,
+) -> Result<(Vec<ComparisonSample>, Vec<ExcludedSample>), String> {
+    let Some(multiplier) = multiplier else {
+        return Ok((samples.to_vec(), Vec::new()));
+    };
+    if samples.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let values = values(samples);
+    let median = exact_quantile(&values, 0.5).map_err(|error| error.to_string())?;
+    let mad = median_absolute_deviation(&values).map_err(|error| error.to_string())?;
+    let limit = multiplier * mad;
+    let mut retained = Vec::new();
+    let mut excluded = Vec::new();
+    for sample in samples {
+        let deviation = (sample.value - median).abs();
+        if deviation > limit {
+            excluded.push(ExcludedSample {
+                side,
+                sample_index: sample.sample_index,
+                value: sample.value,
+                rule: "median-absolute-deviation".to_owned(),
+                reason: format!(
+                    "absolute deviation {deviation} exceeds {multiplier} * MAD {mad} (limit {limit})"
+                ),
+            });
+        } else {
+            retained.push(*sample);
+        }
+    }
+    Ok((retained, excluded))
+}
+
+fn summarize(samples: &[ComparisonSample]) -> Result<Option<RobustSummary>, String> {
+    if samples.len() < 2 {
+        return Ok(None);
+    }
+    let values = values(samples);
+    let mean = mean(&values).map_err(|error| error.to_string())?;
+    let median = exact_quantile(&values, 0.5).map_err(|error| error.to_string())?;
+    let sample_variance = sample_variance(&values).map_err(|error| error.to_string())?;
+    let mad = median_absolute_deviation(&values).map_err(|error| error.to_string())?;
+    let relative_dispersion = if median == 0.0 {
+        if mad == 0.0 { 0.0 } else { f64::INFINITY }
+    } else {
+        mad / median.abs()
+    };
+    Ok(Some(RobustSummary {
+        sample_count: values.len(),
+        mean,
+        median,
+        sample_variance,
+        median_absolute_deviation: mad,
+        relative_dispersion,
+    }))
+}
+
+fn effect(
+    baseline: &[ComparisonSample],
+    candidate: &[ComparisonSample],
+    control: BootstrapControl,
+) -> Result<Option<EffectEstimate>, String> {
+    if baseline.is_empty() || candidate.is_empty() {
+        return Ok(None);
+    }
+    let interval =
+        bootstrap_mean_difference_interval(&values(baseline), &values(candidate), control)
+            .map_err(|error| error.to_string())?;
+    Ok(Some(EffectEstimate {
+        point: interval.point_effect,
+        lower: interval.lower,
+        upper: interval.upper,
+        confidence_level: interval.confidence_level,
+    }))
+}
+
+fn aligned_pair_differences(
+    baseline: &[ComparisonSample],
+    candidate: &[ComparisonSample],
+) -> (Vec<ComparisonSample>, Vec<ComparisonSample>) {
+    let mut zero = Vec::new();
+    let mut differences = Vec::new();
+    let mut baseline = baseline.iter().peekable();
+    let mut candidate = candidate.iter().peekable();
+    while let (Some(a), Some(b)) = (baseline.peek(), candidate.peek()) {
+        match a.sample_index.cmp(&b.sample_index) {
+            std::cmp::Ordering::Less => {
+                baseline.next();
+            }
+            std::cmp::Ordering::Greater => {
+                candidate.next();
+            }
+            std::cmp::Ordering::Equal => {
+                zero.push(ComparisonSample {
+                    sample_index: a.sample_index,
+                    value: 0.0,
+                });
+                differences.push(ComparisonSample {
+                    sample_index: a.sample_index,
+                    value: b.value - a.value,
+                });
+                baseline.next();
+                candidate.next();
+            }
+        }
+    }
+    (zero, differences)
+}
+
+fn values(samples: &[ComparisonSample]) -> Vec<f64> {
+    samples.iter().map(|sample| sample.value).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bench::BuildIdentity;
+    use crate::bench::env::{DeclaredHost, EnvironmentField, HostProbeSource, probe_environment};
+
+    struct Host;
+    impl HostProbeSource for Host {
+        fn read(&self, path: &str) -> Result<String, String> {
+            Ok(match path {
+                "/etc/os-release" => "ID=sim-os\n".to_owned(),
+                "/proc/cpuinfo" => "model name: stable cpu\n".to_owned(),
+                "/proc/meminfo" => "MemTotal: 1048576 kB\n".to_owned(),
+                _ => "performance\n".to_owned(),
+            })
+        }
+        fn architecture(&self) -> Result<String, String> {
+            Ok("x86_64".to_owned())
+        }
+        fn logical_cpus(&self) -> Result<u32, String> {
+            Ok(8)
+        }
+    }
+
+    fn environment() -> EnvironmentProbe {
+        probe_environment(
+            DeclaredHost::new("bench-1".to_owned(), "bench-1".to_owned()).unwrap(),
+            &BuildIdentity {
+                source_revision: "revision".to_owned(),
+                target: "target".to_owned(),
+                profile: "release".to_owned(),
+                features: vec![],
+                toolchain: "stable".to_owned(),
+            },
+            &Host,
+        )
+    }
+
+    fn policy(maximum_relative_dispersion: f64) -> RobustComparisonPolicy {
+        RobustComparisonPolicy {
+            minimum_samples: 3,
+            maximum_relative_dispersion,
+            outlier_mad_multiplier: Some(3.0),
+            required_threshold: 0.05,
+            confidence_level: 0.95,
+            bootstrap_seed: 7,
+            bootstrap_resamples: 128,
+            bootstrap_max_work: 10_000,
+        }
+    }
+
+    fn samples(values: &[f64]) -> Vec<ComparisonSample> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| ComparisonSample {
+                sample_index: index as u32,
+                value: *value,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn excluded_outlier_is_reported_with_its_rule() {
+        let environment = environment();
+        let report = compare(
+            &samples(&[100.0, 101.0, 99.0, 100.0]),
+            &samples(&[100.0, 101.0, 99.0, 10_000.0]),
+            MetricDirection::LowerIsBetter,
+            policy(0.2),
+            &CompatibilityPolicy::requiring([EnvironmentField::CpuModel]),
+            &environment,
+            &environment,
+        )
+        .unwrap();
+        assert_eq!(report.excluded_samples.len(), 1);
+        assert_eq!(report.excluded_samples[0].sample_index, 3);
+        assert_eq!(report.excluded_samples[0].rule, "median-absolute-deviation");
+        assert!(report.excluded_samples[0].reason.contains("MAD"));
+    }
+
+    #[test]
+    fn high_dispersion_is_inconclusive_instead_of_marginal_pass() {
+        let environment = environment();
+        let report = compare(
+            &samples(&[50.0, 100.0, 150.0, 100.0]),
+            &samples(&[49.0, 99.0, 149.0, 99.0]),
+            MetricDirection::LowerIsBetter,
+            RobustComparisonPolicy {
+                outlier_mad_multiplier: None,
+                ..policy(0.1)
+            },
+            &CompatibilityPolicy::requiring([EnvironmentField::CpuModel]),
+            &environment,
+            &environment,
+        )
+        .unwrap();
+        assert_eq!(report.outcome, DecisionOutcome::Inconclusive);
+        assert!(
+            report
+                .inconclusive_reasons
+                .iter()
+                .any(|reason| reason.starts_with("maximum-relative-dispersion:"))
+        );
+        assert!(report.relative_regression.unwrap() < 0.05);
+    }
+
+    #[test]
+    fn incompatible_environment_never_reaches_threshold_decision() {
+        let baseline = environment();
+        let mut candidate = environment();
+        candidate.host.host.inventory_id = "bench-2".to_owned();
+        let report = compare(
+            &samples(&[100.0, 100.0, 100.0]),
+            &samples(&[90.0, 90.0, 90.0]),
+            MetricDirection::LowerIsBetter,
+            policy(0.2),
+            &CompatibilityPolicy::requiring([EnvironmentField::HostInventoryId]),
+            &baseline,
+            &candidate,
+        )
+        .unwrap();
+        assert_eq!(report.outcome, DecisionOutcome::Inconclusive);
+        assert_eq!(report.environment_mismatches.len(), 1);
+    }
+
+    #[test]
+    fn source_fact_guard_keeps_statistical_formulas_in_the_owner() {
+        let source = include_str!("compare.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .expect("comparison module retains a distinct test section")
+            .0;
+        for required_owner_call in [
+            "mean(&values)",
+            "sample_variance(&values)",
+            "exact_quantile(&values",
+            "median_absolute_deviation(&values)",
+            "bootstrap_mean_difference_interval(",
+        ] {
+            assert!(
+                production.contains(required_owner_call),
+                "missing statistics-owner call {required_owner_call}"
+            );
+        }
+        for forbidden_local_formula in [".sum::<f64>()", ".sqrt()", "SplitMix", "resampled_mean"] {
+            assert!(
+                !production.contains(forbidden_local_formula),
+                "tooling contains forbidden statistical formula marker {forbidden_local_formula}"
+            );
+        }
+    }
+}
+```
+
+### `feature/sim-tooling/benchmark-cli`
+
+Specimen `spec-test/sim-tooling/src/bench/neutral_allocation_conformance` is checked by `cargo test`.
+
+Source `src/bench/neutral_allocation_conformance.rs`:
+
+```rust
+use super::{
+    DecisionOutcome,
+    neutral_specimen_fixture::{
+        AllocationOperation, assert_local_fingerprint, assert_report_round_trip,
+        assert_retained_failure, dispersed_report, local_environment,
+    },
+};
+
+#[test]
+fn allocation_bound_specimen_retains_inconclusive_and_failure_evidence() {
+    let environment = local_environment();
+    assert_local_fingerprint(&environment);
+
+    let report = dispersed_report("neutral-allocation-bound");
+    assert_eq!(report.comparison.outcome, DecisionOutcome::Inconclusive);
+    assert!(
+        report
+            .comparison
+            .inconclusive_reasons
+            .iter()
+            .any(|reason| { reason.starts_with("maximum-relative-dispersion:") })
+    );
+    assert_report_round_trip(&report);
+    assert_retained_failure(AllocationOperation, "neutral-allocation-bound-failure");
+}
+```
+
+Specimen `spec-test/sim-tooling/src/bench/neutral_cpu_conformance` is checked by `cargo test`.
+
+Source `src/bench/neutral_cpu_conformance.rs`:
+
+```rust
+use super::{
+    DecisionOutcome,
+    neutral_specimen_fixture::{
+        CpuOperation, assert_local_fingerprint, assert_report_round_trip, assert_retained_failure,
+        assert_synthetic_host_refused, local_environment, matched_report,
+    },
+};
+
+#[test]
+fn cpu_bound_specimen_produces_a_matched_browsable_report() {
+    let environment = local_environment();
+    assert_local_fingerprint(&environment);
+
+    let report = matched_report("neutral-cpu-bound");
+    assert_eq!(report.comparison.outcome, DecisionOutcome::Pass);
+    assert!(report.comparison.paired_effect.is_some());
+    assert_report_round_trip(&report);
+    assert_synthetic_host_refused(&report);
+    assert_retained_failure(CpuOperation, "neutral-cpu-bound-failure");
 }
 ```

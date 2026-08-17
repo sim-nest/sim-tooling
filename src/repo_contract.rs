@@ -44,8 +44,16 @@ pub(crate) struct PackageContract {
     pub(crate) target_kinds: Vec<String>,
     pub(crate) targets: Vec<Value>,
     pub(crate) dependencies: Vec<Value>,
+    pub(crate) source_dependencies: Vec<SourceDependency>,
     pub(crate) features: Vec<Value>,
     pub(crate) rustdoc_summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceDependency {
+    pub(crate) package: String,
+    pub(crate) crate_name: String,
+    pub(crate) kind: String,
 }
 
 /// Generates the per-repo contract files for the current repository; with
@@ -194,6 +202,7 @@ fn workspace_packages(
             target_kinds: target_kinds(package),
             targets: targets(repo, package)?,
             dependencies: dependencies(package, &workspace_names),
+            source_dependencies: source_dependencies(package),
             features: features(package, &workspace_names),
             rustdoc_summary: docs_summary(package).unwrap_or_else(|| description(package)),
             publish: publish(package),
@@ -206,6 +215,33 @@ fn workspace_packages(
     }
     packages.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(packages)
+}
+
+fn source_dependencies(package: &Value) -> Vec<SourceDependency> {
+    let mut dependencies = package["dependencies"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|dependency| {
+            let package = dependency["name"].as_str()?;
+            let kind = dependency["kind"].as_str().unwrap_or("normal");
+            (kind == "normal").then(|| SourceDependency {
+                package: package.to_owned(),
+                crate_name: dependency["rename"]
+                    .as_str()
+                    .unwrap_or(package)
+                    .replace('-', "_"),
+                kind: kind.to_owned(),
+            })
+        })
+        .collect::<Vec<_>>();
+    dependencies.sort_by(|left, right| {
+        left.package
+            .cmp(&right.package)
+            .then(left.crate_name.cmp(&right.crate_name))
+    });
+    dependencies.dedup();
+    dependencies
 }
 
 fn workspace_package_names(metadata: &Value) -> Result<BTreeSet<String>, String> {

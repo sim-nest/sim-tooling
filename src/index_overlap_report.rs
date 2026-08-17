@@ -40,6 +40,8 @@ pub(crate) struct OverlapMember {
     pub(crate) path: String,
     pub(crate) line: u64,
     pub(crate) symbol: String,
+    pub(crate) anchor: Option<String>,
+    pub(crate) fingerprint_reason: Option<String>,
     pub(crate) classification: SourceClassification,
     pub(crate) reason: Option<String>,
     pub(crate) owner: String,
@@ -55,7 +57,7 @@ pub(crate) enum SourceClassification {
 }
 
 impl SourceClassification {
-    fn parse(value: &str) -> Result<Self, String> {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
         match value {
             "candidate" => Ok(Self::Candidate),
             "keep" => Ok(Self::Keep),
@@ -188,6 +190,8 @@ fn read_member(
         path,
         line,
         symbol,
+        anchor: optional_string(member, "anchor"),
+        fingerprint_reason: optional_string(member, "fingerprint_reason"),
         classification,
         reason,
         owner: optional_string(member, "owner").unwrap_or_else(|| cluster_owner.to_owned()),

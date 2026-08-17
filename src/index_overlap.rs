@@ -6,9 +6,11 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use sim_index_core::{FeatureRecord, IndexDoc, SubjectId};
+use sim_index_core::{DeclarationRole, FeatureRecord, IndexDoc, ProtocolResolution, SubjectId};
 
 use crate::{
+    index_overlap_exception::StructuralExceptions,
+    index_overlap_record::{implementation_shape_clusters, record_shape_clusters},
     index_overlap_report::{
         CloneCluster, OverlapMember, SourceClassification, read_overlap_report,
     },
@@ -16,15 +18,36 @@ use crate::{
     index_source::SourceResolver,
 };
 
+#[path = "index_overlap_policy.rs"]
+mod policy;
+use policy::{CoveragePolicy, protocol_coverage_findings};
+#[path = "index_overlap_benchmark.rs"]
+mod benchmark;
+use benchmark::benchmark_ownership_findings;
+
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = OverlapOptions::parse(&args)?;
     let report = read_overlap_report(options.clusters.as_ref(), options.strict)?;
+    let policy = CoveragePolicy::read(options.policy.as_ref(), options.strict)?;
     let doc = load_doc(&options.input)?;
     let sources = SourceResolver::from_options(
         options.control_root.as_deref(),
         options.repos_manifest.as_deref(),
     )?;
-    let findings = overlap_findings(&doc, &sources, &report.clusters);
+    let mut clusters = report.clusters;
+    let mut structural_clusters = record_shape_clusters(&doc, &sources)?;
+    let (implementation_clusters, implementation_classification) =
+        implementation_shape_clusters(&doc, &sources)?;
+    structural_clusters.extend(implementation_clusters);
+    StructuralExceptions::read(options.exceptions.as_ref(), options.strict)?
+        .classify(&mut structural_clusters)?;
+    clusters.extend(structural_clusters);
+    let (role_findings, role_classification) = protocol_role_findings(&doc);
+    let (coverage_findings, coverage_classification) = protocol_coverage_findings(&doc, &policy);
+    let mut findings = overlap_findings(&doc, &sources, &clusters);
+    findings.extend(role_findings);
+    findings.extend(coverage_findings);
+    findings.extend(benchmark_ownership_findings(&doc));
     let strict_findings = findings
         .iter()
         .filter(|finding| finding.strict)
@@ -38,9 +61,31 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             "strict": options.strict,
             "report_complete": report.complete,
             "roots_scanned": report.roots_scanned,
-            "cluster_count": report.clusters.len(),
+            "cluster_count": clusters.len(),
             "finding_count": findings.len(),
             "strict_finding_count": strict_findings.len(),
+            "implementation_shape_classification": {
+                "candidate_clusters": implementation_classification.candidate_clusters,
+                "candidate_members": implementation_classification.candidate_members,
+                "excluded_relation_count": implementation_classification.excluded_relation_count,
+                "excluded_relation_causes": implementation_classification.excluded_relation_causes,
+                "false_positive_count": implementation_classification.false_positive_count,
+                "false_positive_causes": implementation_classification.false_positive_causes,
+            },
+            "protocol_role_classification": {
+                "configured_members": role_classification.configured_members,
+                "satisfied_members": role_classification.satisfied_members,
+                "gap_members": role_classification.gap_members,
+                "policy_members": role_classification.policy_members,
+                "policy_causes": role_classification.policy_causes,
+            },
+            "protocol_coverage_classification": {
+                "configured_protocols": policy.protocols.len(),
+                "applicable_implementations": coverage_classification.applicable,
+                "covered_implementations": coverage_classification.covered,
+                "exempt_implementations": coverage_classification.exempt,
+                "uncovered_implementations": coverage_classification.uncovered,
+            },
             "findings": findings.iter().map(Finding::to_json).collect::<Vec<_>>(),
         }))
         .map_err(|err| format!("serialize overlap findings: {err}"))?;
@@ -49,7 +94,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         let mode = if options.strict { "strict" } else { "advisory" };
         println!(
             "index overlap: {mode} ok ({} cluster(s), 0 findings)",
-            report.clusters.len()
+            clusters.len()
         );
     } else {
         for finding in &findings {
@@ -59,10 +104,147 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
+const PROTOCOL_ROLE_REL: &str = "protocol-role";
+const PROTOCOL_DEPENDENCY_RELS: &[&str] = &["depends-on", "reuses", "composes", "delegates-to"];
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ProtocolRoleClassification {
+    configured_members: usize,
+    satisfied_members: usize,
+    gap_members: usize,
+    policy_members: usize,
+    policy_causes: BTreeMap<String, usize>,
+}
+
+/// Raises only explicitly authored protocol roles. A structural resemblance is
+/// not configuration: the member feature must name its role owner and have a
+/// dependency path to that owner before a missing implementation is a useful
+/// question.
+fn protocol_role_findings(doc: &IndexDoc) -> (Vec<Finding>, ProtocolRoleClassification) {
+    let features = doc
+        .features
+        .iter()
+        .map(|feature| (feature.id.as_str(), feature))
+        .collect::<BTreeMap<_, _>>();
+    let declarations = doc
+        .declarations
+        .iter()
+        .map(|fact| (fact.anchor.as_str(), fact))
+        .collect::<BTreeMap<_, _>>();
+    let implementations = doc
+        .protocol_relations
+        .iter()
+        .filter_map(|relation| match &relation.resolution {
+            ProtocolResolution::Resolved { protocol } => {
+                Some((relation.anchor.as_str(), protocol.as_str()))
+            }
+            ProtocolResolution::Unresolved { .. } => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut findings = Vec::new();
+    let mut classification = ProtocolRoleClassification::default();
+
+    for role in doc
+        .edges
+        .iter()
+        .filter(|edge| edge.rel == PROTOCOL_ROLE_REL)
+    {
+        let (Some(member), Some(owner)) = (
+            features.get(role.from.as_str()),
+            features.get(role.to.as_str()),
+        ) else {
+            continue;
+        };
+        let Some(protocol) = owner.anchors.iter().find_map(|anchor| {
+            declarations
+                .get(anchor.as_str())
+                .filter(|fact| fact.role == DeclarationRole::Trait)
+                .map(|fact| fact.module_path.as_str())
+        }) else {
+            continue;
+        };
+        for anchor in &member.anchors {
+            let Some(declaration) = declarations.get(anchor.as_str()) else {
+                continue;
+            };
+            if !matches!(
+                declaration.role,
+                DeclarationRole::Struct | DeclarationRole::Enum
+            ) {
+                continue;
+            }
+            classification.configured_members += 1;
+            if implementations.contains(&(anchor.as_str(), protocol))
+                || has_edge_path(
+                    doc,
+                    member.id.as_str(),
+                    owner.id.as_str(),
+                    &["delegates-to"],
+                )
+            {
+                classification.satisfied_members += 1;
+                continue;
+            }
+            if !has_edge_path(
+                doc,
+                member.id.as_str(),
+                owner.id.as_str(),
+                PROTOCOL_DEPENDENCY_RELS,
+            ) {
+                classification.policy_members += 1;
+                *classification
+                    .policy_causes
+                    .entry("no-protocol-owner-dependency".to_owned())
+                    .or_default() += 1;
+                continue;
+            }
+            classification.gap_members += 1;
+            findings.push(Finding {
+                cluster: format!("protocol-role/{protocol}"),
+                member: None,
+                left: Some(member.id.to_string()),
+                right: Some(owner.id.to_string()),
+                source_classification: Some(declaration.role.as_str().to_owned()),
+                graph_relation: Some(PROTOCOL_ROLE_REL.to_owned()),
+                reason: "protocol-role-gap".to_owned(),
+                detail: format!(
+                    "{} is configured for {protocol} and reaches its owner, but neither implements nor delegates to that protocol",
+                    declaration.module_path
+                ),
+                strict: false,
+            });
+        }
+    }
+    (findings, classification)
+}
+
+fn has_edge_path(doc: &IndexDoc, from: &str, to: &str, relations: &[&str]) -> bool {
+    let mut pending = vec![from];
+    let mut visited = BTreeSet::new();
+    while let Some(node) = pending.pop() {
+        if !visited.insert(node) {
+            continue;
+        }
+        for edge in doc
+            .edges
+            .iter()
+            .filter(|edge| edge.from == node && relations.contains(&edge.rel.as_str()))
+        {
+            if edge.to == to {
+                return true;
+            }
+            pending.push(edge.to.as_str());
+        }
+    }
+    false
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OverlapOptions {
     input: PathBuf,
     clusters: Option<PathBuf>,
+    policy: Option<PathBuf>,
+    exceptions: Option<PathBuf>,
     control_root: Option<PathBuf>,
     repos_manifest: Option<PathBuf>,
     json: bool,
@@ -79,6 +261,8 @@ impl OverlapOptions {
         }
         let mut input = None;
         let mut clusters = None;
+        let mut policy = None;
+        let mut exceptions = None;
         let mut control_root = None;
         let mut repos_manifest = None;
         let mut json = false;
@@ -96,6 +280,18 @@ impl OverlapOptions {
                     index += 1;
                     clusters = Some(PathBuf::from(
                         args.get(index).ok_or("--clusters requires a path")?,
+                    ));
+                }
+                "--policy" => {
+                    index += 1;
+                    policy = Some(PathBuf::from(
+                        args.get(index).ok_or("--policy requires a path")?,
+                    ));
+                }
+                "--exceptions" => {
+                    index += 1;
+                    exceptions = Some(PathBuf::from(
+                        args.get(index).ok_or("--exceptions requires a path")?,
                     ));
                 }
                 "--control-root" => {
@@ -126,6 +322,8 @@ impl OverlapOptions {
             input: input
                 .ok_or_else(|| format!("index overlap requires --input; {}", usage(program)))?,
             clusters,
+            policy,
+            exceptions,
             control_root,
             repos_manifest,
             json,
@@ -136,7 +334,7 @@ impl OverlapOptions {
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
+        "usage: {program} index overlap --input <index.sx> [--clusters <report.json>] [--policy <policy.toml>] [--exceptions <classifications.tsv>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]"
     )
 }
 
@@ -154,6 +352,20 @@ struct Finding {
 }
 
 impl Finding {
+    fn coverage(protocol: &str, reason: &str, detail: String, classification: &str) -> Self {
+        Self {
+            cluster: format!("protocol-coverage/{protocol}"),
+            member: None,
+            left: None,
+            right: None,
+            source_classification: Some(classification.to_owned()),
+            graph_relation: Some("implements".to_owned()),
+            reason: reason.to_owned(),
+            detail,
+            strict: true,
+        }
+    }
+
     fn source_member(
         cluster: &CloneCluster,
         member: &OverlapMember,
@@ -221,6 +433,8 @@ struct MemberRef {
     path: String,
     line: u64,
     symbol: String,
+    anchor: Option<String>,
+    fingerprint_reason: Option<String>,
     classification: String,
     owner: String,
     replacement: String,
@@ -233,6 +447,8 @@ impl MemberRef {
             path: member.path.clone(),
             line: member.line,
             symbol: member.symbol.clone(),
+            anchor: member.anchor.clone(),
+            fingerprint_reason: member.fingerprint_reason.clone(),
             classification: member.classification.as_str().to_owned(),
             owner: member.owner.clone(),
             replacement: member.replacement.clone(),
@@ -249,6 +465,8 @@ impl MemberRef {
             "path": self.path,
             "line": self.line,
             "symbol": self.symbol,
+            "anchor": self.anchor,
+            "fingerprint_reason": self.fingerprint_reason,
             "classification": self.classification,
             "owner": self.owner,
             "replacement": self.replacement,
@@ -265,6 +483,16 @@ fn overlap_findings(
     let mut findings = Vec::new();
     for cluster in clusters {
         for member in &cluster.members {
+            if member.classification == SourceClassification::Candidate {
+                findings.push(Finding::source_member(
+                    cluster,
+                    member,
+                    "unresolved-candidate",
+                    "candidate has not been classified keep, delegated, or repaired".to_owned(),
+                    true,
+                ));
+                continue;
+            }
             if member.classification == SourceClassification::Regression {
                 findings.push(Finding::source_member(
                     cluster,
