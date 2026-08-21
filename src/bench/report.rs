@@ -4,7 +4,7 @@ use super::{
     BenchContentKey, BenchSpec, MetricDirection,
     compare::{ComparisonReport, ComparisonSample, RobustComparisonPolicy, compare},
     env::{CompatibilityPolicy, EnvironmentProbe},
-    run::Arm,
+    run::{Arm, RunPhase, SampleRecord, SampleStatus},
 };
 use crate::content_digest::content_digest;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,46 @@ use std::{
 };
 
 /// Current complete report schema.
-pub const REPORT_SCHEMA_REVISION: u32 = 2;
+pub const REPORT_SCHEMA_REVISION: u32 = 3;
+
+/// Durable evidence for every scheduled measured attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptRecord {
+    /// Comparison arm invoked.
+    pub arm: Arm,
+    /// Lifecycle phase of the attempt.
+    pub phase: RunPhase,
+    /// Position in the realized schedule.
+    pub schedule_index: u32,
+    /// Calibrated count requested by BENCH.
+    pub requested_iterations: u64,
+    /// Count acknowledged by a valid workload receipt.
+    pub executed_iterations: Option<u64>,
+    /// Duration retained for the attempt regardless of status.
+    pub duration_ns: u64,
+    /// Completion, failure, or timeout classification.
+    pub status: SampleStatus,
+    /// Optional counters retained without aggregation.
+    pub counters: std::collections::BTreeMap<String, u64>,
+    /// Requested-versus-achieved isolation evidence.
+    pub isolation: String,
+}
+
+impl From<&SampleRecord> for AttemptRecord {
+    fn from(sample: &SampleRecord) -> Self {
+        Self {
+            arm: sample.arm,
+            phase: sample.phase,
+            schedule_index: sample.schedule_index,
+            requested_iterations: sample.iterations,
+            executed_iterations: sample.executed_iterations,
+            duration_ns: sample.duration_ns,
+            status: sample.status.clone(),
+            counters: sample.counters.clone(),
+            isolation: "CPU affinity was not requested".into(),
+        }
+    }
+}
 
 /// Raw counters emitted by one measured workload invocation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +88,8 @@ pub struct BenchReport {
     pub candidate_samples: Vec<ComparisonSample>,
     /// Unaggregated workload counters retained for attribution.
     pub counter_samples: Vec<CounterSample>,
+    /// Every measured attempt, including failed and timed-out rows.
+    pub attempts: Vec<AttemptRecord>,
     /// Metric preference used to interpret change.
     pub direction: MetricDirection,
     /// Statistical policy used to derive aggregates.
@@ -98,6 +139,34 @@ impl BenchReport {
         comparison_policy: RobustComparisonPolicy,
         environment_policy: CompatibilityPolicy,
     ) -> Result<Self, String> {
+        Self::new_attributed_with_attempts(
+            spec,
+            baseline_environment,
+            candidate_environment,
+            baseline_samples,
+            candidate_samples,
+            counter_samples,
+            Vec::new(),
+            direction,
+            comparison_policy,
+            environment_policy,
+        )
+    }
+
+    /// Derives and seals a report while preserving every measured attempt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_attributed_with_attempts(
+        spec: BenchSpec,
+        baseline_environment: EnvironmentProbe,
+        candidate_environment: EnvironmentProbe,
+        baseline_samples: Vec<ComparisonSample>,
+        candidate_samples: Vec<ComparisonSample>,
+        counter_samples: Vec<CounterSample>,
+        attempts: Vec<AttemptRecord>,
+        direction: MetricDirection,
+        comparison_policy: RobustComparisonPolicy,
+        environment_policy: CompatibilityPolicy,
+    ) -> Result<Self, String> {
         let comparison = compare(
             &baseline_samples,
             &candidate_samples,
@@ -116,6 +185,7 @@ impl BenchReport {
             baseline_samples,
             candidate_samples,
             counter_samples,
+            attempts,
             direction,
             comparison_policy,
             environment_policy,
@@ -170,6 +240,16 @@ impl BenchReport {
                         "counter {name} is not declared by the benchmark spec"
                     ));
                 }
+            }
+        }
+        for attempt in &self.attempts {
+            if matches!(attempt.status, SampleStatus::Completed)
+                && attempt.executed_iterations != Some(attempt.requested_iterations)
+            {
+                return Err(format!(
+                    "attempt {} has no exact iteration receipt",
+                    attempt.schedule_index
+                ));
             }
         }
         let actual = compare(

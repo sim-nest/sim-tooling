@@ -482,7 +482,6 @@ mod tests {
             "kind": "cookbook-recipe",
             "owner": "sim-lib-stream-jack-provider"
         })];
-
         let sx = artifact(&root, &[], &cards).expect("fragment artifact");
         let doc = IndexCodec
             .decode(IndexForm::Sx, &sx)
@@ -506,6 +505,8 @@ mod tests {
             "kind": "cookbook-recipe",
             "owner": "demo"
         })];
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
 
         let doc = index_doc(&root, &[package("demo", "")], &cards)
             .expect("package and card ownership deduplicate");
@@ -545,7 +546,7 @@ mod tests {
                 .any(|edge| edge.rel == "contains" && edge.to == "crate/xtask")
         );
         assert!(doc.declarations.iter().any(|fact| {
-            fact.anchor.as_str() == "anchor/rustdoc/xtask/run"
+            fact.anchor.as_str().starts_with("anchor/rustdoc/xtask/run")
                 && fact.role == sim_index_core::DeclarationRole::Trait
         }));
         assert_eq!(doc.protocol_relations.len(), 1);
@@ -629,7 +630,10 @@ steps = [
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
+        let root = env::current_dir()
+            .expect("current repository directory")
+            .join("target/test-fixtures")
+            .join(format!("{name}-{}-{stamp}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root

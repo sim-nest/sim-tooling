@@ -15,7 +15,7 @@ use super::{
     compare::{ComparisonSample, RobustComparisonPolicy},
     env::{CompatibilityPolicy, EnvironmentProbe},
     exec::{ProcessDeclaration, execute},
-    report::{BenchReport, CounterSample, FsReportDir, ReportCodec, write_report},
+    report::{AttemptRecord, BenchReport, CounterSample, FsReportDir, ReportCodec, write_report},
     run::{self as sampler, Arm, MonotonicClock, RunConfig, RunPhase, Workload},
 };
 
@@ -150,7 +150,15 @@ fn run_command(args: &[String]) -> Result<(), String> {
     let mut baseline = Vec::new();
     let mut candidate = Vec::new();
     let mut counters = Vec::new();
+    let attempts = record
+        .attempts
+        .iter()
+        .map(AttemptRecord::from)
+        .collect::<Vec<_>>();
     for sample in record.samples {
+        if sample.phase != RunPhase::Measured {
+            continue;
+        }
         if !matches!(sample.status, sampler::SampleStatus::Completed) {
             continue;
         }
@@ -169,18 +177,25 @@ fn run_command(args: &[String]) -> Result<(), String> {
             counters: sample.counters,
         });
     }
-    let report = BenchReport::new_attributed(
+    let all_failed = baseline.is_empty() && candidate.is_empty();
+    let report = BenchReport::new_attributed_with_attempts(
         request.spec,
         request.baseline_environment,
         request.candidate_environment,
         baseline,
         candidate,
         counters,
+        attempts,
         request.direction,
         request.comparison_policy,
         request.environment_policy,
     )?;
     write_artifact(Path::new(output_path), &report)?;
+    if all_failed {
+        return Err(
+            "benchmark produced no valid measured samples; attempt ledger was written".to_owned(),
+        );
+    }
     println!("{}", ReportView::from_report(&report)?.human());
     Ok(())
 }
@@ -286,13 +301,18 @@ impl<C: MonotonicClock> Workload<C> for ProcessWorkload {
         &mut self,
         arm: Arm,
         _: RunPhase,
-        _: u64,
+        iterations: u64,
         _: &C,
     ) -> Result<BTreeMap<String, u64>, String> {
-        let sample = execute(match arm {
+        let declaration = match arm {
             Arm::Baseline => &self.baseline,
             Arm::Candidate => &self.candidate,
-        })?;
+        };
+        let mut declaration = declaration.clone();
+        declaration
+            .environment
+            .insert("SIM_BENCH_ITERATIONS".into(), iterations.to_string());
+        let sample = execute(&declaration)?;
         if sample.timed_out() {
             return Err("process timed out".to_owned());
         }
@@ -305,8 +325,17 @@ impl<C: MonotonicClock> Workload<C> for ProcessWorkload {
         if sample.stdout_truncated() {
             return Err("workload counter output exceeded its retention limit".to_owned());
         }
-        serde_json::from_slice(sample.stdout())
-            .map_err(|error| format!("decode workload counters as JSON object: {error}"))
+        let mut receipt: BTreeMap<String, u64> = serde_json::from_slice(sample.stdout())
+            .map_err(|error| format!("decode workload counters as JSON object: {error}"))?;
+        let executed = receipt
+            .remove("executed_iterations")
+            .ok_or("workload receipt omitted executed_iterations")?;
+        if executed != iterations {
+            return Err(format!(
+                "workload executed {executed} iterations; requested {iterations}"
+            ));
+        }
+        Ok(receipt)
     }
 }
 
