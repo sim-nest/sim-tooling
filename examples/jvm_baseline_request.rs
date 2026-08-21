@@ -12,7 +12,7 @@ fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     assert_eq!(
         args.len(),
-        11,
+        10,
         "usage: jvm_baseline_request <phase> <host-id> <baseline-binary> <baseline-revision> <candidate-binary> <candidate-revision> <working-directory> <toolchain> <output>"
     );
     let build = |revision: &str| BuildIdentity {
@@ -92,5 +92,5 @@ fn main() {
             EnvironmentField::BuildTarget,
         ]),
     };
-    fs::write(&args[10], serde_json::to_vec(&request).unwrap()).unwrap();
+    fs::write(&args[9], serde_json::to_vec(&request).unwrap()).unwrap();
 }
