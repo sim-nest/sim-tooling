@@ -51,7 +51,7 @@ fn spec(name: &str, phase: &str, build: BuildIdentity) -> Result<BenchSpec, Stri
             unit: MetricUnit::Count,
             direction: MetricDirection::LowerIsBetter,
         }).into(),
-        SamplingPlan { warmup_samples: 4, measured_samples: 20, seed: 0x4259_5445_434f_4445 },
+        SamplingPlan { warmup_samples: 4, measured_samples: 40, seed: 0x4259_5445_434f_4445 },
         ComparisonPolicy { required_threshold: None, noise_floor: 0.01, confidence_level: 0.95 },
         EnvironmentRequirements {
             operating_system: Some("linux".into()),

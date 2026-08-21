@@ -1,5 +1,6 @@
 //! Durable, self-contained benchmark reports written through Table/Dir paths.
 
+use super::cli::ArmIdentity;
 use super::{
     BenchContentKey, BenchSpec, MetricDirection,
     compare::{ComparisonReport, ComparisonSample, RobustComparisonPolicy, compare},
@@ -82,6 +83,12 @@ pub struct BenchReport {
     pub baseline_environment: EnvironmentProbe,
     /// Candidate host and build evidence.
     pub candidate_environment: EnvironmentProbe,
+    /// Immutable baseline executable/build/command identity, when executed.
+    #[serde(default)]
+    pub baseline_identity: Option<ArmIdentity>,
+    /// Immutable candidate executable/build/command identity, when executed.
+    #[serde(default)]
+    pub candidate_identity: Option<ArmIdentity>,
     /// Raw, indexed baseline values.
     pub baseline_samples: Vec<ComparisonSample>,
     /// Raw, indexed candidate values.
@@ -143,6 +150,8 @@ impl BenchReport {
             spec,
             baseline_environment,
             candidate_environment,
+            None,
+            None,
             baseline_samples,
             candidate_samples,
             counter_samples,
@@ -159,6 +168,8 @@ impl BenchReport {
         spec: BenchSpec,
         baseline_environment: EnvironmentProbe,
         candidate_environment: EnvironmentProbe,
+        baseline_identity: Option<ArmIdentity>,
+        candidate_identity: Option<ArmIdentity>,
         baseline_samples: Vec<ComparisonSample>,
         candidate_samples: Vec<ComparisonSample>,
         counter_samples: Vec<CounterSample>,
@@ -182,6 +193,8 @@ impl BenchReport {
             spec,
             baseline_environment,
             candidate_environment,
+            baseline_identity,
+            candidate_identity,
             baseline_samples,
             candidate_samples,
             counter_samples,
@@ -229,6 +242,15 @@ impl BenchReport {
                 "report content key {} does not match canonical contents {}",
                 self.content_key.0, expected_key.0
             ));
+        }
+        match (&self.baseline_identity, &self.candidate_identity) {
+            (Some(baseline), Some(candidate)) => {
+                if baseline == candidate {
+                    return Err("report benchmark arm identities are equal".into());
+                }
+            }
+            (None, None) => {}
+            _ => return Err("report contains only one benchmark arm identity".into()),
         }
         for sample in &self.counter_samples {
             if sample.counters.is_empty() {

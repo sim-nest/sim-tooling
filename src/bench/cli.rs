@@ -41,6 +41,17 @@ pub struct CommandSpec {
     pub timeout_ms: u64,
 }
 
+/// Immutable identity of one executable benchmark arm.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ArmIdentity {
+    /// Digest of the exact executable bytes, spelled `sha256:<hex>`.
+    pub executable_content_key: String,
+    /// Source/build identity declared for those bytes.
+    pub build: super::BuildIdentity,
+    /// Stable identity of the exact command semantics.
+    pub command_identity: String,
+}
+
 /// Complete data contract for `bench run`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunRequest {
@@ -50,6 +61,10 @@ pub struct RunRequest {
     pub baseline_environment: EnvironmentProbe,
     /// Candidate environment evidence.
     pub candidate_environment: EnvironmentProbe,
+    /// Immutable baseline arm identity.
+    pub baseline_identity: ArmIdentity,
+    /// Immutable candidate arm identity.
+    pub candidate_identity: ArmIdentity,
     /// Baseline command.
     pub baseline: CommandSpec,
     /// Candidate command.
@@ -144,6 +159,7 @@ fn run_command(args: &[String]) -> Result<(), String> {
         &fs::read(request_path).map_err(|e| format!("read run request: {e}"))?,
     )
     .map_err(|e| format!("decode run request: {e}"))?;
+    validate_distinct_arms(&request)?;
     let clock = SystemClock(Instant::now());
     let mut workload = ProcessWorkload::new(request.baseline, request.candidate)?;
     let record = sampler::run(&request.spec, &request.run_config, &clock, &mut workload)?;
@@ -163,13 +179,17 @@ fn run_command(args: &[String]) -> Result<(), String> {
             continue;
         }
         let value = sample.duration_ns as f64;
-        let row = ComparisonSample {
-            sample_index: sample.schedule_index,
-            value,
-        };
         match sample.arm {
-            Arm::Baseline => baseline.push(row),
-            Arm::Candidate => candidate.push(row),
+            Arm::Baseline => baseline.push(ComparisonSample {
+                sample_index: u32::try_from(baseline.len())
+                    .map_err(|_| "baseline sample count exceeds u32")?,
+                value,
+            }),
+            Arm::Candidate => candidate.push(ComparisonSample {
+                sample_index: u32::try_from(candidate.len())
+                    .map_err(|_| "candidate sample count exceeds u32")?,
+                value,
+            }),
         }
         counters.push(CounterSample {
             sample_index: sample.schedule_index,
@@ -182,6 +202,8 @@ fn run_command(args: &[String]) -> Result<(), String> {
         request.spec,
         request.baseline_environment,
         request.candidate_environment,
+        Some(request.baseline_identity),
+        Some(request.candidate_identity),
         baseline,
         candidate,
         counters,
@@ -197,6 +219,40 @@ fn run_command(args: &[String]) -> Result<(), String> {
         );
     }
     println!("{}", ReportView::from_report(&report)?.human());
+    Ok(())
+}
+
+fn validate_distinct_arms(request: &RunRequest) -> Result<(), String> {
+    validate_distinct_arm_values(
+        &request.baseline_identity,
+        &request.candidate_identity,
+        &request.baseline,
+        &request.candidate,
+    )
+}
+
+fn validate_distinct_arm_values(
+    baseline: &ArmIdentity,
+    candidate: &ArmIdentity,
+    baseline_command: &CommandSpec,
+    candidate_command: &CommandSpec,
+) -> Result<(), String> {
+    if baseline.executable_content_key == candidate.executable_content_key {
+        return Err("baseline and candidate executable content identities are equal".into());
+    }
+    if baseline.build == candidate.build {
+        return Err("baseline and candidate build identities are equal".into());
+    }
+    if baseline.command_identity == candidate.command_identity {
+        return Err("baseline and candidate command identities are equal".into());
+    }
+    if baseline_command.program == candidate_command.program
+        && baseline_command.arguments == candidate_command.arguments
+        && baseline_command.working_directory == candidate_command.working_directory
+        && baseline_command.environment == candidate_command.environment
+    {
+        return Err("baseline and candidate commands are equal".into());
+    }
     Ok(())
 }
 

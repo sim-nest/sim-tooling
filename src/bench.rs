@@ -21,6 +21,11 @@ pub mod exec;
 pub mod jvm_acceptance;
 #[path = "bench/jvm_baseline.rs"]
 pub mod jvm_baseline;
+
+/// Returns the canonical lowercase SHA-256 identity used for immutable inputs.
+pub fn content_identity(bytes: &[u8]) -> String {
+    crate::content_digest::content_digest(bytes)
+}
 #[path = "bench/report.rs"]
 pub mod report;
 #[path = "bench/run.rs"]
