@@ -22,7 +22,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | `feature/sim-index/vault-export` | `crate/xtask` | 1 | Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles. |
 | `feature/sim-tooling/benchmark-environment-compatibility` | `crate/xtask` | 1 | Probe typed host and build evidence and refuse benchmark comparisons when policy-required material fields are unavailable or differ. |
 | `feature/sim-tooling/benchmark-sampling` | `crate/xtask` | 1 | Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures. |
-| `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 1 | Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence. |
+| `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 1 | Execute benchmark workloads as exact argument vectors inside an executor-owned process tree with bounded termination, reaping, output, and time, explicit status, and observed requested-versus-achieved CPU-affinity evidence. |
 | `feature/sim-tooling/robust-benchmark-comparison` | `crate/xtask` | 1 | Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner. |
 | `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run exact process benchmarks and compare, inspect, or policy-check durable reports whose raw durations and workload counters are derived from one verified report object. |
 
@@ -3005,6 +3005,49 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+mod unix {
+    use std::{io, mem::MaybeUninit};
+
+    pub fn signal_group(pid: u32, signal: i32) -> io::Result<()> {
+        // SAFETY: kill is called with a negated, validated child PID and no pointers.
+        let result = unsafe { libc::kill(-(pid as i32), signal) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn affinity(pid: u32) -> io::Result<Vec<usize>> {
+        let mut mask = MaybeUninit::<libc::cpu_set_t>::zeroed();
+        // SAFETY: mask points to writable storage of the exact size supplied.
+        let result = unsafe {
+            libc::sched_getaffinity(
+                pid as libc::pid_t,
+                size_of::<libc::cpu_set_t>(),
+                mask.as_mut_ptr(),
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: sched_getaffinity initialized the complete cpu_set_t on success.
+        let mask = unsafe { mask.assume_init() };
+        Ok((0..libc::CPU_SETSIZE as usize)
+            .filter(|cpu| unsafe { libc::CPU_ISSET(*cpu, &mask) })
+            .collect())
+    }
+}
+
+const TERMINATION_GRACE: Duration = Duration::from_millis(100);
+const FORCE_KILL_GRACE: Duration = Duration::from_millis(250);
+
 /// A complete, explicit process invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessDeclaration {
@@ -3039,7 +3082,9 @@ pub struct CpuAffinity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IsolationRecord {
     requested_affinity: Option<Vec<usize>>,
+    observed_affinity: Option<Vec<usize>>,
     achieved_affinity: bool,
+    workload_tree_contained: bool,
     detail: String,
 }
 
@@ -3052,6 +3097,16 @@ impl IsolationRecord {
     /// Whether the platform mechanism reported successful affinity application.
     pub fn achieved_affinity(&self) -> bool {
         self.achieved_affinity
+    }
+
+    /// Logical CPUs observed on the spawned workload process.
+    pub fn observed_affinity(&self) -> Option<&[usize]> {
+        self.observed_affinity.as_deref()
+    }
+
+    /// Whether the complete workload was placed in executor-owned containment.
+    pub fn workload_tree_contained(&self) -> bool {
+        self.workload_tree_contained
     }
 
     /// Human-readable achievement or gap evidence.
@@ -3140,11 +3195,13 @@ pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String
     }
     command.envs(&declaration.environment);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    configure_containment(&mut command);
 
     let started = Instant::now();
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawn workload: {error}"))?;
+    let observed = observe_affinity(&mut child, requested.as_deref());
     let stdout = drain(
         child.stdout.take().ok_or("workload stdout was not piped")?,
         declaration.stdout_limit,
@@ -3162,13 +3219,18 @@ pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String
         .join()
         .map_err(|_| "stderr reader panicked")?
         .map_err(|error| format!("read workload stderr: {error}"))?;
-    let achieved = requested.is_some() && mechanism && status.is_some_and(|value| value.success());
+    let achieved = requested
+        .as_ref()
+        .zip(observed.as_ref())
+        .is_some_and(|(requested, observed)| same_cpu_set(requested, observed));
     let detail = match (&requested, mechanism, achieved) {
         (None, _, _) => "CPU affinity was not requested".to_owned(),
         (Some(_), false, _) => {
             "CPU affinity requested but this platform has no supported mechanism".to_owned()
         }
-        (Some(_), true, true) => "CPU affinity applied by the platform mechanism".to_owned(),
+        (Some(_), true, true) => {
+            "requested CPU affinity verified on the workload process".to_owned()
+        }
         (Some(_), true, false) => {
             "CPU affinity mechanism did not report successful execution".to_owned()
         }
@@ -3183,10 +3245,50 @@ pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String
         elapsed: started.elapsed(),
         isolation: IsolationRecord {
             requested_affinity: requested,
+            observed_affinity: observed,
             achieved_affinity: achieved,
+            workload_tree_contained: cfg!(unix),
             detail,
         },
     })
+}
+
+fn same_cpu_set(left: &[usize], right: &[usize]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_unstable();
+    left.dedup();
+    right.sort_unstable();
+    right.dedup();
+    left == right
+}
+
+fn configure_containment(command: &mut Command) {
+    #[cfg(unix)]
+    command.process_group(0);
+}
+
+#[cfg(target_os = "linux")]
+fn observe_affinity(child: &mut Child, requested: Option<&[usize]>) -> Option<Vec<usize>> {
+    let deadline = Instant::now() + Duration::from_millis(50);
+    let mut observed = None;
+    loop {
+        if let Ok(cpus) = unix::affinity(child.id()) {
+            if requested.is_some_and(|value| same_cpu_set(value, &cpus)) {
+                return Some(cpus);
+            }
+            observed = Some(cpus);
+        }
+        if Instant::now() >= deadline || child.try_wait().ok().flatten().is_some() {
+            return observed;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn observe_affinity(_child: &mut Child, _requested: Option<&[usize]>) -> Option<Vec<usize>> {
+    None
 }
 
 fn validate(declaration: &ProcessDeclaration) -> Result<(), String> {
@@ -3264,9 +3366,13 @@ fn wait_bounded(
             .try_wait()
             .map_err(|error| format!("wait for workload: {error}"))?
         {
+            clean_workload_tree(child.id())?;
             return Ok((Some(status), false));
         }
         if Instant::now() >= deadline {
+            #[cfg(unix)]
+            terminate_workload_tree(child.id())?;
+            #[cfg(not(unix))]
             child
                 .kill()
                 .map_err(|error| format!("terminate timed-out workload: {error}"))?;
@@ -3277,6 +3383,43 @@ fn wait_bounded(
         }
         thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[cfg(unix)]
+fn signal_group(pid: u32, signal: i32) -> Result<(), String> {
+    match unix::signal_group(pid, signal) {
+        Ok(()) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+        Err(error) => Err(format!("signal workload process group: {error}")),
+    }
+}
+
+#[cfg(unix)]
+fn group_exists(pid: u32) -> bool {
+    !matches!(unix::signal_group(pid, 0), Err(error) if error.raw_os_error() == Some(libc::ESRCH))
+}
+
+#[cfg(unix)]
+fn terminate_workload_tree(pid: u32) -> Result<(), String> {
+    signal_group(pid, libc::SIGTERM)?;
+    let deadline = Instant::now() + TERMINATION_GRACE;
+    while group_exists(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(2));
+    }
+    signal_group(pid, libc::SIGKILL)?;
+    let deadline = Instant::now() + FORCE_KILL_GRACE;
+    while group_exists(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(2));
+    }
+    Ok(())
+}
+
+fn clean_workload_tree(pid: u32) -> Result<(), String> {
+    #[cfg(unix)]
+    if group_exists(pid) {
+        terminate_workload_tree(pid)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3317,7 +3460,9 @@ mod tests {
         let requested = vec![0];
         let record = IsolationRecord {
             requested_affinity: Some(requested.clone()),
+            observed_affinity: None,
             achieved_affinity: false,
+            workload_tree_contained: false,
             detail: "CPU affinity requested but this platform has no supported mechanism"
                 .to_owned(),
         };
@@ -3341,6 +3486,58 @@ mod tests {
         slow.program = "/bin/sleep".to_owned();
         slow.timeout = Duration::from_millis(10);
         assert!(execute(&slow).unwrap().timed_out());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_descendants_that_hold_pipes_and_ignore_termination() {
+        let mut hostile = declaration(vec![
+            "-c".into(),
+            "trap '' TERM; sh -c 'trap \"\" TERM; sh -c \"trap \\\"\\\" TERM; while :; do sleep 1; done\" & wait' & echo $!; wait".into(),
+        ]);
+        hostile.timeout = Duration::from_millis(40);
+        hostile.stdout_limit = 64;
+        let started = Instant::now();
+        let sample = execute(&hostile).unwrap();
+        assert!(sample.timed_out());
+        assert!(sample.isolation().workload_tree_contained());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let descendant = std::str::from_utf8(sample.stdout())
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        assert!(!group_exists(descendant));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn affinity_is_observed_independently_of_workload_exit_status() {
+        let available = unix::affinity(std::process::id()).unwrap();
+        let cpu = *available
+            .first()
+            .expect("test process has an available CPU");
+        let mut failing = declaration(Vec::new());
+        failing.program = "/bin/false".to_owned();
+        failing.affinity = Some(CpuAffinity {
+            logical_cpus: vec![cpu],
+        });
+        let sample = execute(&failing).unwrap();
+        assert!(!sample.status().unwrap().success());
+        assert_eq!(
+            sample.isolation().observed_affinity(),
+            Some([cpu].as_slice())
+        );
+        assert!(sample.isolation().achieved_affinity());
+
+        let record = IsolationRecord {
+            requested_affinity: Some(vec![cpu]),
+            observed_affinity: Some(available),
+            achieved_affinity: false,
+            workload_tree_contained: true,
+            detail: "requested affinity did not match observed affinity".to_owned(),
+        };
+        assert!(!record.achieved_affinity());
     }
 
     struct Adapter;

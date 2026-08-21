@@ -34,7 +34,7 @@
 //! [`repo_contract`], [`validation_matrix`], [`crate_catalog`],
 //! [`citizenize_arg`], [`atelier_site`], and [`atelier_tools`].
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod atelier;
