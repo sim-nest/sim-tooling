@@ -138,10 +138,10 @@ pub fn atelier_guard(options: AtelierGuardOptions) -> Result<AtelierGuardReport,
         repos.retain(|repo| repo.name == *filter);
     }
     let mut rules = guideline_rules();
-    if let Some(filter) = &options.rule_filter {
-        if !rules.iter().any(|rule| rule.id == filter) {
-            return Err(format!("unknown atelier-guard rule: {filter}"));
-        }
+    if let Some(filter) = &options.rule_filter
+        && !rules.iter().any(|rule| rule.id == filter)
+    {
+        return Err(format!("unknown atelier-guard rule: {filter}"));
     }
     let mut findings = Vec::new();
     for repo in &repos {
