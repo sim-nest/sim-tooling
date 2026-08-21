@@ -23,7 +23,7 @@ bootstrap_max_work = 20000
 
 [[cases]]
 workload = "jvm-bytecode-cold-preparation"
-baseline_report = "tiger-cold-preparation.json"
+baseline_report = "attempts/tiger-cold-preparation-inconclusive.json"
 baseline_content_key = "sha256:4bc7d2383522c22f9b937ad4552259deb61dffdfca2cd223b0b5fe10a50a0360"
 baseline_relative_dispersion = 0.01119174169511252
 candidate_relative_dispersion = 0.022779728136124593
@@ -32,7 +32,7 @@ derivation = "max(baseline_relative_dispersion, candidate_relative_dispersion)"
 
 [[cases]]
 workload = "jvm-bytecode-warm-execution"
-baseline_report = "tiger-warm-execution.json"
+baseline_report = "attempts/tiger-warm-execution-inconclusive.json"
 baseline_content_key = "sha256:3410df991be855eebeb1b3acdd54440168575470e643b6c93ba4dc606376ae7d"
 baseline_relative_dispersion = 0.006853468220180778
 candidate_relative_dispersion = 0.017843516512883528

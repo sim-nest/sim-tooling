@@ -24,7 +24,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | `feature/sim-tooling/benchmark-sampling` | `crate/xtask` | 1 | Run setup, calibration, warmup, and measured benchmark phases through an injectable monotonic clock while retaining calibration choices, realized interleaving, raw counters, timeouts, and failures. |
 | `feature/sim-tooling/benchmark-process-isolation` | `crate/xtask` | 1 | Execute benchmark workloads as exact argument vectors inside an executor-owned process tree with bounded termination, reaping, output, and time, explicit status, and observed requested-versus-achieved CPU-affinity evidence. |
 | `feature/sim-tooling/robust-benchmark-comparison` | `crate/xtask` | 1 | Apply declared sample, MAD outlier, dispersion, environment, and threshold policy while delegating summaries and deterministic uncertainty intervals to the statistics owner. |
-| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run exact process benchmarks and compare, inspect, or policy-check durable reports whose raw durations and workload counters are derived from one verified report object. |
+| `feature/sim-tooling/benchmark-cli` | `crate/xtask` | 2 | Run distinct immutable process benchmark arms and compare, inspect, or policy-check durable reports whose identities, raw durations, and workload counters are derived from one verified report object. |
 
 ## Surfaces
 
@@ -2490,6 +2490,8 @@ pub trait Workload<C: MonotonicClock> {
 pub struct RunConfig {
     /// Desired duration used to choose the measured iteration count.
     pub calibration_target_ns: u64,
+    /// In-process iterations used to keep process setup out of calibration.
+    pub calibration_probe_iterations: u64,
     /// Maximum permitted iterations in any invocation.
     pub max_iterations: u64,
     /// Duration after which a completed sample is classified as timed out.
@@ -2502,6 +2504,9 @@ impl RunConfig {
         let mut errors = Vec::new();
         if self.calibration_target_ns == 0 {
             errors.push("calibration_target_ns must be greater than zero");
+        }
+        if self.calibration_probe_iterations == 0 {
+            errors.push("calibration_probe_iterations must be greater than zero");
         }
         if self.max_iterations == 0 {
             errors.push("max_iterations must be greater than zero");
@@ -2596,12 +2601,17 @@ pub fn run<C: MonotonicClock, W: Workload<C>>(
     phases.push(RunPhase::Calibration);
     let start = clock.now_ns();
     let calibration_counters = workload
-        .sample(Arm::Candidate, RunPhase::Calibration, 1, clock)
+        .sample(
+            Arm::Candidate,
+            RunPhase::Calibration,
+            config.calibration_probe_iterations,
+            clock,
+        )
         .map_err(|error| format!("calibration failed: {error}"))?;
     let probe_duration_ns = elapsed(start, clock.now_ns())?;
     let selected_iterations = calibrated_iterations(probe_duration_ns, config)?;
     let calibration = CalibrationDecision {
-        probe_iterations: 1,
+        probe_iterations: config.calibration_probe_iterations,
         probe_duration_ns,
         target_duration_ns: config.calibration_target_ns,
         selected_iterations,
@@ -2610,8 +2620,8 @@ pub fn run<C: MonotonicClock, W: Workload<C>>(
         schedule_index: 0,
         phase: RunPhase::Calibration,
         arm: Arm::Candidate,
-        iterations: 1,
-        executed_iterations: Some(1),
+        iterations: config.calibration_probe_iterations,
+        executed_iterations: Some(config.calibration_probe_iterations),
         duration_ns: probe_duration_ns,
         counters: calibration_counters,
         status: SampleStatus::Completed,
@@ -2725,6 +2735,8 @@ fn calibrated_iterations(probe_ns: u64, config: &RunConfig) -> Result<u64, Strin
     }
     let numerator = config
         .calibration_target_ns
+        .checked_mul(config.calibration_probe_iterations)
+        .ok_or_else(|| "calibration iteration arithmetic overflowed".to_owned())?
         .checked_add(probe_ns - 1)
         .ok_or_else(|| "calibration iteration arithmetic overflowed".to_owned())?;
     Ok((numerator / probe_ns).clamp(1, config.max_iterations))
@@ -2874,6 +2886,7 @@ mod tests {
             &spec(17),
             &RunConfig {
                 calibration_target_ns: 50,
+                calibration_probe_iterations: 1,
                 max_iterations: 100,
                 sample_timeout_ns: 60,
             },
@@ -2932,6 +2945,7 @@ mod tests {
             &spec(1),
             &RunConfig {
                 calibration_target_ns: 100,
+                calibration_probe_iterations: 1,
                 max_iterations: 100,
                 sample_timeout_ns: 50,
             },
@@ -2963,6 +2977,7 @@ mod tests {
     fn checked_calibration_rejects_zero_time_and_overflow() {
         let config = RunConfig {
             calibration_target_ns: u64::MAX,
+            calibration_probe_iterations: 2,
             max_iterations: u64::MAX,
             sample_timeout_ns: 1,
         };
