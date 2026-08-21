@@ -68,6 +68,7 @@ fn main() {
         candidate: command(&args[5]),
         run_config: RunConfig {
             calibration_target_ns: 250_000_000,
+            calibration_probe_iterations: 10_000,
             max_iterations: 10_000_000,
             sample_timeout_ns: 10_000_000_000,
         },

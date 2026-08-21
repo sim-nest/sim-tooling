@@ -186,6 +186,7 @@ pub(super) fn assert_local_fingerprint(environment: &EnvironmentProbe) {
 pub(super) fn run_config() -> RunConfig {
     RunConfig {
         calibration_target_ns: 100,
+        calibration_probe_iterations: 1,
         max_iterations: 100,
         sample_timeout_ns: 1_000,
     }
