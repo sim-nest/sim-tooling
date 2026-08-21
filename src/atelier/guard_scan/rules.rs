@@ -54,7 +54,7 @@ fn rule_present_tense(
     rules: &[GuidelineRule],
     listed: &[PathBuf],
 ) -> Result<Vec<GuidelineFinding>, String> {
-    if repo.kind != "code" {
+    if !matches!(repo.kind.as_str(), "code" | "frontpage") {
         return Ok(Vec::new());
     }
     let rule = by_id(rules, "present-tense-public-docs");
