@@ -86,11 +86,10 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use the inventory-backed DeclaredHost identity with probe_environment, then apply a CompatibilityPolicy before comparing benchmark results. Treat unavailable evidence as a refusal; never substitute a hostname label or guessed host property."
 claims_anchors = [
-  "anchor/rustdoc/xtask/compatibility-policy",
-  "anchor/rustdoc/xtask/compatibility_mismatches",
-  "anchor/rustdoc/xtask/declared-host",
-  "anchor/rustdoc/xtask/environment-probe",
-  "anchor/rustdoc/xtask/probe_environment",
+  "anchor/rustdoc/xtask/bench/env/compatibility_mismatches",
+  "anchor/rustdoc/xtask/bench/env/declared-host",
+  "anchor/rustdoc/xtask/bench/env/environment-probe",
+  "anchor/rustdoc/xtask/bench/env/probe_environment",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/env",
@@ -104,14 +103,14 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Implement Workload and MonotonicClock adapters, validate RunConfig, and retain the complete RunRecord. Summarize only its successful measured observations; calibration and warmup are execution evidence, not statistical samples."
 claims_anchors = [
-  "anchor/rustdoc/xtask/calibration-decision",
-  "anchor/rustdoc/xtask/monotonic-clock",
-  "anchor/rustdoc/xtask/run-config",
-  "anchor/rustdoc/xtask/run-phase",
-  "anchor/rustdoc/xtask/run-record",
-  "anchor/rustdoc/xtask/sample-record",
-  "anchor/rustdoc/xtask/sample-status",
-  "anchor/rustdoc/xtask/workload",
+  "anchor/rustdoc/xtask/bench/run/calibration-decision",
+  "anchor/rustdoc/xtask/bench/run/monotonic-clock",
+  "anchor/rustdoc/xtask/bench/run/run-config",
+  "anchor/rustdoc/xtask/bench/run/run-phase",
+  "anchor/rustdoc/xtask/bench/run/run-record",
+  "anchor/rustdoc/xtask/bench/run/sample-record",
+  "anchor/rustdoc/xtask/bench/run/sample-status",
+  "anchor/rustdoc/xtask/bench/run/workload",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/run",
@@ -125,13 +124,13 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use ProcessDeclaration and execute for process-backed workloads. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample; never introduce shell interpolation or give adapters a recorded result to mutate."
 claims_anchors = [
-  "anchor/rustdoc/xtask/cpu-affinity",
-  "anchor/rustdoc/xtask/execute",
-  "anchor/rustdoc/xtask/execute_adapter",
-  "anchor/rustdoc/xtask/isolation-record",
-  "anchor/rustdoc/xtask/process-declaration",
-  "anchor/rustdoc/xtask/process-sample",
-  "anchor/rustdoc/xtask/workload-adapter",
+  "anchor/rustdoc/xtask/bench/exec/cpu-affinity",
+  "anchor/rustdoc/xtask/bench/exec/execute",
+  "anchor/rustdoc/xtask/bench/exec/execute_adapter",
+  "anchor/rustdoc/xtask/bench/exec/isolation-record",
+  "anchor/rustdoc/xtask/bench/exec/process-declaration",
+  "anchor/rustdoc/xtask/bench/exec/process-sample",
+  "anchor/rustdoc/xtask/bench/exec/workload-adapter",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/exec",
@@ -148,11 +147,11 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use compare with raw indexed samples, typed environment probes, and an explicit RobustComparisonPolicy. Inspect exclusions and inconclusive reasons before consuming the outcome; incompatible or high-dispersion evidence never becomes a threshold pass."
 claims_anchors = [
-  "anchor/rustdoc/xtask/compare",
-  "anchor/rustdoc/xtask/comparison-report",
-  "anchor/rustdoc/xtask/excluded-sample",
-  "anchor/rustdoc/xtask/robust-comparison-policy",
-  "anchor/rustdoc/xtask/robust-summary",
+  "anchor/rustdoc/xtask/bench/compare/compare",
+  "anchor/rustdoc/xtask/bench/compare/comparison-report",
+  "anchor/rustdoc/xtask/bench/compare/excluded-sample",
+  "anchor/rustdoc/xtask/bench/compare/robust-comparison-policy",
+  "anchor/rustdoc/xtask/bench/compare/robust-summary",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/compare",
@@ -170,10 +169,10 @@ owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
 guidance = "Use bench run with a declared JSON request to create an atomic artifact; workload stdout must be one exact JSON counter object and every counter must be declared by the BenchSpec. Use bench compare or bench show to inspect it, and bench check for read-only policy enforcement. Select --json when automation needs the same ReportView fields shown concisely to humans. Reuse jvm_baseline::corpus for the BYTECODE_SPEED_4 cold-preparation and warm-execution workload declarations, and jvm_acceptance for its baseline-derived frozen acceptance policy."
 claims_anchors = [
-  "anchor/rustdoc/xtask/command-spec",
-  "anchor/rustdoc/xtask/counter-sample",
-  "anchor/rustdoc/xtask/report-view",
-  "anchor/rustdoc/xtask/run-request",
+  "anchor/rustdoc/xtask/bench/cli/command-spec",
+  "anchor/rustdoc/xtask/bench/report/counter-sample",
+  "anchor/rustdoc/xtask/bench/cli/report-view",
+  "anchor/rustdoc/xtask/bench/cli/run-request",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/neutral_allocation_conformance",

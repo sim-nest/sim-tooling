@@ -34,9 +34,9 @@ pub(crate) fn index_doc(
     let (card_subjects, card_edges) = card_owner_subjects(repo, cards);
     subjects.extend(card_subjects);
     let edges = merge_edges(package_edges, card_edges);
-    let mut anchors = crate::index_anchor_scan::discovered(repo, packages, cards);
+    let mut anchors = crate::index_anchor_scan::discovered(repo, packages, cards)?;
     let (source_anchors, declarations, protocol_relations) =
-        crate::index_anchor_scan::source_facts(repo, packages);
+        crate::index_anchor_scan::source_facts(repo, packages)?;
     anchors.extend(source_anchors);
     let discovered = crate::index_surface_scan::discovered(repo, packages, &anchors);
     let specimens = crate::index_specimen_scan::discovered(repo, packages);

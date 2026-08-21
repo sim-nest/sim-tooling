@@ -114,12 +114,17 @@ impl StructuralExceptions {
             .filter(|cluster| is_structural_cluster(&cluster.id))
             .map(|cluster| cluster.id.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        if let Some(stale) = self
+        let stale = self
             .entries
             .keys()
-            .find(|cluster| !current.contains(cluster.as_str()))
-        {
-            return Err(format!("stale structural overlap exception: {stale}"));
+            .filter(|cluster| !current.contains(cluster.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !stale.is_empty() {
+            return Err(format!(
+                "stale structural overlap exceptions: {}",
+                stale.join(", ")
+            ));
         }
         for cluster in clusters {
             let Some(exception) = self.entries.get(&cluster.id) else {
