@@ -40,8 +40,5 @@ sim-table-core = "0.1.4"
 syn = { version = "2", features = ["fold", "full", "visit"] }
 toml = "0.8"
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
 [lints]
 workspace = true

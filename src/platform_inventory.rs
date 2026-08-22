@@ -34,7 +34,7 @@ impl HostBindingKind {
         }
     }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum HostSourceRole {
     Capsule,
     Bootstrap,
@@ -62,6 +62,8 @@ struct Ledger {
     semantic_files: usize,
     calibration_delta: i64,
     totals: BTreeMap<&'static str, usize>,
+    structural_totals: BTreeMap<&'static str, usize>,
+    product_violations: Vec<String>,
     facts: Vec<Fact>,
     index_facts: Vec<IndexFact>,
 }
@@ -93,6 +95,8 @@ struct IndexFact {
     service: String,
     evidence: String,
     debt: String,
+    fact_class: &'static str,
+    product_reachable: bool,
 }
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
@@ -163,6 +167,11 @@ fn scan(repos: &[(String, PathBuf)]) -> Result<Ledger, String> {
     for fact in &facts {
         *totals.entry(fact.binding_kind).or_insert(0) += 1;
     }
+    let mut structural_totals = BTreeMap::new();
+    for fact in &facts {
+        *structural_totals.entry(fact_class(fact.role)).or_insert(0) += 1;
+    }
+    let product_violations = Vec::new();
     let index_facts = facts
         .iter()
         .map(|fact| IndexFact {
@@ -172,7 +181,13 @@ fn scan(repos: &[(String, PathBuf)]) -> Result<Ledger, String> {
             provider: fact.provider.clone(),
             service: service(&fact.provider).to_owned(),
             evidence: fact.evidence.clone(),
-            debt: fact.owner_phase.to_owned(),
+            debt: if fact.role == "debt" {
+                fact.owner_phase.to_owned()
+            } else {
+                String::new()
+            },
+            fact_class: fact_class(fact.role),
+            product_reachable: fact.role == "debt",
         })
         .collect();
     Ok(Ledger {
@@ -182,6 +197,8 @@ fn scan(repos: &[(String, PathBuf)]) -> Result<Ledger, String> {
         semantic_files,
         calibration_delta: semantic_files as i64 - CALIBRATION_FILES,
         totals,
+        structural_totals,
+        product_violations,
         facts,
         index_facts,
     })
@@ -207,6 +224,11 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 }
 
 fn language(path: &Path) -> Option<&'static str> {
+    // A lockfile is a resolved build input, not a target dependency edge. Its
+    // transitive package names cannot establish product reachability.
+    if path.file_name().and_then(|value| value.to_str()) == Some("Cargo.lock") {
+        return None;
+    }
     if let Some("Cargo.toml" | "Cargo.lock" | "package.json" | "Package.swift" | "CMakeLists.txt") =
         path.file_name().and_then(|v| v.to_str())
     {
@@ -291,7 +313,7 @@ fn scan_file(
                         offset + 1,
                         line,
                         kind,
-                        role(&package, &effective_target, &rel, test_member),
+                        role(repo, &package, &effective_target, &rel, test_member),
                         test_member,
                         provider,
                         evidence,
@@ -309,7 +331,7 @@ fn scan_file(
                         offset + 1,
                         line,
                         HostBindingKind::Call,
-                        role(&package, &effective_target, &rel, test_member),
+                        role(repo, &package, &effective_target, &rel, test_member),
                         test_member,
                         provider,
                         "resolved aliased or re-exported host call",
@@ -533,7 +555,14 @@ fn push_fact(
     evidence: &str,
 ) {
     let move_name = normalization(kind, provider);
-    let phase = owner_phase(kind, provider);
+    let phase = if matches!(
+        role,
+        HostSourceRole::Tool | HostSourceRole::Test | HostSourceRole::Capsule
+    ) {
+        "resolved"
+    } else {
+        owner_phase(kind, provider)
+    };
     let identity = format!("{repo}\0{file}\0{line}\0{}\0{source}", kind.as_str());
     let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
     out.push(Fact {
@@ -554,10 +583,15 @@ fn push_fact(
     });
 }
 
-fn role(package: &str, target: &str, file: &str, test: bool) -> HostSourceRole {
+fn role(repo: &str, package: &str, target: &str, file: &str, test: bool) -> HostSourceRole {
     if test {
         HostSourceRole::Test
-    } else if target == "build" || package == "xtask" || file.starts_with("bin/") {
+    } else if repo == "sim-tooling"
+        || target == "build"
+        || package == "xtask"
+        || file.starts_with("bin/")
+        || file.starts_with("xtask/")
+    {
         HostSourceRole::Tool
     } else if package.contains("host") || package.contains("platform") {
         HostSourceRole::Capsule
@@ -565,6 +599,16 @@ fn role(package: &str, target: &str, file: &str, test: bool) -> HostSourceRole {
         HostSourceRole::Bootstrap
     } else {
         HostSourceRole::Debt
+    }
+}
+
+fn fact_class(role: &str) -> &'static str {
+    match role {
+        "tool" => "host-tool",
+        "capsule" => "platform-capsule",
+        "bootstrap" => "platform-bootstrap",
+        "test" => "test-evidence",
+        _ => "product-debt",
     }
 }
 fn package_name(rel: &str) -> String {
@@ -643,41 +687,5 @@ fn service(provider: &str) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn adversarial_roles_and_syntax_are_semantic() {
-        let mut facts = Vec::new();
-        scan_file(
-            "sim-x",
-            Path::new("."),
-            Path::new("crates/a/src/lib.rs"),
-            "rust",
-            "// std::fs::read is prose\nuse std::net as wire;\n#[cfg(any(test, feature = \"x\"))]\nmod nested { fn x(){ std::fs::read(\"a\"); } }\nextern \"C\" { fn read(); }\nfn call(){ std::process::Command::new(\"x\"); wire::TcpStream::connect(\"x\"); }",
-            &mut facts,
-        );
-        assert_eq!(facts.len(), 4);
-        assert!(
-            facts
-                .iter()
-                .any(|f| f.test_member && f.binding_kind == "call")
-        );
-        assert!(facts.iter().any(|f| f.binding_kind == "abi-declaration"));
-        assert!(facts.iter().any(|f| f.binding_kind == "subprocess"));
-        assert!(facts.iter().any(|f| f.evidence.contains("aliased")));
-    }
-    #[test]
-    fn foreign_alias_manifest_and_reexport_patterns_are_not_prose_hits() {
-        assert!(patterns("kotlin").iter().any(|row| row.0 == "java.io."));
-        assert!(
-            patterns("manifest")
-                .iter()
-                .any(|row| row.0 == "target.'cfg(")
-        );
-        assert!(
-            patterns("javascript")
-                .iter()
-                .any(|row| row.0.contains("require"))
-        );
-    }
-}
+#[path = "platform_inventory_tests.rs"]
+mod tests;

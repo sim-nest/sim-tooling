@@ -118,11 +118,11 @@ claims_specimens = [
 
 [[feature]]
 id = "feature/sim-tooling/benchmark-process-isolation"
-title = "Bounded benchmark process isolation"
-summary = "Execute benchmark workloads as exact argument vectors inside an executor-owned process tree with bounded termination, reaping, output, and time, explicit status, and observed requested-versus-achieved CPU-affinity evidence."
+title = "Portable bounded benchmark execution"
+summary = "Execute benchmark workloads as exact argument vectors with portable child termination, reaping, output, and time bounds, explicit status, and honest refusal of host-specific affinity or process-tree claims."
 owner = "crate/xtask"
 audiences = ["code", "framework"]
-guidance = "Use ProcessDeclaration and execute for process-backed workloads. On Unix, the executor contains the complete workload tree, including the affinity wrapper, and terminates then force-kills that group within bounded cleanup intervals before joining output readers. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample; never introduce shell interpolation or give adapters a recorded result to mutate. Treat achieved affinity as the observed child mask matching the request, independently of workload exit status."
+guidance = "Use ProcessDeclaration and execute for portable process-backed workloads. The executor directly spawns and bounds one child without shell interpolation or OS/HW selection. Affinity and complete process-tree containment require externally supplied platform-capsule evidence and are never guessed or obtained through a platform-specific fallback in this host tool. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample."
 claims_anchors = [
   "anchor/rustdoc/xtask/bench/exec/cpu-affinity",
   "anchor/rustdoc/xtask/bench/exec/execute",
@@ -137,6 +137,21 @@ claims_specimens = [
 ]
 composes = [
   "feature/sim-tooling/benchmark-sampling",
+]
+
+[[feature]]
+id = "feature/sim-tooling/host-tool-boundary"
+title = "Portable host-tool boundary"
+summary = "Classify sim-tooling as a structurally isolated host tool, render host-tool facts separately from platform-capsule facts, and reject host-tool reachability from product targets."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use platform-inventory and simctl platform check for the one semantic host-fact graph. Host tools may use portable checkout, filesystem, environment, and direct-process constructions, but must not select an OS, hardware target, capsule, or platform-specific fallback, and no product target may depend on them."
+claims_anchors = [
+  "anchor/bin/xtask",
+  "anchor/cli/xtask",
+]
+supports = [
+  "feature/sim-index/core",
 ]
 
 [[feature]]
