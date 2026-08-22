@@ -148,7 +148,6 @@ audiences = ["code", "framework"]
 guidance = "Use platform-inventory and simctl platform check for the one semantic host-fact graph. Host tools may use portable checkout, filesystem, environment, and direct-process constructions, but must not select an OS, hardware target, capsule, or platform-specific fallback, and no product target may depend on them."
 claims_anchors = [
   "anchor/bin/xtask",
-  "anchor/cli/xtask",
 ]
 supports = [
   "feature/sim-index/core",

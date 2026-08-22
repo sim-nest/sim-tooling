@@ -1,4 +1,4 @@
-//! Semantic discovery of host bindings for the platform migration ratchet.
+//! Semantic discovery and permanent enforcement of the platform membrane.
 
 use std::{
     collections::BTreeMap,
@@ -8,8 +8,6 @@ use std::{
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-
-const CALIBRATION_FILES: i64 = 402;
 
 // Kept private: the public interchange vocabulary is owned by sim-index-core;
 // this scanner emits its stable labels and does not expose a parallel API.
@@ -36,20 +34,20 @@ impl HostBindingKind {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HostSourceRole {
+    Pure,
     Capsule,
     Bootstrap,
     Tool,
     Test,
-    Debt,
 }
 impl HostSourceRole {
     fn as_str(self) -> &'static str {
         match self {
+            Self::Pure => "pure",
             Self::Capsule => "capsule",
             Self::Bootstrap => "bootstrap",
             Self::Tool => "tool",
             Self::Test => "test",
-            Self::Debt => "debt",
         }
     }
 }
@@ -58,12 +56,10 @@ impl HostSourceRole {
 struct Ledger {
     schema: &'static str,
     generated_by: &'static str,
-    calibration_files: i64,
     semantic_files: usize,
-    calibration_delta: i64,
     totals: BTreeMap<&'static str, usize>,
     structural_totals: BTreeMap<&'static str, usize>,
-    product_violations: Vec<String>,
+    membrane_violations: Vec<String>,
     facts: Vec<Fact>,
     index_facts: Vec<IndexFact>,
 }
@@ -94,7 +90,6 @@ struct IndexFact {
     provider: String,
     service: String,
     evidence: String,
-    debt: String,
     fact_class: &'static str,
     product_reachable: bool,
 }
@@ -171,7 +166,7 @@ fn scan(repos: &[(String, PathBuf)]) -> Result<Ledger, String> {
     for fact in &facts {
         *structural_totals.entry(fact_class(fact.role)).or_insert(0) += 1;
     }
-    let product_violations = Vec::new();
+    let membrane_violations = validate_membrane(&facts);
     let index_facts = facts
         .iter()
         .map(|fact| IndexFact {
@@ -181,24 +176,17 @@ fn scan(repos: &[(String, PathBuf)]) -> Result<Ledger, String> {
             provider: fact.provider.clone(),
             service: service(&fact.provider).to_owned(),
             evidence: fact.evidence.clone(),
-            debt: if fact.role == "debt" {
-                fact.owner_phase.to_owned()
-            } else {
-                String::new()
-            },
             fact_class: fact_class(fact.role),
-            product_reachable: fact.role == "debt",
+            product_reachable: false,
         })
         .collect();
     Ok(Ledger {
-        schema: "sim.host-debt/v1",
-        generated_by: "sim-tooling platform-inventory v1",
-        calibration_files: CALIBRATION_FILES,
+        schema: "sim.platform-membrane/v1",
+        generated_by: "sim-tooling platform-inventory v2",
         semantic_files,
-        calibration_delta: semantic_files as i64 - CALIBRATION_FILES,
         totals,
         structural_totals,
-        product_violations,
+        membrane_violations,
         facts,
         index_facts,
     })
@@ -598,7 +586,7 @@ fn role(repo: &str, package: &str, target: &str, file: &str, test: bool) -> Host
     } else if package == "sim-run" {
         HostSourceRole::Bootstrap
     } else {
-        HostSourceRole::Debt
+        HostSourceRole::Pure
     }
 }
 
@@ -608,8 +596,27 @@ fn fact_class(role: &str) -> &'static str {
         "capsule" => "platform-capsule",
         "bootstrap" => "platform-bootstrap",
         "test" => "test-evidence",
-        _ => "product-debt",
+        "pure" => "pure-source",
+        _ => unreachable!("host source roles are closed"),
     }
+}
+
+fn validate_membrane(facts: &[Fact]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for fact in facts {
+        if fact.target.is_empty() || fact.package.is_empty() || fact.provider.is_empty() {
+            violations.push(format!("unclassified host fact {}", fact.span_digest));
+        }
+        if fact.repository == "sim-tooling" && fact.role != "tool" && !fact.test_member {
+            violations.push(format!(
+                "sim-tooling fact escaped host-tool isolation: {}",
+                fact.file
+            ));
+        }
+    }
+    violations.sort();
+    violations.dedup();
+    violations
 }
 fn package_name(rel: &str) -> String {
     rel.split('/')

@@ -53,3 +53,35 @@ fn tooling_facts_are_distinct_and_never_product_reachable() {
     assert_eq!(facts[0].owner_phase, "resolved");
     assert_eq!(fact_class(facts[0].role), "host-tool");
 }
+
+#[test]
+fn permanent_vocabulary_has_no_migration_role_or_open_binding_kind() {
+    for role in [
+        HostSourceRole::Pure,
+        HostSourceRole::Capsule,
+        HostSourceRole::Bootstrap,
+        HostSourceRole::Tool,
+        HostSourceRole::Test,
+    ] {
+        assert_ne!(role.as_str(), "debt");
+    }
+    assert_eq!(
+        [
+            HostBindingKind::Call,
+            HostBindingKind::Dependency,
+            HostBindingKind::AbiDeclaration,
+            HostBindingKind::ForeignImplementation,
+            HostBindingKind::ArtifactImport,
+            HostBindingKind::Subprocess,
+        ]
+        .map(HostBindingKind::as_str),
+        [
+            "call",
+            "dependency",
+            "abi-declaration",
+            "foreign-implementation",
+            "artifact-import",
+            "subprocess",
+        ]
+    );
+}
