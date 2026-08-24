@@ -8,7 +8,7 @@ use crate::{
 };
 use sha2::{Digest, Sha256};
 use sim_codec_index_vault::{
-    VaultBundle, VaultEncoder, VaultVerification, resolve_profile, verify_v2,
+    VaultBundle, VaultEncoder, VaultVerification, legacy_projection_v1, resolve_profile, verify_v2,
 };
 use sim_index_core::IndexRow;
 use sim_index_vault_core::{VaultGranularity, VaultProjection};
@@ -217,7 +217,16 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
         }
         ExportMode::Write => {
             if let Some(legacy) = &options.migrate_profile {
-                namespace.migrate_v1(legacy, &seed, &artifacts)?
+                let legacy_projection = legacy_projection_v1(&doc, options.granularity)
+                    .map_err(|error| format!("build declared legacy projection: {error}"))?;
+                namespace.migrate_v1(
+                    legacy,
+                    &seed,
+                    &artifacts,
+                    &legacy_projection,
+                    &bundle,
+                    &projection,
+                )?
             } else {
                 let diff = namespace.diff(&seed, &artifacts)?;
                 if diff.changed_artifacts != 0 {

@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
-use sim_codec_index_vault::VaultBundle;
+use sim_codec_index_vault::{
+    LegacyVaultBundle, LegacyVaultEntry, VaultBundle, resolve_legacy_profile, verify_legacy_v1,
+    verify_v2,
+};
+use sim_index_vault_core::VaultProjection;
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
@@ -31,11 +35,59 @@ impl ManagedNamespace {
         legacy_profile: &str,
         seed: &VaultManifestSeed,
         artifacts: &ArtifactSet,
+        legacy_projection: &VaultProjection,
+        expected_bundle: &VaultBundle,
+        expected_projection: &VaultProjection,
+    ) -> Result<NamespaceDiff, String> {
+        self.migrate_v1_inner(
+            legacy_profile,
+            seed,
+            artifacts,
+            legacy_projection,
+            expected_bundle,
+            expected_projection,
+            MigrationFault::None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn migrate_v1_with_fault(
+        &self,
+        legacy_profile: &str,
+        seed: &VaultManifestSeed,
+        artifacts: &ArtifactSet,
+        legacy_projection: &VaultProjection,
+        expected_bundle: &VaultBundle,
+        expected_projection: &VaultProjection,
+        fault: MigrationFault,
+    ) -> Result<NamespaceDiff, String> {
+        self.migrate_v1_inner(
+            legacy_profile,
+            seed,
+            artifacts,
+            legacy_projection,
+            expected_bundle,
+            expected_projection,
+            fault,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn migrate_v1_inner(
+        &self,
+        legacy_profile: &str,
+        seed: &VaultManifestSeed,
+        artifacts: &ArtifactSet,
+        legacy_projection: &VaultProjection,
+        expected_bundle: &VaultBundle,
+        expected_projection: &VaultProjection,
+        fault: MigrationFault,
     ) -> Result<NamespaceDiff, String> {
         ensure_vault_root(&self.vault_root)?;
         ensure_namespace_ancestors(&self.vault_root, &self.namespace)?;
         reject_interrupted_path("stage", &self.stage)?;
         reject_interrupted_path("recovery", &self.recovery)?;
+        migration_fail(fault, MigrationFault::BeforeManifestRead)?;
         let manifest_path = self.target.join(MANIFEST_FILE);
         let bytes = read_manifest_bytes(&manifest_path)?.ok_or_else(|| {
             format!(
@@ -43,6 +95,7 @@ impl ManagedNamespace {
                 manifest_path.display()
             )
         })?;
+        migration_fail(fault, MigrationFault::AfterManifestRead)?;
         if VaultManifest::from_bytes(&bytes).is_ok() {
             let expected = self.expected_manifest(seed, artifacts);
             let current = self.inspect_current(&expected)?;
@@ -71,11 +124,63 @@ impl ManagedNamespace {
                 legacy.profile
             ));
         }
+        if legacy.index_digest != seed.index_digest {
+            return Err(format!(
+                "v1 source graph digest is `{}`, selected source graph is `{}`",
+                legacy.index_digest, seed.index_digest
+            ));
+        }
         let files = collect_file_digests(&self.target)?;
         validate_owned_files_v1(&legacy, &files)?;
+        migration_fail(fault, MigrationFault::AfterSourceValidation)?;
+        let profile = resolve_legacy_profile(legacy_profile)
+            .map_err(|error| format!("resolve decode-only v1 profile: {error}"))?;
+        let granularity = match legacy.granularity.as_str() {
+            "compact" => sim_index_vault_core::VaultGranularity::Compact,
+            "full" => sim_index_vault_core::VaultGranularity::Full,
+            other => return Err(format!("unsupported v1 granularity `{other}`")),
+        };
+        if granularity != expected_projection.granularity() {
+            return Err(format!(
+                "v1 granularity `{}` disagrees with selected v2 target `{}`",
+                legacy.granularity, seed.granularity
+            ));
+        }
+        let legacy_bundle = LegacyVaultBundle {
+            profile,
+            granularity,
+            entries: legacy
+                .artifacts
+                .keys()
+                .map(|path| {
+                    fs::read(self.target.join(path))
+                        .map(|bytes| LegacyVaultEntry {
+                            path: path.clone(),
+                            bytes,
+                        })
+                        .map_err(|error| format!("read v1 managed artifact `{path}`: {error}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        verify_legacy_v1(&legacy_bundle, legacy_projection)
+            .map_err(|error| format!("v1 semantic verification failed: {error}"))?;
+        migration_fail(fault, MigrationFault::AfterLegacyVerify)?;
         let snapshot_manifest = sha256_digest(&bytes);
         let expected = self.expected_manifest(seed, artifacts);
+        migration_fail(fault, MigrationFault::BeforeStageWrite)?;
         write_stage(&self.stage, artifacts, &expected)?;
+        migration_fail(fault, MigrationFault::AfterStageWrite)?;
+        let staged_bundle = bundle_from_root(&self.stage, expected_bundle)?;
+        let staged = verify_v2(&staged_bundle, expected_projection, 64, 1024)
+            .map_err(|error| format!("verify staged v2 semantics: {error}"))?;
+        if !staged.is_success() {
+            let _ = fs::remove_dir_all(&self.stage);
+            return Err(format!(
+                "staged v2 semantic verification found {} mismatch(es)",
+                staged.total_mismatches
+            ));
+        }
+        migration_fail(fault, MigrationFault::AfterStageVerify)?;
         // Re-read every source byte after staging. A concurrent edit invalidates the transaction.
         let current_bytes = read_manifest_bytes(&manifest_path)?
             .ok_or("v1 manifest disappeared during migration")?;
@@ -86,27 +191,35 @@ impl ManagedNamespace {
                 "managed v1 namespace changed during migration; source bytes were preserved".into(),
             );
         }
+        migration_fail(fault, MigrationFault::BeforeRecoveryRename)?;
         fs::rename(&self.target, &self.recovery).map_err(|e| {
             format!(
                 "move v1 namespace to recovery {}: {e}",
                 self.recovery.display()
             )
         })?;
+        migration_fail(fault, MigrationFault::AfterRecoveryRename)?;
+        migration_fail(fault, MigrationFault::BeforeLiveRename)?;
         if let Err(err) = fs::rename(&self.stage, &self.target) {
             let _ = fs::rename(&self.recovery, &self.target);
             return Err(format!("install staged v2 namespace: {err}"));
         }
+        migration_fail(fault, MigrationFault::AfterLiveRename)?;
+        migration_fail(fault, MigrationFault::BeforeManifestReadback)?;
         if let Err(err) = verify_written_namespace(&self.target, &expected) {
             let _ = fs::rename(&self.target, &self.stage);
             let _ = fs::rename(&self.recovery, &self.target);
             return Err(format!("verify installed v2 namespace: {err}"));
         }
+        migration_fail(fault, MigrationFault::AfterManifestReadback)?;
+        migration_fail(fault, MigrationFault::BeforeRecoveryCleanup)?;
         fs::remove_dir_all(&self.recovery).map_err(|e| {
             format!(
                 "v2 installed but recovery cleanup requires attention at {}: {e}",
                 self.recovery.display()
             )
         })?;
+        migration_fail(fault, MigrationFault::AfterRecoveryCleanup)?;
         Ok(NamespaceDiff {
             namespace: self.namespace_text.clone(),
             changed_artifacts: artifacts.iter().count(),
@@ -345,6 +458,43 @@ impl ManagedNamespace {
             },
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MigrationFault {
+    None,
+    BeforeManifestRead,
+    AfterManifestRead,
+    AfterSourceValidation,
+    AfterLegacyVerify,
+    BeforeStageWrite,
+    AfterStageWrite,
+    AfterStageVerify,
+    BeforeRecoveryRename,
+    AfterRecoveryRename,
+    BeforeLiveRename,
+    AfterLiveRename,
+    BeforeManifestReadback,
+    AfterManifestReadback,
+    BeforeRecoveryCleanup,
+    AfterRecoveryCleanup,
+}
+
+fn migration_fail(actual: MigrationFault, point: MigrationFault) -> Result<(), String> {
+    if actual == point {
+        return Err(format!("injected migration failpoint: {point:?}"));
+    }
+    Ok(())
+}
+
+fn bundle_from_root(root: &Path, expected: &VaultBundle) -> Result<VaultBundle, String> {
+    let mut bundle = expected.clone();
+    for entry in &mut bundle.entries {
+        entry.bytes = fs::read(root.join(&entry.path))
+            .map_err(|error| format!("read staged vault artifact `{}`: {error}", entry.path))?;
+    }
+    crate::index_vault::refresh_bundle_digests(&mut bundle);
+    Ok(bundle)
 }
 
 fn validate_owned_files_v1(

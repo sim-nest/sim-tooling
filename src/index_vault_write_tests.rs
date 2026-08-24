@@ -7,9 +7,12 @@ use std::{
 
 use crate::{
     generated_artifact::{ArtifactSet, GeneratedArtifact},
-    generated_namespace::ManagedNamespace,
+    generated_namespace::{ManagedNamespace, MigrationFault},
     index_vault_manifest::{MANIFEST_FILE, VaultManifest, VaultManifestSeed, sha256_digest},
 };
+use sim_codec_index_vault::{VaultEncoder, legacy_projection_v1, resolve_profile};
+use sim_index_core::IndexDoc;
+use sim_index_vault_core::{VaultGranularity, VaultProjection};
 
 // conformance: managed vault namespaces reject unsafe state before replacing generated notes.
 
@@ -275,8 +278,9 @@ fn v1_requires_explicit_migration_and_migration_is_idempotent() {
     let root = TempRoot::new("v1-migration");
     let target = root.path().join("SIM-Index");
     fs::create_dir(&target).unwrap();
-    fs::write(target.join("README.md"), b"legacy\n").unwrap();
-    let digest = sha256_digest(b"legacy\n");
+    let legacy_readme = b"---\nsim_profile: \"portable-markdown-v1\"\ngranularity: \"compact\"\nschema: \"sim.index/v1\"\ngenerated-by: \"fixture\"\n---\n\n# SIM Index Vault\n\n## Navigation\n";
+    fs::write(target.join("README.md"), legacy_readme).unwrap();
+    let digest = sha256_digest(legacy_readme);
     let manifest = serde_json::json!({
         "schema": "sim.index-vault-manifest.v1",
         "namespace": "SIM-Index",
@@ -292,7 +296,20 @@ fn v1_requires_explicit_migration_and_migration_is_idempotent() {
     )
     .unwrap();
     let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
-    let next = artifacts(&[("README.md", "current\n")]);
+    let doc = IndexDoc::public("migration-fixture");
+    let projection = VaultProjection::from_complete(&doc, VaultGranularity::Compact).unwrap();
+    let legacy_projection = legacy_projection_v1(&doc, VaultGranularity::Compact).unwrap();
+    let bundle = VaultEncoder::new(resolve_profile("portable-markdown-v2").unwrap())
+        .encode(&projection)
+        .unwrap();
+    let next = ArtifactSet::new(
+        bundle
+            .entries
+            .iter()
+            .map(|entry| GeneratedArtifact::new(&entry.path, entry.bytes.clone()).unwrap())
+            .collect(),
+    )
+    .unwrap();
     assert_contains(
         namespace
             .diff(&seed("portable-markdown-v2"), &next)
@@ -300,12 +317,24 @@ fn v1_requires_explicit_migration_and_migration_is_idempotent() {
         "--migrate-profile",
     );
     let changed = namespace
-        .migrate_v1("portable-markdown-v1", &seed("portable-markdown-v2"), &next)
+        .migrate_v1(
+            "portable-markdown-v1",
+            &seed("portable-markdown-v2"),
+            &next,
+            &legacy_projection,
+            &bundle,
+            &projection,
+        )
         .unwrap();
     assert_eq!(changed.changed_artifacts, 1);
     assert_eq!(
-        fs::read_to_string(target.join("README.md")).unwrap(),
-        "current\n"
+        fs::read(target.join("README.md")).unwrap(),
+        bundle
+            .entries
+            .iter()
+            .find(|entry| entry.path == "README.md")
+            .unwrap()
+            .bytes
     );
     assert!(
         fs::read_to_string(target.join(MANIFEST_FILE))
@@ -313,10 +342,108 @@ fn v1_requires_explicit_migration_and_migration_is_idempotent() {
             .contains("manifest.v2")
     );
     let again = namespace
-        .migrate_v1("portable-markdown-v1", &seed("portable-markdown-v2"), &next)
+        .migrate_v1(
+            "portable-markdown-v1",
+            &seed("portable-markdown-v2"),
+            &next,
+            &legacy_projection,
+            &bundle,
+            &projection,
+        )
         .unwrap();
     assert_eq!(again.changed_artifacts, 0);
     assert_eq!(root_entries(root.path()), vec!["SIM-Index"]);
+}
+
+#[test]
+fn every_migration_failpoint_reopens_to_a_classified_state() {
+    let points = [
+        MigrationFault::BeforeManifestRead,
+        MigrationFault::AfterManifestRead,
+        MigrationFault::AfterSourceValidation,
+        MigrationFault::AfterLegacyVerify,
+        MigrationFault::BeforeStageWrite,
+        MigrationFault::AfterStageWrite,
+        MigrationFault::AfterStageVerify,
+        MigrationFault::BeforeRecoveryRename,
+        MigrationFault::AfterRecoveryRename,
+        MigrationFault::BeforeLiveRename,
+        MigrationFault::AfterLiveRename,
+        MigrationFault::BeforeManifestReadback,
+        MigrationFault::AfterManifestReadback,
+        MigrationFault::BeforeRecoveryCleanup,
+        MigrationFault::AfterRecoveryCleanup,
+    ];
+    for point in points {
+        let (root, next, legacy_projection, bundle, projection) = legacy_migration_fixture();
+        fs::write(root.path().join("User.md"), b"sibling\n").unwrap();
+        let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+        let error = namespace
+            .migrate_v1_with_fault(
+                "portable-markdown-v1",
+                &seed("portable-markdown-v2"),
+                &next,
+                &legacy_projection,
+                &bundle,
+                &projection,
+                point,
+            )
+            .unwrap_err();
+        assert_contains(error, "failpoint");
+        assert_eq!(fs::read(root.path().join("User.md")).unwrap(), b"sibling\n");
+        let live = root.path().join("SIM-Index");
+        let stage = root.path().join(".SIM-Index.sim-stage");
+        let recovery = root.path().join(".SIM-Index.sim-recovery");
+        assert!(
+            (live.exists() && !recovery.exists())
+                || (!live.exists() && stage.exists() && recovery.exists())
+                || (live.exists() && recovery.exists()),
+            "unclassified migration state at {point:?}"
+        );
+    }
+}
+
+fn legacy_migration_fixture() -> (
+    TempRoot,
+    ArtifactSet,
+    VaultProjection,
+    sim_codec_index_vault::VaultBundle,
+    VaultProjection,
+) {
+    let root = TempRoot::new("migration-failpoint");
+    let target = root.path().join("SIM-Index");
+    fs::create_dir(&target).unwrap();
+    let legacy_readme = b"---\nsim_profile: \"portable-markdown-v1\"\ngranularity: \"compact\"\nschema: \"sim.index/v1\"\ngenerated-by: \"fixture\"\n---\n\n# SIM Index Vault\n\n## Navigation\n";
+    fs::write(target.join("README.md"), legacy_readme).unwrap();
+    let manifest = serde_json::json!({
+        "schema": "sim.index-vault-manifest.v1",
+        "namespace": "SIM-Index",
+        "profile": "portable-markdown-v1",
+        "granularity": "compact",
+        "index_digest": "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
+        "coverage": {},
+        "artifacts": {"README.md": sha256_digest(legacy_readme)},
+    });
+    fs::write(
+        target.join(MANIFEST_FILE),
+        format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
+    )
+    .unwrap();
+    let doc = IndexDoc::public("migration-fixture");
+    let projection = VaultProjection::from_complete(&doc, VaultGranularity::Compact).unwrap();
+    let legacy_projection = legacy_projection_v1(&doc, VaultGranularity::Compact).unwrap();
+    let bundle = VaultEncoder::new(resolve_profile("portable-markdown-v2").unwrap())
+        .encode(&projection)
+        .unwrap();
+    let next = ArtifactSet::new(
+        bundle
+            .entries
+            .iter()
+            .map(|entry| GeneratedArtifact::new(&entry.path, entry.bytes.clone()).unwrap())
+            .collect(),
+    )
+    .unwrap();
+    (root, next, legacy_projection, bundle, projection)
 }
 
 #[cfg(unix)]
