@@ -31,6 +31,7 @@ pub(crate) struct IndexExportOptions {
     pub(crate) namespace: PathBuf,
     pub(crate) granularity: VaultGranularity,
     pub(crate) mode: ExportMode,
+    pub(crate) migrate_profile: Option<String>,
 }
 
 impl IndexExportOptions {
@@ -41,13 +42,23 @@ impl IndexExportOptions {
         {
             return Err(usage(program));
         }
-        let (mut input, mut profile, mut vault_root, mut namespace, mut granularity, mut mode) =
-            (None, None, None, None, None, None);
+        let (
+            mut input,
+            mut profile,
+            mut vault_root,
+            mut namespace,
+            mut granularity,
+            mut mode,
+            mut migrate_profile,
+        ) = (None, None, None, None, None, None, None);
         let mut i = 3;
         while i < args.len() {
             match args[i].as_str() {
                 "--input" => set_once_path(&mut input, args, &mut i, "--input")?,
                 "--profile" => set_once_string(&mut profile, args, &mut i, "--profile")?,
+                "--migrate-profile" => {
+                    set_once_string(&mut migrate_profile, args, &mut i, "--migrate-profile")?
+                }
                 "--vault-root" => set_once_path(&mut vault_root, args, &mut i, "--vault-root")?,
                 "--namespace" => set_once_path(&mut namespace, args, &mut i, "--namespace")?,
                 "--granularity" => {
@@ -82,6 +93,7 @@ impl IndexExportOptions {
             namespace: namespace.unwrap_or_else(|| PathBuf::from("SIM-Index")),
             granularity: granularity.unwrap_or(VaultGranularity::Compact),
             mode: mode.unwrap_or(ExportMode::Write),
+            migrate_profile,
         })
     }
 }
@@ -152,6 +164,9 @@ impl IndexExportReport {
 }
 
 pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, String> {
+    if options.migrate_profile.is_some() && options.mode != ExportMode::Write {
+        return Err("--migrate-profile conflicts with --plan, --verify, and --check".into());
+    }
     let input_bytes =
         fs::read(&options.input).map_err(|e| format!("read {}: {e}", options.input.display()))?;
     let doc = load_doc(&options.input)?; // sim-codec-index is the sole index.sx decoder.
@@ -159,6 +174,9 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
         .map_err(|e| format!("project complete Index: {e}"))?;
     let profile =
         resolve_profile(&options.profile).map_err(|e| format!("resolve vault profile: {e}"))?;
+    if let Some(legacy) = &options.migrate_profile {
+        validate_migration_pair(legacy, profile.id.as_str())?;
+    }
     let bundle = VaultEncoder::new(profile)
         .encode(&projection)
         .map_err(|e| format!("encode vault bundle: {e}"))?;
@@ -169,6 +187,8 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
         granularity_label(options.granularity),
         sha256_digest(&input_bytes),
         manifest_coverage(&bundle, &family_counts),
+        content_text(&bundle.projection_digest),
+        content_text(&bundle.bundle_root),
     )?;
     let namespace = ManagedNamespace::open(options.vault_root, options.namespace)?;
     let plan = namespace.plan(&seed, &artifacts);
@@ -196,11 +216,15 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
             diff
         }
         ExportMode::Write => {
-            let diff = namespace.diff(&seed, &artifacts)?;
-            if diff.changed_artifacts != 0 {
-                namespace.preflight(&seed, &artifacts)?.commit()?;
+            if let Some(legacy) = &options.migrate_profile {
+                namespace.migrate_v1(legacy, &seed, &artifacts)?
+            } else {
+                let diff = namespace.diff(&seed, &artifacts)?;
+                if diff.changed_artifacts != 0 {
+                    namespace.preflight(&seed, &artifacts)?.commit()?;
+                }
+                diff
             }
-            diff
         }
     };
     let verified = verification
@@ -375,8 +399,24 @@ fn parse_granularity(v: &str) -> Result<VaultGranularity, String> {
 }
 fn usage(p: &str) -> String {
     format!(
-        "usage: {p} index export --input <index.sx> --profile <profile> --vault-root <dir> [--namespace <relative-path>] [--granularity compact|full] [--plan|--verify|--check]"
+        "usage: {p} index export --input <index.sx> --profile <v2-profile> --vault-root <dir> [--namespace <relative-path>] [--granularity compact|full] [--migrate-profile <exact-v1-profile>|--plan|--verify|--check]"
     )
+}
+
+fn validate_migration_pair(v1: &str, v2: &str) -> Result<(), String> {
+    let expected = match v1 {
+        "portable-markdown-v1" => "portable-markdown-v2",
+        "obsidian-markdown-v1" => "obsidian-markdown-v2",
+        "seqlog-markdown-v1" => "seqlog-markdown-v2",
+        "logseq-file-v1" => "logseq-file-v2",
+        _ => return Err(format!("unsupported decode-only v1 profile `{v1}`")),
+    };
+    if v2 != expected {
+        return Err(format!(
+            "cross-family migration `{v1}` -> `{v2}` is forbidden; expected `{expected}`"
+        ));
+    }
+    Ok(())
 }
 
 // Ownership guard: tooling may dispatch over public rows, but never enumerate IndexDoc fields.

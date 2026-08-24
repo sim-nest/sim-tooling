@@ -10,7 +10,9 @@ use std::{
 
 use crate::{
     generated_artifact::{ArtifactSet, GeneratedArtifact},
-    index_vault_manifest::{MANIFEST_FILE, VaultManifest, VaultManifestSeed, sha256_digest},
+    index_vault_manifest::{
+        LegacyVaultManifest, MANIFEST_FILE, VaultManifest, VaultManifestSeed, sha256_digest,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -24,6 +26,94 @@ pub(crate) struct ManagedNamespace {
 }
 
 impl ManagedNamespace {
+    pub(crate) fn migrate_v1(
+        &self,
+        legacy_profile: &str,
+        seed: &VaultManifestSeed,
+        artifacts: &ArtifactSet,
+    ) -> Result<NamespaceDiff, String> {
+        ensure_vault_root(&self.vault_root)?;
+        ensure_namespace_ancestors(&self.vault_root, &self.namespace)?;
+        reject_interrupted_path("stage", &self.stage)?;
+        reject_interrupted_path("recovery", &self.recovery)?;
+        let manifest_path = self.target.join(MANIFEST_FILE);
+        let bytes = read_manifest_bytes(&manifest_path)?.ok_or_else(|| {
+            format!(
+                "v1 migration requires ownership manifest at {}",
+                manifest_path.display()
+            )
+        })?;
+        if VaultManifest::from_bytes(&bytes).is_ok() {
+            let expected = self.expected_manifest(seed, artifacts);
+            let current = self.inspect_current(&expected)?;
+            let CurrentNamespace::Owned { manifest, .. } = current.current else {
+                unreachable!()
+            };
+            if manifest == expected {
+                return Ok(NamespaceDiff {
+                    namespace: self.namespace_text.clone(),
+                    changed_artifacts: 0,
+                    unchanged_artifacts: artifacts.iter().count(),
+                });
+            }
+            return Err("managed namespace is already v2 with a different target; migration is not a rewrite flag".into());
+        }
+        let legacy = LegacyVaultManifest::from_bytes(&bytes)?;
+        if legacy.namespace != self.namespace_text {
+            return Err(format!(
+                "v1 manifest namespace is `{}`, expected `{}`",
+                legacy.namespace, self.namespace_text
+            ));
+        }
+        if legacy.profile != legacy_profile {
+            return Err(format!(
+                "v1 manifest profile is `{}`, requested `{legacy_profile}`",
+                legacy.profile
+            ));
+        }
+        let files = collect_file_digests(&self.target)?;
+        validate_owned_files_v1(&legacy, &files)?;
+        let snapshot_manifest = sha256_digest(&bytes);
+        let expected = self.expected_manifest(seed, artifacts);
+        write_stage(&self.stage, artifacts, &expected)?;
+        // Re-read every source byte after staging. A concurrent edit invalidates the transaction.
+        let current_bytes = read_manifest_bytes(&manifest_path)?
+            .ok_or("v1 manifest disappeared during migration")?;
+        let current_files = collect_file_digests(&self.target)?;
+        if sha256_digest(&current_bytes) != snapshot_manifest || current_files != files {
+            let _ = fs::remove_dir_all(&self.stage);
+            return Err(
+                "managed v1 namespace changed during migration; source bytes were preserved".into(),
+            );
+        }
+        fs::rename(&self.target, &self.recovery).map_err(|e| {
+            format!(
+                "move v1 namespace to recovery {}: {e}",
+                self.recovery.display()
+            )
+        })?;
+        if let Err(err) = fs::rename(&self.stage, &self.target) {
+            let _ = fs::rename(&self.recovery, &self.target);
+            return Err(format!("install staged v2 namespace: {err}"));
+        }
+        if let Err(err) = verify_written_namespace(&self.target, &expected) {
+            let _ = fs::rename(&self.target, &self.stage);
+            let _ = fs::rename(&self.recovery, &self.target);
+            return Err(format!("verify installed v2 namespace: {err}"));
+        }
+        fs::remove_dir_all(&self.recovery).map_err(|e| {
+            format!(
+                "v2 installed but recovery cleanup requires attention at {}: {e}",
+                self.recovery.display()
+            )
+        })?;
+        Ok(NamespaceDiff {
+            namespace: self.namespace_text.clone(),
+            changed_artifacts: artifacts.iter().count(),
+            unchanged_artifacts: 0,
+        })
+    }
+
     /// Reads a caller-described bundle through the ownership-validated namespace.
     /// This is deliberately not a second namespace transaction.
     pub(crate) fn current_bundle(
@@ -255,6 +345,26 @@ impl ManagedNamespace {
             },
         })
     }
+}
+
+fn validate_owned_files_v1(
+    manifest: &LegacyVaultManifest,
+    files: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    for (path, digest) in &manifest.artifacts {
+        match files.get(path) {
+            Some(actual) if actual == digest => {}
+            Some(_) => return Err(format!("v1 managed artifact digest mismatch: `{path}`")),
+            None => return Err(format!("v1 managed artifact is missing: `{path}`")),
+        }
+    }
+    if let Some(path) = files
+        .keys()
+        .find(|path| !manifest.artifacts.contains_key(*path))
+    {
+        return Err(format!("v1 namespace contains unowned file `{path}`"));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

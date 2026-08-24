@@ -381,6 +381,7 @@ fn options(
         namespace: PathBuf::from("SIM-Index"),
         granularity,
         mode,
+        migrate_profile: None,
     }
 }
 

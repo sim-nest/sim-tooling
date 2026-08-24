@@ -8,7 +8,7 @@ use std::{
 use crate::{
     generated_artifact::{ArtifactSet, GeneratedArtifact},
     generated_namespace::ManagedNamespace,
-    index_vault_manifest::{MANIFEST_FILE, VaultManifest, VaultManifestSeed},
+    index_vault_manifest::{MANIFEST_FILE, VaultManifest, VaultManifestSeed, sha256_digest},
 };
 
 // conformance: managed vault namespaces reject unsafe state before replacing generated notes.
@@ -26,7 +26,7 @@ fn plan_rejects_traversal_and_does_not_write() {
     let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
     let before = root_entries(root.path());
     let plan = namespace.plan(
-        &seed("portable-markdown-v1"),
+        &seed("portable-markdown-v2"),
         &artifacts(&[("README.md", "hi\n")]),
     );
 
@@ -50,7 +50,7 @@ fn commit_writes_owned_namespace_and_preserves_siblings() {
     ]);
 
     namespace
-        .preflight(&seed("portable-markdown-v1"), &set)
+        .preflight(&seed("portable-markdown-v2"), &set)
         .unwrap()
         .commit()
         .unwrap();
@@ -69,10 +69,10 @@ fn commit_writes_owned_namespace_and_preserves_siblings() {
     );
     let manifest = read_manifest(root.path());
     assert_eq!(manifest.namespace, "SIM-Index");
-    assert_eq!(manifest.profile, "portable-markdown-v1");
+    assert_eq!(manifest.profile, "portable-markdown-v2");
     assert_eq!(manifest.artifacts.len(), 2);
     namespace
-        .check(&seed("portable-markdown-v1"), &set)
+        .check(&seed("portable-markdown-v2"), &set)
         .unwrap();
 }
 
@@ -85,7 +85,7 @@ fn preflight_refuses_unowned_wrong_profile_changed_missing_and_foreign_state() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -97,7 +97,7 @@ fn preflight_refuses_unowned_wrong_profile_changed_missing_and_foreign_state() {
     assert_contains(
         namespace
             .preflight(
-                &seed("obsidian-markdown-v1"),
+                &seed("obsidian-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -110,7 +110,7 @@ fn preflight_refuses_unowned_wrong_profile_changed_missing_and_foreign_state() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -123,7 +123,7 @@ fn preflight_refuses_unowned_wrong_profile_changed_missing_and_foreign_state() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -136,7 +136,7 @@ fn preflight_refuses_unowned_wrong_profile_changed_missing_and_foreign_state() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -152,7 +152,7 @@ fn check_reports_stale_without_writing() {
 
     assert_contains(
         namespace
-            .check(&seed("portable-markdown-v1"), &replacement)
+            .check(&seed("portable-markdown-v2"), &replacement)
             .unwrap_err(),
         "stale",
     );
@@ -168,7 +168,7 @@ fn concurrent_manifest_change_blocks_commit_before_writes() {
     let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
     let transaction = namespace
         .preflight(
-            &seed("portable-markdown-v1"),
+            &seed("portable-markdown-v2"),
             &artifacts(&[("README.md", "new\n")]),
         )
         .unwrap();
@@ -194,7 +194,7 @@ fn interrupted_stage_and_recovery_are_reported_without_cleanup() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -207,7 +207,7 @@ fn interrupted_stage_and_recovery_are_reported_without_cleanup() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -222,7 +222,7 @@ fn injected_rename_failure_keeps_stage_and_recovery() {
     let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
     let transaction = namespace
         .preflight(
-            &seed("portable-markdown-v1"),
+            &seed("portable-markdown-v2"),
             &artifacts(&[("README.md", "new\n")]),
         )
         .unwrap();
@@ -262,12 +262,61 @@ fn case_fold_collisions_are_rejected() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
         "case-fold collision",
     );
+}
+
+#[test]
+fn v1_requires_explicit_migration_and_migration_is_idempotent() {
+    let root = TempRoot::new("v1-migration");
+    let target = root.path().join("SIM-Index");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("README.md"), b"legacy\n").unwrap();
+    let digest = sha256_digest(b"legacy\n");
+    let manifest = serde_json::json!({
+        "schema": "sim.index-vault-manifest.v1",
+        "namespace": "SIM-Index",
+        "profile": "portable-markdown-v1",
+        "granularity": "compact",
+        "index_digest": "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
+        "coverage": {"features": 1},
+        "artifacts": {"README.md": digest},
+    });
+    fs::write(
+        target.join(MANIFEST_FILE),
+        format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
+    )
+    .unwrap();
+    let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
+    let next = artifacts(&[("README.md", "current\n")]);
+    assert_contains(
+        namespace
+            .diff(&seed("portable-markdown-v2"), &next)
+            .unwrap_err(),
+        "--migrate-profile",
+    );
+    let changed = namespace
+        .migrate_v1("portable-markdown-v1", &seed("portable-markdown-v2"), &next)
+        .unwrap();
+    assert_eq!(changed.changed_artifacts, 1);
+    assert_eq!(
+        fs::read_to_string(target.join("README.md")).unwrap(),
+        "current\n"
+    );
+    assert!(
+        fs::read_to_string(target.join(MANIFEST_FILE))
+            .unwrap()
+            .contains("manifest.v2")
+    );
+    let again = namespace
+        .migrate_v1("portable-markdown-v1", &seed("portable-markdown-v2"), &next)
+        .unwrap();
+    assert_eq!(again.changed_artifacts, 0);
+    assert_eq!(root_entries(root.path()), vec!["SIM-Index"]);
 }
 
 #[cfg(unix)]
@@ -288,7 +337,7 @@ fn symlink_escape_is_rejected() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -312,7 +361,7 @@ fn interrupted_broken_stage_symlink_is_reported_without_cleanup() {
     assert_contains(
         namespace
             .preflight(
-                &seed("portable-markdown-v1"),
+                &seed("portable-markdown-v2"),
                 &artifacts(&[("README.md", "new\n")]),
             )
             .unwrap_err(),
@@ -326,7 +375,7 @@ fn committed_root(name: &str, files: &[(&str, &str)]) -> TempRoot {
     let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
     let set = artifacts(files);
     namespace
-        .preflight(&seed("portable-markdown-v1"), &set)
+        .preflight(&seed("portable-markdown-v2"), &set)
         .unwrap()
         .commit()
         .unwrap();
@@ -353,6 +402,8 @@ fn seed(profile: &str) -> VaultManifestSeed {
             ("anchors".to_owned(), 2),
             ("features".to_owned(), 3),
         ]),
+        "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
+        "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
     )
     .unwrap()
 }
