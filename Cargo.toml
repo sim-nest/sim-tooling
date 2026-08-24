@@ -28,7 +28,7 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 sim-cookbook = "0.2.0"
 sim-codec-index = "0.2.0"
 sim-codec-json = "0.2.0"
@@ -37,8 +37,8 @@ sim-kernel = "0.2.0"
 sim-lib-net-core = "0.2.0"
 sim-lib-numbers-stats = "0.4.0"
 sim-table-core = "0.1.4"
-syn = { version = "2", features = ["fold", "full", "visit"] }
-toml = "0.8"
+syn = { version = "3", features = ["fold", "full", "visit"] }
+toml = "1.1"
 
 [lints]
 workspace = true
