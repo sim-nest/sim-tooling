@@ -110,6 +110,13 @@ Write mode updates only the managed namespace described by
 its manifest, refuses edited managed notes, and leaves sibling user notes and
 application configuration outside the namespace unchanged.
 
+The command is deliberately the final owner in a four-layer composition:
+`sim-index-core` supplies the canonical `IndexRowRef` inventory,
+`sim-index-vault-core` projects and certifies claims,
+`sim-codec-index-vault` composes the Markdown dialect and verifies bundles, and
+tooling loads, reports, migrates, and materializes artifacts. Decode never
+imports notes. Logseq support means its Markdown file graph, not its DB graph.
+
 ## Documentation Lanes
 
 `cargo run -p xtask -- simdoc` builds the public documentation lanes:

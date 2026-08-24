@@ -67,13 +67,15 @@ title = "SIM Index vault export"
 summary = "Load the public SIM Index, delegate complete vault projection and Markdown bundle encoding to their public owners, and materialize the resulting artifacts in one managed namespace."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row for the filesystem-facing export command: plan without reading a namespace, write through the single managed transaction, verify caller-owned bundle semantics without writing, or check ownership and bytes before semantic verification. Projection belongs to sim-index-vault-core and bundle encoding and verification belong to sim-codec-index-vault; tooling must not enumerate IndexDoc fields or regain profile and Markdown rendering tables."
+guidance = "Use this row only for filesystem-facing command behavior: canonical Index loading, artifact planning and reports, one managed materialization transaction, v1-to-v2 migration, verify without writing, and ownership/byte checks before semantic verification. Projection belongs to sim-index-vault-core and profile selection, bundle encoding, decoding, and semantic verification belong to sim-codec-index-vault; tooling must not enumerate IndexDoc fields or regain profile and Markdown rendering tables."
 claims_specimens = [
   "spec-test/sim-tooling/src/index_vault_tests",
   "spec-test/sim-tooling/src/index_vault_write_tests",
 ]
 supports = [
   "feature/sim-index/core",
+  "feature/sim-foundation/index-vault-projection",
+  "feature/sim-codecs/index-vault-codec",
   "feature/sim-tooling/generated-docs",
 ]
 
@@ -229,7 +231,9 @@ task = "Export the SIM Index to a Markdown vault"
 audiences = ["user", "code", "framework"]
 steps = [
   { feature = "feature/sim-index/core", why = "The SIM Index core row owns the public graph that the vault exporter consumes." },
-  { feature = "feature/sim-tooling/generated-docs", why = "The generated-doc row owns the generated documentation evidence that appears in the public Index." },
-  { feature = "feature/sim-index/vault-export", why = "The vault export row owns the profile selection, managed namespace, plan, write, and check behavior." },
-  { specimen = "spec-test/sim-tooling/src/index_vault_tests", why = "The checked end-to-end specimen proves all vault profiles export the fixture graph, preserve sibling notes, and verify managed namespaces." },
+  { feature = "feature/sim-foundation/index-vault-projection", why = "The projection row consumes the canonical inventory and proves every row has exactly one primary claim." },
+  { feature = "feature/sim-codecs/index-vault-codec", why = "The codec row owns document dialect composition, v2 bundles, v1 reading, and semantic verification." },
+  { feature = "feature/sim-index/vault-export", why = "The vault export row owns canonical loading, artifacts, reports, migration, and managed command behavior." },
+  { specimen = "spec-test/sim-codecs/crates/sim-codec-index-vault/tests/conformance", why = "The codec specimen proves all-profile round trips, semantic corruption rejection, and bounded v1 migration." },
+  { specimen = "spec-test/sim-tooling/src/index_vault_write_tests", why = "The checked materialization specimen proves managed writes preserve sibling notes and application configuration." },
 ]

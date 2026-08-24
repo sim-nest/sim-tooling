@@ -16,6 +16,9 @@ copying scripts from its neighbors.
 - Public docs and contract files are generated the same way in every repo.
 - Index evidence can be exported to portable, Obsidian, SeqLog, and Logseq
   Markdown vaults without creating a second public docs tree.
+- The exporter only loads, reports, migrates, and transactionally materializes;
+  canonical inventory, exact projection claims, and Markdown codec semantics
+  remain in their reusable owners. Decode verifies and never imports.
 - Repository checks catch drift before it reaches the front page.
 - Shared maintenance commands stay close to the crates they inspect.
 
