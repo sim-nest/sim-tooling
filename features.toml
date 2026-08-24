@@ -59,19 +59,18 @@ claims_surfaces = [
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_fixpoint_tests",
-  "spec-test/sim-tooling/src/index_vault_graph_tests",
-  "spec-test/sim-tooling/src/index_vault_profile_tests",
 ]
 
 [[feature]]
 id = "feature/sim-index/vault-export"
 title = "SIM Index vault export"
-summary = "Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles."
+summary = "Load the public SIM Index, delegate complete vault projection and Markdown bundle encoding to their public owners, and materialize the resulting artifacts in one managed namespace."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row when exporting Index evidence into a Markdown vault. Authors still add features, routes, and generated documentation through the generated-doc owner; this exporter consumes the checked public graph and writes only its managed namespace."
+guidance = "Use this row for the filesystem-facing export command: plan without reading a namespace, write through the single managed transaction, verify caller-owned bundle semantics without writing, or check ownership and bytes before semantic verification. Projection belongs to sim-index-vault-core and bundle encoding and verification belong to sim-codec-index-vault; tooling must not enumerate IndexDoc fields or regain profile and Markdown rendering tables."
 claims_specimens = [
   "spec-test/sim-tooling/src/index_vault_tests",
+  "spec-test/sim-tooling/src/index_vault_write_tests",
 ]
 supports = [
   "feature/sim-index/core",

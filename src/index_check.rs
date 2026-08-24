@@ -9,13 +9,11 @@ use sim_codec_index::{IndexCodec, IndexForm};
 #[cfg(test)]
 use sim_index_core::check_index_doc;
 use sim_index_core::{IndexDoc, check_index_fragment};
+use sim_index_vault_core::VaultProjection;
 
 use crate::{
     index_author,
     index_rules::{CoverageReport, Strictness, check_coverage_with_feature_audiences},
-    index_vault_graph::{VaultGranularity, VaultGraph},
-    index_vault_profile::check_vault_profile_contracts,
-    index_vault_render::check_all_vault_renders,
 };
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
@@ -105,21 +103,8 @@ pub(crate) fn index_check(
     let source = read_generated_fragment(repo)?;
     let doc = decode_fragment(repo, &source)?;
     check_index_fragment(&doc).map_err(|err| format!("invalid index fragment: {err}"))?;
-    let vault_graph =
-        VaultGraph::from_fragment(&doc).map_err(|err| format!("invalid vault graph: {err}"))?;
-    vault_graph
-        .check(VaultGranularity::Compact)
-        .map_err(|err| format!("invalid vault graph: {err}"))?;
-    check_vault_profile_contracts()
-        .map_err(|err| format!("invalid vault profile contract: {err}"))?;
-    check_all_vault_renders(&vault_graph)
-        .map_err(|err| format!("invalid vault render contract: {err}"))?;
-    let unrepresented = vault_graph.coverage.unrepresented_rows();
-    if unrepresented != 0 {
-        return Err(format!(
-            "invalid vault graph: {unrepresented} compact row(s) are not represented"
-        ));
-    }
+    VaultProjection::project_fragment(&doc)
+        .map_err(|err| format!("invalid vault fragment projection: {err}"))?;
     assert_fragment_fresh(repo, &source)?;
     let feature_audiences = index_author::feature_audiences(repo)?;
     let coverage = check_coverage_with_feature_audiences(&doc, strictness, &feature_audiences)?;
@@ -205,6 +190,7 @@ mod tests {
             schema: "sim.index".to_owned(),
             generated_by: "test".to_owned(),
             visibility: Visibility::Public,
+            source_units: Vec::new(),
             subjects: vec![SubjectRecord {
                 id: SubjectId::new("crate/demo"),
                 kind: "crate".to_owned(),

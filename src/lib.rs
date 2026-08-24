@@ -78,13 +78,7 @@ mod index_source;
 mod index_specimen_scan;
 mod index_surface_scan;
 mod index_vault;
-mod index_vault_graph;
-mod index_vault_graph_model;
-mod index_vault_link;
 mod index_vault_manifest;
-mod index_vault_profile;
-mod index_vault_render;
-mod index_vault_render_writer;
 mod json_render;
 mod platform_inventory;
 mod repo_contract;
@@ -96,12 +90,6 @@ mod simdoc_index;
 mod simdoc_rustdoc;
 mod validation_matrix;
 
-#[cfg(test)]
-mod index_vault_graph_tests;
-#[cfg(test)]
-mod index_vault_profile_tests;
-#[cfg(test)]
-mod index_vault_render_tests;
 #[cfg(test)]
 mod index_vault_tests;
 #[cfg(test)]

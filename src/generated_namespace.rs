@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use sim_codec_index_vault::VaultBundle;
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
@@ -23,6 +24,37 @@ pub(crate) struct ManagedNamespace {
 }
 
 impl ManagedNamespace {
+    /// Reads a caller-described bundle through the ownership-validated namespace.
+    /// This is deliberately not a second namespace transaction.
+    pub(crate) fn current_bundle(
+        &self,
+        seed: &VaultManifestSeed,
+        expected_bundle: &VaultBundle,
+    ) -> Result<VaultBundle, String> {
+        let expected_artifacts = ArtifactSet::new(
+            expected_bundle
+                .entries
+                .iter()
+                .map(|entry| GeneratedArtifact::new(&entry.path, entry.bytes.clone()))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        let expected = self.expected_manifest(seed, &expected_artifacts);
+        let inspection = self.inspect_current_inner(&expected, false, false)?;
+        if !matches!(inspection.current, CurrentNamespace::Owned { .. }) {
+            return Err(format!(
+                "managed namespace `{}` is missing generated artifacts",
+                self.namespace_text
+            ));
+        }
+        let mut current = expected_bundle.clone();
+        for entry in &mut current.entries {
+            entry.bytes = fs::read(self.target.join(&entry.path))
+                .map_err(|err| format!("read managed vault artifact {}: {err}", entry.path))?;
+        }
+        crate::index_vault::refresh_bundle_digests(&mut current);
+        Ok(current)
+    }
+
     pub(crate) fn open(
         vault_root: impl Into<PathBuf>,
         namespace: impl Into<PathBuf>,
@@ -167,13 +199,14 @@ impl ManagedNamespace {
     }
 
     fn inspect_current(&self, expected: &VaultManifest) -> Result<CurrentInspection, String> {
-        self.inspect_current_inner(expected, false)
+        self.inspect_current_inner(expected, false, true)
     }
 
     fn inspect_current_inner(
         &self,
         expected: &VaultManifest,
         allow_stage: bool,
+        validate_bytes: bool,
     ) -> Result<CurrentInspection, String> {
         ensure_vault_root(&self.vault_root)?;
         ensure_namespace_ancestors(&self.vault_root, &self.namespace)?;
@@ -209,7 +242,11 @@ impl ManagedNamespace {
         };
         let manifest = VaultManifest::from_bytes(&manifest_bytes)?;
         manifest.validate_owner(expected)?;
-        validate_owned_files(&manifest, &files)?;
+        if validate_bytes {
+            validate_owned_files(&manifest, &files)?;
+        } else {
+            validate_owned_paths(&manifest, &files)?;
+        }
         Ok(CurrentInspection {
             current: CurrentNamespace::Owned {
                 manifest_digest: sha256_digest(&manifest_bytes),
@@ -318,7 +355,7 @@ impl ManagedNamespace {
         allow_stage: bool,
     ) -> Result<(), String> {
         let current = self
-            .inspect_current_inner(expected, allow_stage)?
+            .inspect_current_inner(expected, allow_stage, true)?
             .current
             .snapshot();
         if &current != snapshot {
@@ -574,6 +611,25 @@ fn validate_owned_files(
             return Err(format!(
                 "managed file `{path}` was changed outside the exporter"
             ));
+        }
+    }
+    for path in files.keys() {
+        if !manifest.artifacts.contains_key(path) {
+            return Err(format!(
+                "foreign file `{path}` is inside the managed namespace"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_owned_paths(
+    manifest: &VaultManifest,
+    files: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    for path in manifest.artifacts.keys() {
+        if !files.contains_key(path) {
+            return Err(format!("managed file `{path}` is missing"));
         }
     }
     for path in files.keys() {

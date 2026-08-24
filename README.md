@@ -103,8 +103,10 @@ user-selected vault root. Profiles are `portable`, `obsidian`, `seqlog`, and
 
 The exporter consumes the checked public Index graph and writes one managed
 namespace for the selected profile. `--plan` prints the deterministic artifact
-summary without writing. `--check` proves an existing managed namespace matches
-the current graph. Write mode updates only the managed namespace described by
+summary without reading or writing the namespace. `--verify` semantically
+decodes a caller-owned existing bundle without writing. `--check` first proves
+ownership and byte currency, then performs the same semantic verification.
+Write mode updates only the managed namespace described by
 its manifest, refuses edited managed notes, and leaves sibling user notes and
 application configuration outside the namespace unchanged.
 

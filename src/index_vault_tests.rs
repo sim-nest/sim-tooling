@@ -5,16 +5,19 @@ use std::{
 };
 
 use sim_codec_index::{IndexCodec, IndexForm};
+use sim_codec_index_vault::{VaultEncoder, resolve_profile};
 use sim_index_core::{
     AnchorId, CanonicalFeatureKey, DiscoveredAnchor, DiscoveredSpecimen, DiscoveredSurface,
     FeatureDraft, FeatureId, FeatureRecord, GrammarContract, IndexDoc, IndexEdge, RouteId,
     RouteRecord, RouteStep, SpecimenId, SubjectId, SubjectRecord, SurfaceId, Visibility,
 };
+use sim_index_vault_core::VaultGranularity;
 use sim_kernel::EncodePosition;
 
 use crate::{
-    index_vault::{ExportMode, IndexExportOptions, export},
-    index_vault_graph::VaultGranularity,
+    index_vault::{
+        ExportMode, IndexExportOptions, export, refresh_bundle_digests, semantic_verify,
+    },
     index_vault_manifest::{MANIFEST_FILE, VaultManifest},
 };
 
@@ -158,6 +161,128 @@ fn all_profiles_export_checked_fixture_and_preserve_sibling_notes() {
         assert_eq!(check.changed_artifacts, 0);
         assert_eq!(check.unchanged_artifacts, write.artifact_count);
         assert_eq!(check.profile_id, write.profile_id);
+
+        let verify = export(options(
+            &input.path().join("index.sx"),
+            root.path(),
+            profile,
+            ExportMode::Verify,
+            VaultGranularity::Compact,
+        ))
+        .unwrap();
+        assert!(verify.verified);
+    }
+}
+
+#[test]
+fn verify_rejects_a_semantically_edited_caller_bundle() {
+    let projection = sim_index_vault_core::VaultProjection::from_complete(
+        &fixture_doc(Visibility::Public),
+        VaultGranularity::Compact,
+    )
+    .unwrap();
+    let mut bundle = VaultEncoder::new(resolve_profile("portable").unwrap())
+        .encode(&projection)
+        .unwrap();
+    let note = bundle
+        .entries
+        .iter_mut()
+        .find(|entry| entry.note_kind.is_some())
+        .unwrap();
+    note.bytes.extend_from_slice(b"\nsemantic edit\n");
+    refresh_bundle_digests(&mut bundle);
+    assert_contains(
+        semantic_verify(&bundle, &projection).unwrap_err(),
+        "verify vault semantics",
+    );
+}
+
+#[test]
+fn verify_mode_reads_owned_bytes_and_rejects_a_semantic_edit_without_writing() {
+    let input = encoded_fixture(Visibility::Public);
+    let root = TempRoot::new("verify-semantic-edit");
+    export(options(
+        &input.path().join("index.sx"),
+        root.path(),
+        "portable",
+        ExportMode::Write,
+        VaultGranularity::Compact,
+    ))
+    .unwrap();
+    let projection = sim_index_vault_core::VaultProjection::from_complete(
+        &fixture_doc(Visibility::Public),
+        VaultGranularity::Compact,
+    )
+    .unwrap();
+    let bundle = VaultEncoder::new(resolve_profile("portable").unwrap())
+        .encode(&projection)
+        .unwrap();
+    let note_path = bundle
+        .entries
+        .iter()
+        .find(|entry| entry.note_kind.is_some() && entry.path != "README.md")
+        .unwrap()
+        .path
+        .clone();
+    let note = root.path().join("SIM-Index").join(note_path);
+    let mut edited = fs::read(&note).unwrap();
+    edited.extend_from_slice(b"\nsemantic edit\n");
+    fs::write(&note, edited).unwrap();
+
+    let err = export(options(
+        &input.path().join("index.sx"),
+        root.path(),
+        "portable",
+        ExportMode::Verify,
+        VaultGranularity::Compact,
+    ))
+    .unwrap_err();
+    assert_contains(err, "verify vault semantics");
+    assert!(fs::read(&note).unwrap().ends_with(b"semantic edit\n"));
+}
+
+#[test]
+fn tooling_vault_ownership_guard_rejects_private_projection_owners() {
+    let adapter = include_str!("index_vault.rs");
+    for forbidden in [
+        "doc.subjects",
+        "doc.anchors",
+        "doc.surfaces",
+        "doc.specimens",
+        "doc.drafts",
+        "doc.features",
+        "doc.routes",
+        "doc.edges",
+        "struct RowCounts",
+        "struct VaultGraph",
+        "struct VaultRender",
+        "pulldown_cmark",
+        "markdown_parser",
+        "profile table",
+    ] {
+        assert!(
+            !adapter.contains(forbidden),
+            "tooling vault adapter regained forbidden owner `{forbidden}`"
+        );
+    }
+    assert_eq!(adapter.matches("ManagedNamespace::open").count(), 1);
+
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for legacy in [
+        "index_vault_graph.rs",
+        "index_vault_graph_model.rs",
+        "index_vault_graph_tests.rs",
+        "index_vault_link.rs",
+        "index_vault_profile.rs",
+        "index_vault_profile_tests.rs",
+        "index_vault_render.rs",
+        "index_vault_render_tests.rs",
+        "index_vault_render_writer.rs",
+    ] {
+        assert!(
+            !source_root.join(legacy).exists(),
+            "legacy owner {legacy} returned"
+        );
     }
 }
 
@@ -187,7 +312,7 @@ fn repeated_write_is_a_noop_and_managed_edits_block_check_and_write() {
     assert_eq!(second.unchanged_artifacts, first.artifact_count);
 
     let manifest = read_manifest(root.path());
-    assert_eq!(manifest.profile, "obsidian-markdown-v1");
+    assert_eq!(manifest.profile, "obsidian-markdown-v2");
     let readme = root.path().join("SIM-Index/README.md");
     fs::write(&readme, b"user edit\n").unwrap();
 
@@ -228,7 +353,7 @@ fn full_granularity_and_private_local_visibility_are_checked() {
     ))
     .unwrap();
     assert_eq!(full.granularity, "full");
-    assert!(root.path().join("SIM-Index/anchors").exists());
+    assert!(full.artifact_count > 1);
 
     let private = encoded_fixture(Visibility::PrivateLocal);
     let err = export(options(
@@ -239,7 +364,7 @@ fn full_granularity_and_private_local_visibility_are_checked() {
         VaultGranularity::Compact,
     ))
     .unwrap_err();
-    assert_contains(err, "requires a public IndexDoc");
+    assert_contains(err, "NonPublicDocument");
 }
 
 fn options(
@@ -277,6 +402,7 @@ fn fixture_doc(visibility: Visibility) -> IndexDoc {
         schema: "sim.index".to_owned(),
         generated_by: "test".to_owned(),
         visibility,
+        source_units: Vec::new(),
         subjects: vec![
             SubjectRecord {
                 id: SubjectId::new("crate/demo"),
