@@ -8,7 +8,9 @@
 //!
 //! - `simdoc` -- build, or `--check`, the documentation lanes: API docs, agent
 //!   cards, human docs, diagrams, and split contract files under `docs/`.
-//! - `repo-contract` -- generate or check the per-repo contract files.
+//! - `repo-contract` -- generate or check the per-repo contract files, or emit
+//!   selected current artifacts to a preopened output directory without
+//!   mutating the inspected repository.
 //! - `validation-matrix` -- generate or check the validation matrix.
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
 //!   crate catalog.

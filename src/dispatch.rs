@@ -88,7 +88,19 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
 
     match args.as_slice() {
         [_, command, ..] if command == "repo-contract" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
+            let options = repo_contract::parse_options(&args)?;
+            if let Some(emission) = options.emission {
+                let report = repo_contract::emit_contract_artifacts(
+                    &options.repo,
+                    &emission.names,
+                    &emission.out_dir,
+                )?;
+                println!(
+                    "repo-contract: {} package(s), {} artifact(s) emitted",
+                    report.packages, report.artifacts_changed
+                );
+                return Ok(());
+            }
             let report = repo_contract::repo_contract_for_repo(options.check, &options.repo)?;
             if options.check {
                 println!("repo-contract: generated contract files are current");

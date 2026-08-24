@@ -21,10 +21,10 @@ frameworks = "advisory"
 [[feature]]
 id = "feature/sim-tooling/generated-docs"
 title = "Generated documentation lanes"
-summary = "Generate repo contracts, feature maps, card indexes, index fragments, and managed vault note namespaces through xtask."
+summary = "Generate repo contracts, feature maps, card indexes, index fragments and claim certificates, and managed vault note namespaces through xtask; selected repo-contract artifacts can also be emitted without mutating source."
 owner = "crate/xtask"
 audiences = ["code", "framework"]
-guidance = "Use this row when adding a generated doc lane, checking generated index artifacts, or synchronizing a managed generated namespace."
+guidance = "Use this row when adding a generated doc lane, checking generated index artifacts, synchronizing a managed generated namespace, or adapting a preopened repository observation by emitting selected current repo-contract artifacts into a preopened output directory without updating docs/generated."
 claims_anchors = [
   "anchor/crate/xtask",
   "anchor/doc/generated/card-index",
@@ -39,6 +39,7 @@ claims_anchors = [
   "anchor/export/xtask/registry/catalog",
 ]
 claims_specimens = [
+  "spec-test/sim-tooling/src/repo_contract_tests",
   "spec-test/sim-tooling/src/index_render_tests",
   "spec-test/sim-tooling/src/index_vault_write_tests",
 ]

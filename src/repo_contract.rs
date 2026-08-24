@@ -2,13 +2,16 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs, io,
+    env, fs, io,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
 use serde_json::{Value, json};
+use sim_codec_index::{IndexCodec, IndexForm};
 use sim_cookbook::fnv1a64_hex;
+use sim_index_vault_core::VaultProjection;
 
 use crate::{
     generator_options::find_repo_root,
@@ -30,6 +33,94 @@ pub struct RepoContractReport {
     pub packages: usize,
     /// Number of generated contract artifacts updated.
     pub artifacts_changed: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct RepoContractOptions {
+    pub(crate) repo: PathBuf,
+    pub(crate) check: bool,
+    pub(crate) emission: Option<EmissionOptions>,
+}
+
+#[derive(Debug)]
+pub(crate) struct EmissionOptions {
+    pub(crate) names: Vec<String>,
+    pub(crate) out_dir: PathBuf,
+}
+
+const CONTRACT_ARTIFACT_NAMES: [&str; 11] = [
+    "card-index.json",
+    "card-index.md",
+    "feature-map.json",
+    "feature-map.md",
+    "provenance.json",
+    "repo-contract.json",
+    "repo-contract.md",
+    "rustdoc-index.json",
+    "rustdoc-index.md",
+    "sim-index-fragment.claims.sx",
+    "sim-index-fragment.sx",
+];
+
+pub(crate) fn parse_options(args: &[String]) -> Result<RepoContractOptions, String> {
+    let usage = "usage: xtask repo-contract [--check] [--repo <path>] [--emit <artifact>... --out-dir <path>]";
+    let mut repo = None;
+    let mut check = false;
+    let mut names = Vec::new();
+    let mut out_dir = None;
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--check" => check = true,
+            "--repo" | "--emit" | "--out-dir" => {
+                let flag = args[index].as_str();
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| format!("{flag} requires a value\n{usage}"))?;
+                match flag {
+                    "--repo" => repo = Some(PathBuf::from(value)),
+                    "--emit" => names.push(value.clone()),
+                    _ => out_dir = Some(PathBuf::from(value)),
+                }
+            }
+            "-h" | "--help" => return Err(usage.to_owned()),
+            other => return Err(format!("unknown repo-contract argument `{other}`\n{usage}")),
+        }
+        index += 1;
+    }
+    if check && (!names.is_empty() || out_dir.is_some()) {
+        return Err(format!(
+            "--check and --emit are mutually exclusive\n{usage}"
+        ));
+    }
+    if names.is_empty() && out_dir.is_some() {
+        return Err(format!("--out-dir requires --emit\n{usage}"));
+    }
+    let emission = if names.is_empty() {
+        None
+    } else {
+        let out_dir = out_dir.ok_or_else(|| format!("--emit requires --out-dir\n{usage}"))?;
+        let mut unique = BTreeSet::new();
+        for name in &names {
+            if !unique.insert(name.clone()) {
+                return Err(format!("duplicate repo-contract artifact `{name}`"));
+            }
+            if !CONTRACT_ARTIFACT_NAMES.contains(&name.as_str()) {
+                return Err(format!("unknown repo-contract artifact `{name}`"));
+            }
+        }
+        Some(EmissionOptions { names, out_dir })
+    };
+    let start = match repo {
+        Some(path) => path.canonicalize().map_err(display_io)?,
+        None => env::current_dir().map_err(display_io)?,
+    };
+    Ok(RepoContractOptions {
+        repo: find_repo_root(&start)?,
+        check,
+        emission,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +172,9 @@ pub(crate) fn repo_contract_for_repo(
         artifacts_changed: 0,
     };
     for (name, content) in artifacts.files {
+        if name == "sim-index-fragment.claims.sx" {
+            continue;
+        }
         write_or_check(&generated_dir.join(name), &content, check, &mut report)?;
     }
     Ok(report)
@@ -110,7 +204,7 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
     let cards = card_index(repo, &package_groups);
     let provenance = provenance(repo)?;
     let index_fragment = index_fragment::artifact(repo, &packages, &cards)?;
-    let files = artifacts(ArtifactInputs {
+    let mut files = artifacts(ArtifactInputs {
         packages: &packages,
         cut: &cut,
         citizens: &citizens,
@@ -120,11 +214,104 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
         provenance: &provenance,
         index_fragment: &index_fragment,
     })?;
+    files.insert(
+        "sim-index-fragment.claims.sx",
+        fragment_certificate_artifact(&index_fragment)?,
+    );
 
     Ok(ContractArtifacts {
         package_count: packages.len(),
         files,
     })
+}
+
+fn fragment_certificate_artifact(fragment: &str) -> Result<String, String> {
+    let doc = IndexCodec
+        .decode(IndexForm::Sx, fragment)
+        .map_err(|err| format!("decode generated index fragment for claims: {err}"))?;
+    let projection = VaultProjection::project_fragment(&doc)
+        .map_err(|err| format!("certify generated index fragment: {err}"))?;
+    let certificate = projection.certificate();
+    let claims = certificate.local_claims();
+    if !claims.is_closed() {
+        return Err("generated fragment claim certificate did not close".to_owned());
+    }
+    let mut out = format!(
+        "(fragment-certificate [schema {:?}] [generated-by {:?}] [visibility {:?}] [row-count {}] [claims (\n",
+        certificate.metadata().schema,
+        certificate.metadata().generated_by,
+        certificate.metadata().visibility,
+        claims.primary().len()
+    );
+    for (row, site) in claims.primary() {
+        out.push_str(&format!(
+            "  (primary [row {:?}] [note {:?}] [section {:?}])\n",
+            row.diagnostic_key(),
+            site.note.as_str(),
+            site.section
+        ));
+    }
+    out.push_str(")])\n");
+    Ok(out)
+}
+
+pub(crate) fn emit_contract_artifacts(
+    repo: &Path,
+    names: &[String],
+    out_dir: &Path,
+) -> Result<RepoContractReport, String> {
+    validate_preopened_directory(out_dir)?;
+    let out_dir = out_dir.canonicalize().map_err(display_io)?;
+    let artifacts = contract_artifacts(repo)?;
+    for name in names {
+        let content = artifacts
+            .files
+            .get(name.as_str())
+            .ok_or_else(|| format!("unknown repo-contract artifact `{name}`"))?;
+        atomic_write(&out_dir, name, content.as_bytes())?;
+    }
+    Ok(RepoContractReport {
+        packages: artifacts.package_count,
+        artifacts_changed: names.len(),
+    })
+}
+
+fn validate_preopened_directory(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(display_io)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "output directory must be a preopened real directory: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn atomic_write(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    let target = dir.join(name);
+    if let Ok(metadata) = fs::symlink_metadata(&target) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!(
+                "refusing non-file output target: {}",
+                target.display()
+            ));
+        }
+    }
+    let stage = dir.join(format!(".{name}.sim-stage-{}", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stage)
+        .map_err(|err| format!("create atomic output stage {}: {err}", stage.display()))?;
+    let result = (|| {
+        file.write_all(bytes).map_err(display_io)?;
+        file.sync_all().map_err(display_io)?;
+        fs::rename(&stage, &target).map_err(display_io)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&stage);
+    }
+    result
 }
 
 fn cargo_metadata(repo: &Path) -> Result<Value, String> {
