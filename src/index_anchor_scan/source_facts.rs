@@ -189,6 +189,38 @@ fn walk_modules(
             _ => None,
         })
         .collect::<BTreeSet<_>>();
+    let included_sources = parsed
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Macro(item) = item else {
+                return None;
+            };
+            if !item.mac.path.is_ident("include") {
+                return None;
+            }
+            // Only literal includes name a source unit that can be resolved
+            // from the repository. Generated OUT_DIR includes and other
+            // expression forms belong to Cargo/build-script discovery.
+            syn::parse2::<syn::LitStr>(item.mac.tokens.clone())
+                .ok()
+                .map(|literal| literal.value())
+        })
+        .collect::<Vec<_>>();
+    let parent = source
+        .parent()
+        .ok_or_else(|| format!("module source has no parent: {}", source.display()))?;
+    for included in included_sources {
+        walk_modules(
+            repo,
+            &parent.join(included),
+            prefix,
+            found,
+            active,
+            include_private,
+            api_paths,
+        )?;
+    }
     for item in parsed.items {
         let syn::Item::Mod(module) = item else {
             continue;
@@ -211,9 +243,6 @@ fn walk_modules(
         } else {
             format!("{prefix}/{name}")
         };
-        let parent = source
-            .parent()
-            .ok_or_else(|| format!("module source has no parent: {}", source.display()))?;
         let base = if source
             .file_name()
             .and_then(|name| name.to_str())
@@ -442,6 +471,45 @@ mod tests {
                 "public".into(),
                 "public/nested".into()
             ])
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn include_units_keep_the_containing_module_path() {
+        let root = fixture_root("includes");
+        fs::write(
+            root.join("src/lib.rs"),
+            "include!(\"surface.rs\"); include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\")); pub mod public;\n",
+        )
+        .unwrap();
+        fs::write(root.join("src/surface.rs"), "pub struct Included;\n").unwrap();
+        fs::write(root.join("src/public/mod.rs"), "include!(\"nested.rs\");\n").unwrap();
+        fs::write(
+            root.join("src/public/nested.rs"),
+            "pub struct NestedIncluded;\n",
+        )
+        .unwrap();
+
+        let mut found = BTreeMap::new();
+        walk_modules(
+            &root,
+            &root.join("src/lib.rs"),
+            "",
+            &mut found,
+            &mut BTreeSet::new(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            found[&root.join("src/surface.rs").canonicalize().unwrap()],
+            ""
+        );
+        assert_eq!(
+            found[&root.join("src/public/nested.rs").canonicalize().unwrap()],
+            "public"
         );
         fs::remove_dir_all(root).unwrap();
     }

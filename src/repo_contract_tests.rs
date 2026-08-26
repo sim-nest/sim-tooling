@@ -9,6 +9,8 @@ use sim_codec_index::{IndexCodec, IndexForm};
 
 use super::*;
 
+// conformance: generated repository contracts are canonical, bounded, and side-effect free.
+
 #[test]
 fn stable_hash_uses_repo_relative_paths() {
     let left = temp_root("sim-tooling-hash-left");
@@ -39,7 +41,7 @@ fn simdoc_generated_contracts_list_root_package() {
     let rustdoc_index = generated_json(&artifacts, "rustdoc-index.json");
     let repo_contract = generated_json(&artifacts, "repo-contract.json");
     let index_fragment = IndexCodec
-        .decode(
+        .decode_fragment(
             IndexForm::Sx,
             artifacts.files.get("sim-index-fragment.sx").unwrap(),
         )
@@ -161,7 +163,7 @@ fn emit_uses_canonical_fragment_and_leaves_repository_untouched() {
     );
     let claims = fs::read_to_string(out.join("sim-index-fragment.claims.sx")).unwrap();
     let doc = IndexCodec
-        .decode(IndexForm::Sx, &expected.files["sim-index-fragment.sx"])
+        .decode_fragment(IndexForm::Sx, &expected.files["sim-index-fragment.sx"])
         .unwrap();
     let row_count = doc.inventory().1.len();
     assert!(claims.contains(&format!("[row-count {row_count}]")));

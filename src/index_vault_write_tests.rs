@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     generated_artifact::{ArtifactSet, GeneratedArtifact},
-    generated_namespace::{ManagedNamespace, MigrationFault},
+    generated_namespace::{ManagedNamespace, MigrationFault, MigrationRequest},
     index_vault_manifest::{MANIFEST_FILE, VaultManifest, VaultManifestSeed, sha256_digest},
 };
 use sim_codec_index_vault::{VaultEncoder, legacy_projection_v1, resolve_profile};
@@ -380,12 +380,14 @@ fn every_migration_failpoint_reopens_to_a_classified_state() {
         let namespace = ManagedNamespace::open(root.path(), "SIM-Index").unwrap();
         let error = namespace
             .migrate_v1_with_fault(
-                "portable-markdown-v1",
-                &seed("portable-markdown-v2"),
-                &next,
-                &legacy_projection,
-                &bundle,
-                &projection,
+                MigrationRequest::new(
+                    "portable-markdown-v1",
+                    &seed("portable-markdown-v2"),
+                    &next,
+                    &legacy_projection,
+                    &bundle,
+                    &projection,
+                ),
                 point,
             )
             .unwrap_err();
