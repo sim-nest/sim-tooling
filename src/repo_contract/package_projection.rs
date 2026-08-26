@@ -196,7 +196,6 @@ pub(super) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|text| !text.is_empty())
 }
 
 pub(super) fn stable_hash(repo: &Path, paths: &[PathBuf]) -> String {
