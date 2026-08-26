@@ -201,6 +201,25 @@ fn public_narrative_is_an_error_while_advisory_rules_remain_warnings() {
 }
 
 #[test]
+fn present_tense_gate_ignores_markdown_code_examples() {
+    let fixture = GuardFixture::new("present-tense-code");
+    fixture.code_repo("sim-docs", false);
+    fixture.write_file(
+        "sim-docs/README.md",
+        "# Docs\n\n```rust\npub const LOCAL_ROADMAP_VERBS: &[&str] = &[\"run\"];\n```\n\n    const SOURCE_ROADMAP: &str = \"fixture\";\n",
+    );
+    fixture.write_manifest(&[fixture.repo_row("sim-docs", "code", true, "src", false)]);
+
+    let report = fixture.guard();
+    assert!(
+        !report
+            .findings
+            .iter()
+            .any(|finding| finding.rule_id == "present-tense-public-docs")
+    );
+}
+
+#[test]
 fn present_tense_gate_scans_metadata_and_exempts_generated_provenance() {
     let fixture = GuardFixture::new("present-tense-metadata");
     fixture.code_repo("sim-docs", false);
