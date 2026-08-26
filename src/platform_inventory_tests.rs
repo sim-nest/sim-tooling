@@ -1,3 +1,5 @@
+// conformance: host-tool inventory rejects product reachability and platform ownership drift.
+
 use super::*;
 
 #[test]

@@ -41,7 +41,6 @@ claims_anchors = [
 claims_specimens = [
   "spec-test/sim-tooling/src/repo_contract_tests",
   "spec-test/sim-tooling/src/index_render_tests",
-  "spec-test/sim-tooling/src/index_vault_write_tests",
 ]
 
 [[feature]]
@@ -69,6 +68,9 @@ summary = "Load the public SIM Index, delegate complete vault projection and Mar
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
 guidance = "Use this row only for filesystem-facing command behavior: canonical Index loading, artifact planning and reports, one managed materialization transaction, v1-to-v2 migration, verify without writing, and ownership/byte checks before semantic verification. Projection belongs to sim-index-vault-core and profile selection, bundle encoding, decoding, and semantic verification belong to sim-codec-index-vault; tooling must not enumerate IndexDoc fields or regain profile and Markdown rendering tables."
+claims_anchors = [
+  "anchor/export/xtask/codec/index-vault",
+]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_vault_tests",
   "spec-test/sim-tooling/src/index_vault_write_tests",
@@ -150,6 +152,9 @@ audiences = ["code", "framework"]
 guidance = "Use platform-inventory and simctl platform check for the one semantic host-fact graph. Host tools may use portable checkout, filesystem, environment, and direct-process constructions, but must not select an OS, hardware target, capsule, or platform-specific fallback, and no product target may depend on them."
 claims_anchors = [
   "anchor/bin/xtask",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/platform_inventory_tests",
 ]
 supports = [
   "feature/sim-index/core",
