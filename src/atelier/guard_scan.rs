@@ -8,18 +8,15 @@ mod rules;
 
 const PRESENT_TENSE_NEEDLES: &[&str] = &[
     "ROADMAP_",
-    "REORG_",
-    "Phase ",
-    "previously",
-    "historically",
-    "formerly",
-    "legacy",
-    "migration",
-    "migrated",
-    "future",
-    "planned",
-    "not yet complete",
-    "will be added",
+    "source_roadmap",
+    "final_proof_phase",
+    "predecessor_assumption",
+    "landed_source",
+    "previous roadmap",
+    "predecessor roadmap",
+    "future roadmap",
+    "future phase",
+    "later phase",
     "TODO(roadmap)",
 ];
 

@@ -240,6 +240,7 @@ mod tests {
             schema: "sim.index".to_owned(),
             generated_by: "test".to_owned(),
             visibility: Visibility::Public,
+            source_units: Vec::new(),
             subjects: vec![SubjectRecord {
                 id: SubjectId::new("crate/demo"),
                 kind: "crate".to_owned(),

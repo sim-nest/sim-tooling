@@ -18,9 +18,9 @@ use crate::{
 
 mod declaration;
 
+use declaration::DeclarationLimits;
 #[cfg(test)]
-use declaration::{DeclarationEvidence, PublicItemKind};
-use declaration::{DeclarationLimits, declaration_facts};
+use declaration::{DeclarationEvidence, PublicItemKind, declaration_facts};
 
 mod source_facts;
 pub(crate) use source_facts::source_facts;
@@ -32,7 +32,7 @@ pub(crate) fn discovered(
     repo: &Path,
     packages: &[PackageContract],
     cards: &[Value],
-) -> Vec<DiscoveredAnchor> {
+) -> Result<Vec<DiscoveredAnchor>, String> {
     let repo_subject = subject_id("repo", &repo_name(repo));
     let doc_set_subject = subject_id("doc-set", &format!("{}/generated", repo_name(repo)));
     let mut anchors = BTreeMap::new();
@@ -67,11 +67,11 @@ pub(crate) fn discovered(
             );
         }
         insert_cli_anchors(&mut anchors, repo, package, &crate_subject);
-        insert_rustdoc_anchors(&mut anchors, repo, package, &crate_subject);
-        insert_export_anchors(&mut anchors, repo, package, &crate_subject);
+        insert_rustdoc_anchors(&mut anchors, repo, package, &crate_subject)?;
+        insert_export_anchors(&mut anchors, repo, package, &crate_subject)?;
     }
 
-    anchors.into_values().collect()
+    Ok(anchors.into_values().collect())
 }
 
 fn insert_generated_doc_anchors(
@@ -142,9 +142,9 @@ fn insert_export_anchors(
     repo: &Path,
     package: &PackageContract,
     subject: &SubjectId,
-) {
+) -> Result<(), String> {
     let mut exports = BTreeSet::new();
-    for path in package_rust_files(repo, package) {
+    for (path, _) in source_facts::compilation_sources(repo, package)? {
         let rel = rel_path(repo, &path);
         if is_test_source(&rel) {
             continue;
@@ -168,6 +168,7 @@ fn insert_export_anchors(
             "export",
         );
     }
+    Ok(())
 }
 
 fn insert_rustdoc_anchors(
@@ -175,9 +176,9 @@ fn insert_rustdoc_anchors(
     repo: &Path,
     package: &PackageContract,
     subject: &SubjectId,
-) {
+) -> Result<(), String> {
     let mut items = BTreeSet::new();
-    for path in package_rust_files(repo, package) {
+    for (path, module_path) in source_facts::public_api_sources(repo, package)? {
         let rel = rel_path(repo, &path);
         if is_test_source(&rel) {
             continue;
@@ -185,9 +186,14 @@ fn insert_rustdoc_anchors(
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        let scan = declaration_facts(&rel, &text, DeclarationLimits::default());
+        let scan = declaration::declaration_facts_in_module(
+            &rel,
+            &text,
+            &module_path,
+            DeclarationLimits::default(),
+        );
         items.extend(scan.facts.into_iter().map(|fact| fact.module_path));
-        if rel.ends_with("/lib.rs") || rel == "src/lib.rs" {
+        if module_path.is_empty() {
             items.insert("crate-root".to_owned());
         }
     }
@@ -200,6 +206,7 @@ fn insert_rustdoc_anchors(
             "rustdoc-item",
         );
     }
+    Ok(())
 }
 
 fn is_public(vis: &syn::Visibility) -> bool {
@@ -299,6 +306,9 @@ fn impl_type_ident(ty: &syn::Type) -> Option<String> {
 }
 
 fn is_export_symbol(symbol: &str) -> bool {
+    if symbol.ends_with(".rs") {
+        return false;
+    }
     const PREFIXES: &[&str] = &[
         "agent/",
         "agent:",
@@ -491,6 +501,7 @@ mod declaration_fact_tests {
             [DeclarationEvidence::TruncatedSyntax { limit: 2, .. }]
         ));
         assert!(syntax_limited.facts[0].members.is_empty());
+        assert!(syntax_limited.facts[0].syntax_truncated);
     }
 }
 
@@ -606,7 +617,7 @@ mod tests {
             "name": "demo",
             "kind": ["bin"],
             "crate_types": ["bin"],
-            "src": "src/main.rs"
+            "src_path": root.join("src/lib.rs").to_string_lossy()
         })];
         let cards = vec![json!({
             "id": "browse/catalog",
@@ -614,7 +625,7 @@ mod tests {
             "owner": "workspace"
         })];
 
-        let anchors = discovered(&root, &[package], &cards);
+        let anchors = discovered(&root, &[package], &cards).unwrap();
         let ids = anchors
             .iter()
             .map(|anchor| anchor.id.as_str())

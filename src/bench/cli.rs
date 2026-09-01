@@ -15,7 +15,7 @@ use super::{
     compare::{ComparisonSample, RobustComparisonPolicy},
     env::{CompatibilityPolicy, EnvironmentProbe},
     exec::{ProcessDeclaration, execute},
-    report::{BenchReport, CounterSample, FsReportDir, ReportCodec, write_report},
+    report::{AttemptRecord, BenchReport, CounterSample, FsReportDir, ReportCodec, write_report},
     run::{self as sampler, Arm, MonotonicClock, RunConfig, RunPhase, Workload},
 };
 
@@ -41,6 +41,17 @@ pub struct CommandSpec {
     pub timeout_ms: u64,
 }
 
+/// Immutable identity of one executable benchmark arm.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ArmIdentity {
+    /// Digest of the exact executable bytes, spelled `sha256:<hex>`.
+    pub executable_content_key: String,
+    /// Source/build identity declared for those bytes.
+    pub build: super::BuildIdentity,
+    /// Stable identity of the exact command semantics.
+    pub command_identity: String,
+}
+
 /// Complete data contract for `bench run`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunRequest {
@@ -50,6 +61,10 @@ pub struct RunRequest {
     pub baseline_environment: EnvironmentProbe,
     /// Candidate environment evidence.
     pub candidate_environment: EnvironmentProbe,
+    /// Immutable baseline arm identity.
+    pub baseline_identity: ArmIdentity,
+    /// Immutable candidate arm identity.
+    pub candidate_identity: ArmIdentity,
     /// Baseline command.
     pub baseline: CommandSpec,
     /// Candidate command.
@@ -144,24 +159,37 @@ fn run_command(args: &[String]) -> Result<(), String> {
         &fs::read(request_path).map_err(|e| format!("read run request: {e}"))?,
     )
     .map_err(|e| format!("decode run request: {e}"))?;
+    validate_distinct_arms(&request)?;
     let clock = SystemClock(Instant::now());
     let mut workload = ProcessWorkload::new(request.baseline, request.candidate)?;
     let record = sampler::run(&request.spec, &request.run_config, &clock, &mut workload)?;
     let mut baseline = Vec::new();
     let mut candidate = Vec::new();
     let mut counters = Vec::new();
+    let attempts = record
+        .attempts
+        .iter()
+        .map(AttemptRecord::from)
+        .collect::<Vec<_>>();
     for sample in record.samples {
+        if sample.phase != RunPhase::Measured {
+            continue;
+        }
         if !matches!(sample.status, sampler::SampleStatus::Completed) {
             continue;
         }
         let value = sample.duration_ns as f64;
-        let row = ComparisonSample {
-            sample_index: sample.schedule_index,
-            value,
-        };
         match sample.arm {
-            Arm::Baseline => baseline.push(row),
-            Arm::Candidate => candidate.push(row),
+            Arm::Baseline => baseline.push(ComparisonSample {
+                sample_index: u32::try_from(baseline.len())
+                    .map_err(|_| "baseline sample count exceeds u32")?,
+                value,
+            }),
+            Arm::Candidate => candidate.push(ComparisonSample {
+                sample_index: u32::try_from(candidate.len())
+                    .map_err(|_| "candidate sample count exceeds u32")?,
+                value,
+            }),
         }
         counters.push(CounterSample {
             sample_index: sample.schedule_index,
@@ -169,19 +197,62 @@ fn run_command(args: &[String]) -> Result<(), String> {
             counters: sample.counters,
         });
     }
-    let report = BenchReport::new_attributed(
+    let all_failed = baseline.is_empty() && candidate.is_empty();
+    let report = BenchReport::new_attributed_with_attempts(
         request.spec,
         request.baseline_environment,
         request.candidate_environment,
+        Some(request.baseline_identity),
+        Some(request.candidate_identity),
         baseline,
         candidate,
         counters,
+        attempts,
         request.direction,
         request.comparison_policy,
         request.environment_policy,
     )?;
     write_artifact(Path::new(output_path), &report)?;
+    if all_failed {
+        return Err(
+            "benchmark produced no valid measured samples; attempt ledger was written".to_owned(),
+        );
+    }
     println!("{}", ReportView::from_report(&report)?.human());
+    Ok(())
+}
+
+fn validate_distinct_arms(request: &RunRequest) -> Result<(), String> {
+    validate_distinct_arm_values(
+        &request.baseline_identity,
+        &request.candidate_identity,
+        &request.baseline,
+        &request.candidate,
+    )
+}
+
+fn validate_distinct_arm_values(
+    baseline: &ArmIdentity,
+    candidate: &ArmIdentity,
+    baseline_command: &CommandSpec,
+    candidate_command: &CommandSpec,
+) -> Result<(), String> {
+    if baseline.executable_content_key == candidate.executable_content_key {
+        return Err("baseline and candidate executable content identities are equal".into());
+    }
+    if baseline.build == candidate.build {
+        return Err("baseline and candidate build identities are equal".into());
+    }
+    if baseline.command_identity == candidate.command_identity {
+        return Err("baseline and candidate command identities are equal".into());
+    }
+    if baseline_command.program == candidate_command.program
+        && baseline_command.arguments == candidate_command.arguments
+        && baseline_command.working_directory == candidate_command.working_directory
+        && baseline_command.environment == candidate_command.environment
+    {
+        return Err("baseline and candidate commands are equal".into());
+    }
     Ok(())
 }
 
@@ -286,13 +357,18 @@ impl<C: MonotonicClock> Workload<C> for ProcessWorkload {
         &mut self,
         arm: Arm,
         _: RunPhase,
-        _: u64,
+        iterations: u64,
         _: &C,
     ) -> Result<BTreeMap<String, u64>, String> {
-        let sample = execute(match arm {
+        let declaration = match arm {
             Arm::Baseline => &self.baseline,
             Arm::Candidate => &self.candidate,
-        })?;
+        };
+        let mut declaration = declaration.clone();
+        declaration
+            .environment
+            .insert("SIM_BENCH_ITERATIONS".into(), iterations.to_string());
+        let sample = execute(&declaration)?;
         if sample.timed_out() {
             return Err("process timed out".to_owned());
         }
@@ -305,8 +381,17 @@ impl<C: MonotonicClock> Workload<C> for ProcessWorkload {
         if sample.stdout_truncated() {
             return Err("workload counter output exceeded its retention limit".to_owned());
         }
-        serde_json::from_slice(sample.stdout())
-            .map_err(|error| format!("decode workload counters as JSON object: {error}"))
+        let mut receipt: BTreeMap<String, u64> = serde_json::from_slice(sample.stdout())
+            .map_err(|error| format!("decode workload counters as JSON object: {error}"))?;
+        let executed = receipt
+            .remove("executed_iterations")
+            .ok_or("workload receipt omitted executed_iterations")?;
+        if executed != iterations {
+            return Err(format!(
+                "workload executed {executed} iterations; requested {iterations}"
+            ));
+        }
+        Ok(receipt)
     }
 }
 

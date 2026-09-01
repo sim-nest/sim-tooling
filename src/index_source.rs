@@ -162,7 +162,10 @@ impl SourceResolver {
             }
             let text = fs::read_to_string(root.join(path))
                 .map_err(|err| format!("read {repo}/{path}: {err}"))?;
-            let needle = symbol.rsplit("::").next().unwrap_or(symbol);
+            let needle = symbol
+                .rsplit([':', '/'])
+                .find(|part| !part.is_empty())
+                .unwrap_or(symbol);
             if let Some((line, _)) = text
                 .lines()
                 .enumerate()

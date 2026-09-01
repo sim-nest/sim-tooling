@@ -8,7 +8,9 @@
 //!
 //! - `simdoc` -- build, or `--check`, the documentation lanes: API docs, agent
 //!   cards, human docs, diagrams, and split contract files under `docs/`.
-//! - `repo-contract` -- generate or check the per-repo contract files.
+//! - `repo-contract` -- generate or check the per-repo contract files, or emit
+//!   selected current artifacts to a preopened output directory without
+//!   mutating the inspected repository.
 //! - `validation-matrix` -- generate or check the validation matrix.
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
 //!   crate catalog.
@@ -34,7 +36,7 @@
 //! [`repo_contract`], [`validation_matrix`], [`crate_catalog`],
 //! [`citizenize_arg`], [`atelier_site`], and [`atelier_tools`].
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod atelier;
@@ -78,14 +80,9 @@ mod index_source;
 mod index_specimen_scan;
 mod index_surface_scan;
 mod index_vault;
-mod index_vault_graph;
-mod index_vault_graph_model;
-mod index_vault_link;
 mod index_vault_manifest;
-mod index_vault_profile;
-mod index_vault_render;
-mod index_vault_render_writer;
 mod json_render;
+mod platform_inventory;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
@@ -95,12 +92,6 @@ mod simdoc_index;
 mod simdoc_rustdoc;
 mod validation_matrix;
 
-#[cfg(test)]
-mod index_vault_graph_tests;
-#[cfg(test)]
-mod index_vault_profile_tests;
-#[cfg(test)]
-mod index_vault_render_tests;
 #[cfg(test)]
 mod index_vault_tests;
 #[cfg(test)]

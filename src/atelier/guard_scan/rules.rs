@@ -54,7 +54,7 @@ fn rule_present_tense(
     rules: &[GuidelineRule],
     listed: &[PathBuf],
 ) -> Result<Vec<GuidelineFinding>, String> {
-    if repo.kind != "code" {
+    if !matches!(repo.kind.as_str(), "code" | "frontpage") {
         return Ok(Vec::new());
     }
     let rule = by_id(rules, "present-tense-public-docs");
@@ -64,7 +64,32 @@ fn rule_present_tense(
         .filter(|path| files::is_public_doc_or_comment_file(path))
     {
         let text = files::read_repo_text(repo, file)?;
+        let markdown = file.extension().and_then(|ext| ext.to_str()) == Some("md");
+        let mut markdown_fence = None;
         for (line_index, line) in text.lines().enumerate() {
+            if markdown {
+                let trimmed = line.trim_start();
+                let marker = if trimmed.starts_with("```") {
+                    Some('`')
+                } else if trimmed.starts_with("~~~") {
+                    Some('~')
+                } else {
+                    None
+                };
+                if let Some(marker) = marker {
+                    markdown_fence = if markdown_fence == Some(marker) {
+                        None
+                    } else if markdown_fence.is_none() {
+                        Some(marker)
+                    } else {
+                        markdown_fence
+                    };
+                    continue;
+                }
+                if markdown_fence.is_some() || line.starts_with("    ") {
+                    continue;
+                }
+            }
             if file.extension().and_then(|ext| ext.to_str()) == Some("rs")
                 && !line.trim_start().starts_with("//")
             {

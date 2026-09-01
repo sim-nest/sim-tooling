@@ -21,10 +21,10 @@ frameworks = "advisory"
 [[feature]]
 id = "feature/sim-tooling/generated-docs"
 title = "Generated documentation lanes"
-summary = "Generate repo contracts, feature maps, card indexes, index fragments, and managed vault note namespaces through xtask."
+summary = "Generate repo contracts, feature maps, card indexes, index fragments and claim certificates, and managed vault note namespaces through xtask; selected repo-contract artifacts can also be emitted without mutating source."
 owner = "crate/xtask"
 audiences = ["code", "framework"]
-guidance = "Use this row when adding a generated doc lane, checking generated index artifacts, or synchronizing a managed generated namespace."
+guidance = "Use this row when adding a generated doc lane, checking generated index artifacts, synchronizing a managed generated namespace, or adapting a preopened repository observation by emitting selected current repo-contract artifacts into a preopened output directory without updating docs/generated."
 claims_anchors = [
   "anchor/crate/xtask",
   "anchor/doc/generated/card-index",
@@ -39,8 +39,8 @@ claims_anchors = [
   "anchor/export/xtask/registry/catalog",
 ]
 claims_specimens = [
+  "spec-test/sim-tooling/src/repo_contract_tests",
   "spec-test/sim-tooling/src/index_render_tests",
-  "spec-test/sim-tooling/src/index_vault_write_tests",
 ]
 
 [[feature]]
@@ -59,22 +59,26 @@ claims_surfaces = [
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_fixpoint_tests",
-  "spec-test/sim-tooling/src/index_vault_graph_tests",
-  "spec-test/sim-tooling/src/index_vault_profile_tests",
 ]
 
 [[feature]]
 id = "feature/sim-index/vault-export"
 title = "SIM Index vault export"
-summary = "Project the public SIM Index into a managed Markdown vault namespace for portable, Obsidian, SeqLog, and Logseq profiles."
+summary = "Load the public SIM Index, delegate complete vault projection and Markdown bundle encoding to their public owners, and materialize the resulting artifacts in one managed namespace."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use this row when exporting Index evidence into a Markdown vault. Authors still add features, routes, and generated documentation through the generated-doc owner; this exporter consumes the checked public graph and writes only its managed namespace."
+guidance = "Use this row only for filesystem-facing command behavior: canonical Index loading, artifact planning and reports, one managed materialization transaction, v1-to-v2 migration, verify without writing, and ownership/byte checks before semantic verification. Projection belongs to sim-index-vault-core and profile selection, bundle encoding, decoding, and semantic verification belong to sim-codec-index-vault; tooling must not enumerate IndexDoc fields or regain profile and Markdown rendering tables."
+claims_anchors = [
+  "anchor/export/xtask/codec/index-vault",
+]
 claims_specimens = [
   "spec-test/sim-tooling/src/index_vault_tests",
+  "spec-test/sim-tooling/src/index_vault_write_tests",
 ]
 supports = [
   "feature/sim-index/core",
+  "feature/sim-foundation/index-vault-projection",
+  "feature/sim-codecs/index-vault-codec",
   "feature/sim-tooling/generated-docs",
 ]
 
@@ -86,11 +90,10 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use the inventory-backed DeclaredHost identity with probe_environment, then apply a CompatibilityPolicy before comparing benchmark results. Treat unavailable evidence as a refusal; never substitute a hostname label or guessed host property."
 claims_anchors = [
-  "anchor/rustdoc/xtask/compatibility-policy",
-  "anchor/rustdoc/xtask/compatibility_mismatches",
-  "anchor/rustdoc/xtask/declared-host",
-  "anchor/rustdoc/xtask/environment-probe",
-  "anchor/rustdoc/xtask/probe_environment",
+  "anchor/rustdoc/xtask/bench/env/compatibility_mismatches",
+  "anchor/rustdoc/xtask/bench/env/declared-host",
+  "anchor/rustdoc/xtask/bench/env/environment-probe",
+  "anchor/rustdoc/xtask/bench/env/probe_environment",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/env",
@@ -104,14 +107,14 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Implement Workload and MonotonicClock adapters, validate RunConfig, and retain the complete RunRecord. Summarize only its successful measured observations; calibration and warmup are execution evidence, not statistical samples."
 claims_anchors = [
-  "anchor/rustdoc/xtask/calibration-decision",
-  "anchor/rustdoc/xtask/monotonic-clock",
-  "anchor/rustdoc/xtask/run-config",
-  "anchor/rustdoc/xtask/run-phase",
-  "anchor/rustdoc/xtask/run-record",
-  "anchor/rustdoc/xtask/sample-record",
-  "anchor/rustdoc/xtask/sample-status",
-  "anchor/rustdoc/xtask/workload",
+  "anchor/rustdoc/xtask/bench/run/calibration-decision",
+  "anchor/rustdoc/xtask/bench/run/monotonic-clock",
+  "anchor/rustdoc/xtask/bench/run/run-config",
+  "anchor/rustdoc/xtask/bench/run/run-phase",
+  "anchor/rustdoc/xtask/bench/run/run-record",
+  "anchor/rustdoc/xtask/bench/run/sample-record",
+  "anchor/rustdoc/xtask/bench/run/sample-status",
+  "anchor/rustdoc/xtask/bench/run/workload",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/run",
@@ -119,25 +122,42 @@ claims_specimens = [
 
 [[feature]]
 id = "feature/sim-tooling/benchmark-process-isolation"
-title = "Bounded benchmark process isolation"
-summary = "Execute benchmark workloads as exact argument vectors with controlled directories and environments, bounded output and time, explicit status, and requested-versus-achieved CPU-affinity evidence."
+title = "Portable bounded benchmark execution"
+summary = "Execute benchmark workloads as exact argument vectors with portable child termination, reaping, output, and time bounds, explicit status, and honest refusal of host-specific affinity or process-tree claims."
 owner = "crate/xtask"
 audiences = ["code", "framework"]
-guidance = "Use ProcessDeclaration and execute for process-backed workloads. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample; never introduce shell interpolation or give adapters a recorded result to mutate."
+guidance = "Use ProcessDeclaration and execute for portable process-backed workloads. The executor directly spawns and bounds one child without shell interpolation or OS/HW selection. Affinity and complete process-tree containment require externally supplied platform-capsule evidence and are never guessed or obtained through a platform-specific fallback in this host tool. Adapters may prepare files and return a declaration through WorkloadAdapter, but the executor alone constructs the immutable ProcessSample."
 claims_anchors = [
-  "anchor/rustdoc/xtask/cpu-affinity",
-  "anchor/rustdoc/xtask/execute",
-  "anchor/rustdoc/xtask/execute_adapter",
-  "anchor/rustdoc/xtask/isolation-record",
-  "anchor/rustdoc/xtask/process-declaration",
-  "anchor/rustdoc/xtask/process-sample",
-  "anchor/rustdoc/xtask/workload-adapter",
+  "anchor/rustdoc/xtask/bench/exec/cpu-affinity",
+  "anchor/rustdoc/xtask/bench/exec/execute",
+  "anchor/rustdoc/xtask/bench/exec/execute_adapter",
+  "anchor/rustdoc/xtask/bench/exec/isolation-record",
+  "anchor/rustdoc/xtask/bench/exec/process-declaration",
+  "anchor/rustdoc/xtask/bench/exec/process-sample",
+  "anchor/rustdoc/xtask/bench/exec/workload-adapter",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/exec",
 ]
 composes = [
   "feature/sim-tooling/benchmark-sampling",
+]
+
+[[feature]]
+id = "feature/sim-tooling/host-tool-boundary"
+title = "Portable host-tool boundary"
+summary = "Classify sim-tooling as a structurally isolated host tool, render host-tool facts separately from platform-capsule facts, and reject host-tool reachability from product targets."
+owner = "crate/xtask"
+audiences = ["code", "framework"]
+guidance = "Use platform-inventory and simctl platform check for the one semantic host-fact graph. Host tools may use portable checkout, filesystem, environment, and direct-process constructions, but must not select an OS, hardware target, capsule, or platform-specific fallback, and no product target may depend on them."
+claims_anchors = [
+  "anchor/bin/xtask",
+]
+claims_specimens = [
+  "spec-test/sim-tooling/src/platform_inventory_tests",
+]
+supports = [
+  "feature/sim-index/core",
 ]
 
 [[feature]]
@@ -148,11 +168,11 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use compare with raw indexed samples, typed environment probes, and an explicit RobustComparisonPolicy. Inspect exclusions and inconclusive reasons before consuming the outcome; incompatible or high-dispersion evidence never becomes a threshold pass."
 claims_anchors = [
-  "anchor/rustdoc/xtask/compare",
-  "anchor/rustdoc/xtask/comparison-report",
-  "anchor/rustdoc/xtask/excluded-sample",
-  "anchor/rustdoc/xtask/robust-comparison-policy",
-  "anchor/rustdoc/xtask/robust-summary",
+  "anchor/rustdoc/xtask/bench/compare/compare",
+  "anchor/rustdoc/xtask/bench/compare/comparison-report",
+  "anchor/rustdoc/xtask/bench/compare/excluded-sample",
+  "anchor/rustdoc/xtask/bench/compare/robust-comparison-policy",
+  "anchor/rustdoc/xtask/bench/compare/robust-summary",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/compare",
@@ -165,15 +185,15 @@ composes = [
 [[feature]]
 id = "feature/sim-tooling/benchmark-cli"
 title = "Benchmark artifact CLI"
-summary = "Run exact process benchmarks and compare, inspect, or policy-check durable reports whose raw durations and workload counters are derived from one verified report object."
+summary = "Run distinct immutable process benchmark arms and compare, inspect, or policy-check durable reports whose identities, raw durations, and workload counters are derived from one verified report object."
 owner = "crate/xtask"
 audiences = ["user", "code", "framework"]
-guidance = "Use bench run with a declared JSON request to create an atomic artifact; workload stdout must be one exact JSON counter object and every counter must be declared by the BenchSpec. Use bench compare or bench show to inspect it, and bench check for read-only policy enforcement. Select --json when automation needs the same ReportView fields shown concisely to humans. Reuse jvm_baseline::corpus for the BYTECODE_SPEED_4 cold-preparation and warm-execution workload declarations, and jvm_acceptance for its baseline-derived frozen acceptance policy."
+guidance = "Use bench run with a declared JSON request to create an atomic artifact; baseline and candidate must name distinct executable-content, build, command, and exact process identities before dispatch. BENCH overrides SIM_BENCH_ITERATIONS for calibration, warmup, and measurement, and workload stdout must echo that count as executed_iterations beside an exact JSON counter object whose remaining counters are declared by the BenchSpec. The report preserves both arm identities and every calibration, warmup, and measured attempt while deriving statistics only from completed measured rows; a run without any valid measured sample writes its attempt ledger and fails. Use bench compare or bench show to inspect it, and bench check for read-only policy enforcement. Select --json when automation needs the same ReportView fields shown concisely to humans. Reuse jvm_baseline::corpus for the BYTECODE_SPEED_4 cold-preparation and warm-execution workload declarations, and jvm_acceptance for its baseline-derived frozen acceptance policy."
 claims_anchors = [
-  "anchor/rustdoc/xtask/command-spec",
-  "anchor/rustdoc/xtask/counter-sample",
-  "anchor/rustdoc/xtask/report-view",
-  "anchor/rustdoc/xtask/run-request",
+  "anchor/rustdoc/xtask/bench/cli/command-spec",
+  "anchor/rustdoc/xtask/bench/report/counter-sample",
+  "anchor/rustdoc/xtask/bench/cli/report-view",
+  "anchor/rustdoc/xtask/bench/cli/run-request",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/src/bench/neutral_allocation_conformance",
@@ -217,7 +237,9 @@ task = "Export the SIM Index to a Markdown vault"
 audiences = ["user", "code", "framework"]
 steps = [
   { feature = "feature/sim-index/core", why = "The SIM Index core row owns the public graph that the vault exporter consumes." },
-  { feature = "feature/sim-tooling/generated-docs", why = "The generated-doc row owns the generated documentation evidence that appears in the public Index." },
-  { feature = "feature/sim-index/vault-export", why = "The vault export row owns the profile selection, managed namespace, plan, write, and check behavior." },
-  { specimen = "spec-test/sim-tooling/src/index_vault_tests", why = "The checked end-to-end specimen proves all vault profiles export the fixture graph, preserve sibling notes, and verify managed namespaces." },
+  { feature = "feature/sim-foundation/index-vault-projection", why = "The projection row consumes the canonical inventory and proves every row has exactly one primary claim." },
+  { feature = "feature/sim-codecs/index-vault-codec", why = "The codec row owns document dialect composition, v2 bundles, v1 reading, and semantic verification." },
+  { feature = "feature/sim-index/vault-export", why = "The vault export row owns canonical loading, artifacts, reports, migration, and managed command behavior." },
+  { specimen = "spec-test/sim-codecs/crates/sim-codec-index-vault/tests/conformance", why = "The codec specimen proves all-profile round trips, semantic corruption rejection, and bounded v1 migration." },
+  { specimen = "spec-test/sim-tooling/src/index_vault_write_tests", why = "The checked materialization specimen proves managed writes preserve sibling notes and application configuration." },
 ]

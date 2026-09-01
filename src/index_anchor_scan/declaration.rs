@@ -51,6 +51,7 @@ pub(super) struct DeclarationFact {
     pub(super) generics: String,
     pub(super) members: Vec<String>,
     pub(super) location: SourceLocation,
+    pub(super) syntax_truncated: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,6 +108,19 @@ pub(super) fn declaration_facts(
     scan
 }
 
+pub(super) fn declaration_facts_in_module(
+    file: &str,
+    text: &str,
+    module_path: &str,
+    limits: DeclarationLimits,
+) -> DeclarationScan {
+    let mut scan = declaration_facts(file, text, limits);
+    for fact in &mut scan.facts {
+        fact.module_path = join_path(module_path, &fact.module_path);
+    }
+    scan
+}
+
 fn collect_public_items(
     items: &[syn::Item],
     prefix: &str,
@@ -160,6 +174,7 @@ fn collect_public_items(
                         file: file.to_owned(),
                         declaration: ordinal,
                     },
+                    syntax_truncated: false,
                 };
                 if !push_fact(fact, limits, scan) {
                     return;
@@ -216,6 +231,7 @@ fn collect_public_items(
                             file: file.to_owned(),
                             declaration: ordinal,
                         },
+                        syntax_truncated: false,
                     };
                     if !push_fact(fact, limits, scan) {
                         return;
@@ -283,6 +299,7 @@ fn simple_fact(
             file: file.to_owned(),
             declaration,
         },
+        syntax_truncated: false,
     }
 }
 
@@ -363,6 +380,7 @@ fn bound_fact(fact: &mut DeclarationFact, limit: usize, scan: &mut DeclarationSc
     }
     fact.generics.clear();
     fact.members.clear();
+    fact.syntax_truncated = true;
     scan.evidence.push(DeclarationEvidence::TruncatedSyntax {
         file: fact.location.file.clone(),
         declaration: fact.location.declaration,

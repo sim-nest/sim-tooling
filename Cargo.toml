@@ -21,7 +21,7 @@ repository = "https://github.com/sim-nest/sim-tooling"
 homepage = "https://github.com/sim-nest/sim-tooling"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
@@ -29,14 +29,16 @@ quote = "1"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
-sim-cookbook = "0.2.0"
+sim-cookbook = "0.3.0"
 sim-codec-index = "0.2.0"
-sim-codec-json = "0.2.0"
-sim-index-core = "0.2.0"
-sim-kernel = "0.2.0"
-sim-lib-net-core = "0.2.0"
-sim-lib-numbers-stats = "0.4.0"
-sim-table-core = "0.1.4"
+sim-codec-index-vault = "0.1.0"
+sim-codec-json = "0.3.0"
+sim-index-core = "0.3.0"
+sim-index-vault-core = "0.1.0"
+sim-kernel = "0.3.0"
+sim-lib-net-core = "0.3.0"
+sim-lib-numbers-stats = "0.5.0"
+sim-table-core = "0.2.0"
 syn = { version = "2", features = ["fold", "full", "visit"] }
 toml = "0.8"
 

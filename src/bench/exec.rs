@@ -50,7 +50,9 @@ pub struct CpuAffinity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IsolationRecord {
     requested_affinity: Option<Vec<usize>>,
+    observed_affinity: Option<Vec<usize>>,
     achieved_affinity: bool,
+    workload_tree_contained: bool,
     detail: String,
 }
 
@@ -63,6 +65,16 @@ impl IsolationRecord {
     /// Whether the platform mechanism reported successful affinity application.
     pub fn achieved_affinity(&self) -> bool {
         self.achieved_affinity
+    }
+
+    /// Logical CPUs observed on the spawned workload process.
+    pub fn observed_affinity(&self) -> Option<&[usize]> {
+        self.observed_affinity.as_deref()
+    }
+
+    /// Whether the complete workload was placed in executor-owned containment.
+    pub fn workload_tree_contained(&self) -> bool {
+        self.workload_tree_contained
     }
 
     /// Human-readable achievement or gap evidence.
@@ -144,18 +156,21 @@ pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String
         .affinity
         .as_ref()
         .map(|value| value.logical_cpus.clone());
-    let (mut command, mechanism) = command_for(declaration);
+    let mut command = command_for(declaration);
     command.current_dir(&declaration.working_directory);
     if !declaration.inherit_environment {
         command.env_clear();
     }
     command.envs(&declaration.environment);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-
     let started = Instant::now();
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawn workload: {error}"))?;
+    // Affinity and process-tree controls are deliberately not synthesized from
+    // host-specific APIs.  This host tool is portable; callers that require
+    // physical isolation must select a platform capsule outside this process.
+    let observed: Option<Vec<usize>> = None;
     let stdout = drain(
         child.stdout.take().ok_or("workload stdout was not piped")?,
         declaration.stdout_limit,
@@ -173,16 +188,14 @@ pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String
         .join()
         .map_err(|_| "stderr reader panicked")?
         .map_err(|error| format!("read workload stderr: {error}"))?;
-    let achieved = requested.is_some() && mechanism && status.is_some_and(|value| value.success());
-    let detail = match (&requested, mechanism, achieved) {
-        (None, _, _) => "CPU affinity was not requested".to_owned(),
-        (Some(_), false, _) => {
-            "CPU affinity requested but this platform has no supported mechanism".to_owned()
-        }
-        (Some(_), true, true) => "CPU affinity applied by the platform mechanism".to_owned(),
-        (Some(_), true, false) => {
-            "CPU affinity mechanism did not report successful execution".to_owned()
-        }
+    let achieved = requested
+        .as_ref()
+        .zip(observed.as_ref())
+        .is_some_and(|(requested, observed)| same_cpu_set(requested, observed));
+    let detail = match (&requested, achieved) {
+        (None, _) => "CPU affinity was not requested".to_owned(),
+        (Some(_), false) => "CPU affinity requires an external platform capsule".to_owned(),
+        (Some(_), true) => "requested CPU affinity verified on the workload process".to_owned(),
     };
     Ok(ProcessSample {
         stdout,
@@ -194,10 +207,22 @@ pub fn execute(declaration: &ProcessDeclaration) -> Result<ProcessSample, String
         elapsed: started.elapsed(),
         isolation: IsolationRecord {
             requested_affinity: requested,
+            observed_affinity: observed,
             achieved_affinity: achieved,
+            workload_tree_contained: false,
             detail,
         },
     })
+}
+
+fn same_cpu_set(left: &[usize], right: &[usize]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_unstable();
+    left.dedup();
+    right.sort_unstable();
+    right.dedup();
+    left == right
 }
 
 fn validate(declaration: &ProcessDeclaration) -> Result<(), String> {
@@ -220,28 +245,10 @@ fn validate(declaration: &ProcessDeclaration) -> Result<(), String> {
     Ok(())
 }
 
-fn command_for(declaration: &ProcessDeclaration) -> (Command, bool) {
-    #[cfg(target_os = "linux")]
-    if let Some(affinity) = &declaration.affinity {
-        let taskset = ["/usr/bin/taskset", "/bin/taskset"]
-            .into_iter()
-            .find(|path| Path::new(path).is_file());
-        if let Some(taskset) = taskset {
-            let mut command = Command::new(taskset);
-            let cpus = affinity
-                .logical_cpus
-                .iter()
-                .map(usize::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            command.args(["--cpu-list", &cpus, "--", &declaration.program]);
-            command.args(&declaration.arguments);
-            return (command, true);
-        }
-    }
+fn command_for(declaration: &ProcessDeclaration) -> Command {
     let mut command = Command::new(&declaration.program);
     command.args(&declaration.arguments);
-    (command, false)
+    command
 }
 
 fn drain<R: Read + Send + 'static>(
@@ -328,13 +335,14 @@ mod tests {
         let requested = vec![0];
         let record = IsolationRecord {
             requested_affinity: Some(requested.clone()),
+            observed_affinity: None,
             achieved_affinity: false,
-            detail: "CPU affinity requested but this platform has no supported mechanism"
-                .to_owned(),
+            workload_tree_contained: false,
+            detail: "CPU affinity requires an external platform capsule".to_owned(),
         };
         assert_eq!(record.requested_affinity(), Some(requested.as_slice()));
         assert!(!record.achieved_affinity());
-        assert!(record.detail().contains("no supported mechanism"));
+        assert!(record.detail().contains("platform capsule"));
     }
 
     #[test]

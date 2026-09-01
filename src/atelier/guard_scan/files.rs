@@ -23,6 +23,7 @@ pub(super) fn listed_files(repo: &RepoEntry) -> Result<Vec<PathBuf>, String> {
                 .filter(|line| !line.is_empty())
                 .map(PathBuf::from)
                 .filter(|path| should_scan_path(path))
+                .filter(|path| repo.checkout_path.join(path).is_file())
                 .collect());
         }
     }
@@ -110,13 +111,16 @@ pub(super) fn is_text_file(path: &Path) -> bool {
 }
 
 pub(super) fn is_public_doc_or_comment_file(path: &Path) -> bool {
-    if path.file_name().and_then(|name| name.to_str()) == Some("README.md") {
-        return true;
-    }
-    if path.starts_with("docs") && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
-        return true;
-    }
-    path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+    is_text_file(path) && !is_generated_or_provenance(path)
+}
+
+fn is_generated_or_provenance(path: &Path) -> bool {
+    path.starts_with("docs/generated")
+        || path.starts_with("docs/index")
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains("provenance"))
 }
 
 pub(super) fn is_rust_file(path: &Path) -> bool {

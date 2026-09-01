@@ -161,13 +161,12 @@ fn public_mirror_push_remote_is_rejected() {
 }
 
 #[test]
-fn warning_fixture_reports_present_tense_file_size_and_kernel_boundary() {
+fn public_narrative_is_an_error_while_advisory_rules_remain_warnings() {
     let fixture = GuardFixture::new("warnings");
     fixture.code_repo("sim-docs", false);
-    let flagged_word = ["Fut", "ure"].concat();
     fixture.write_file(
         "sim-docs/README.md",
-        &format!("# Docs\n\n{flagged_word} roadmap language.\n"),
+        "# Docs\n\nA future roadmap will replace this contract.\n",
     );
     fixture.write_file("sim-docs/src/wide.rs", &lines(501));
     fixture.code_repo("sim-kernel", false);
@@ -188,17 +187,57 @@ fn warning_fixture_reports_present_tense_file_size_and_kernel_boundary() {
         .map(|finding| finding.rule_id.as_str())
         .collect::<Vec<_>>();
 
-    for expected in [
-        "present-tense-public-docs",
-        "rust-file-size-policy",
-        "kernel-boundary-warning",
-    ] {
+    for expected in ["rust-file-size-policy", "kernel-boundary-warning"] {
         assert!(
             warning_ids.contains(&expected),
             "missing expected warning rule {expected}: {warning_ids:?}"
         );
     }
-    assert_eq!(report.error_count(), 0);
+    assert!(report.findings.iter().any(|finding| {
+        finding.rule_id == "present-tense-public-docs"
+            && finding.severity == GuidelineSeverity::Error
+    }));
+    assert_eq!(report.error_count(), 1);
+}
+
+#[test]
+fn present_tense_gate_ignores_markdown_code_examples() {
+    let fixture = GuardFixture::new("present-tense-code");
+    fixture.code_repo("sim-docs", false);
+    fixture.write_file(
+        "sim-docs/README.md",
+        "# Docs\n\n```rust\npub const LOCAL_ROADMAP_VERBS: &[&str] = &[\"run\"];\n```\n\n    const SOURCE_ROADMAP: &str = \"fixture\";\n",
+    );
+    fixture.write_manifest(&[fixture.repo_row("sim-docs", "code", true, "src", false)]);
+
+    let report = fixture.guard();
+    assert!(
+        !report
+            .findings
+            .iter()
+            .any(|finding| finding.rule_id == "present-tense-public-docs")
+    );
+}
+
+#[test]
+fn present_tense_gate_scans_metadata_and_exempts_generated_provenance() {
+    let fixture = GuardFixture::new("present-tense-metadata");
+    fixture.code_repo("sim-docs", false);
+    fixture.write_file("sim-docs/features.toml", "source_roadmap = \"PRIVATE_1\"\n");
+    fixture.write_file(
+        "sim-docs/docs/generated/provenance.json",
+        "{\"source_roadmap\":\"PRIVATE_1\"}\n",
+    );
+    fixture.write_manifest(&[fixture.repo_row("sim-docs", "code", true, "src", false)]);
+
+    let report = fixture.guard();
+    let findings = report
+        .findings
+        .iter()
+        .filter(|finding| finding.rule_id == "present-tense-public-docs")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].location.ends_with("features.toml"));
 }
 
 fn lines(count: usize) -> String {

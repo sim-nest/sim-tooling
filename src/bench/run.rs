@@ -59,6 +59,8 @@ pub trait Workload<C: MonotonicClock> {
 pub struct RunConfig {
     /// Desired duration used to choose the measured iteration count.
     pub calibration_target_ns: u64,
+    /// In-process iterations used to keep process setup out of calibration.
+    pub calibration_probe_iterations: u64,
     /// Maximum permitted iterations in any invocation.
     pub max_iterations: u64,
     /// Duration after which a completed sample is classified as timed out.
@@ -71,6 +73,9 @@ impl RunConfig {
         let mut errors = Vec::new();
         if self.calibration_target_ns == 0 {
             errors.push("calibration_target_ns must be greater than zero");
+        }
+        if self.calibration_probe_iterations == 0 {
+            errors.push("calibration_probe_iterations must be greater than zero");
         }
         if self.max_iterations == 0 {
             errors.push("max_iterations must be greater than zero");
@@ -116,10 +121,14 @@ pub enum SampleStatus {
 pub struct SampleRecord {
     /// Position in the realized interleaving.
     pub schedule_index: u32,
+    /// Lifecycle phase in which this attempt ran.
+    pub phase: RunPhase,
     /// Comparison arm invoked at this position.
     pub arm: Arm,
     /// Iterations requested.
     pub iterations: u64,
+    /// Iterations the workload receipt proves were executed.
+    pub executed_iterations: Option<u64>,
     /// Raw monotonic duration, including failed invocations.
     pub duration_ns: u64,
     /// Workload counters, retained without aggregation.
@@ -139,6 +148,8 @@ pub struct RunRecord {
     pub realized_schedule: Vec<Arm>,
     /// Every measured attempt, including failures and timeouts.
     pub samples: Vec<SampleRecord>,
+    /// Every calibration, warmup, and measured attempt in execution order.
+    pub attempts: Vec<SampleRecord>,
     /// Successful duration observations suitable for summary input.
     pub observations: Vec<RawObservation>,
 }
@@ -158,17 +169,32 @@ pub fn run<C: MonotonicClock, W: Workload<C>>(
 
     phases.push(RunPhase::Calibration);
     let start = clock.now_ns();
-    workload
-        .sample(Arm::Candidate, RunPhase::Calibration, 1, clock)
+    let calibration_counters = workload
+        .sample(
+            Arm::Candidate,
+            RunPhase::Calibration,
+            config.calibration_probe_iterations,
+            clock,
+        )
         .map_err(|error| format!("calibration failed: {error}"))?;
     let probe_duration_ns = elapsed(start, clock.now_ns())?;
     let selected_iterations = calibrated_iterations(probe_duration_ns, config)?;
     let calibration = CalibrationDecision {
-        probe_iterations: 1,
+        probe_iterations: config.calibration_probe_iterations,
         probe_duration_ns,
         target_duration_ns: config.calibration_target_ns,
         selected_iterations,
     };
+    let mut attempts = vec![SampleRecord {
+        schedule_index: 0,
+        phase: RunPhase::Calibration,
+        arm: Arm::Candidate,
+        iterations: config.calibration_probe_iterations,
+        executed_iterations: Some(config.calibration_probe_iterations),
+        duration_ns: probe_duration_ns,
+        counters: calibration_counters,
+        status: SampleStatus::Completed,
+    }];
 
     phases.push(RunPhase::Warmup);
     for index in 0..spec.sampling_plan.warmup_samples {
@@ -177,9 +203,25 @@ pub fn run<C: MonotonicClock, W: Workload<C>>(
         } else {
             Arm::Candidate
         };
-        workload
-            .sample(arm, RunPhase::Warmup, selected_iterations, clock)
-            .map_err(|error| format!("warmup sample {index} failed: {error}"))?;
+        let start = clock.now_ns();
+        let result = workload.sample(arm, RunPhase::Warmup, selected_iterations, clock);
+        let duration_ns = elapsed(start, clock.now_ns())?;
+        let (counters, executed_iterations, status) = classify_attempt(
+            result,
+            selected_iterations,
+            duration_ns,
+            config.sample_timeout_ns,
+        );
+        attempts.push(SampleRecord {
+            schedule_index: index,
+            phase: RunPhase::Warmup,
+            arm,
+            iterations: selected_iterations,
+            executed_iterations,
+            duration_ns,
+            counters,
+            status,
+        });
     }
 
     phases.push(RunPhase::Measured);
@@ -190,13 +232,12 @@ pub fn run<C: MonotonicClock, W: Workload<C>>(
         let start = clock.now_ns();
         let result = workload.sample(arm, RunPhase::Measured, selected_iterations, clock);
         let duration_ns = elapsed(start, clock.now_ns())?;
-        let (counters, status) = match result {
-            Ok(counters) if duration_ns > config.sample_timeout_ns => {
-                (counters, SampleStatus::TimedOut)
-            }
-            Ok(counters) => (counters, SampleStatus::Completed),
-            Err(error) => (BTreeMap::new(), SampleStatus::Failed(error)),
-        };
+        let (counters, executed_iterations, status) = classify_attempt(
+            result,
+            selected_iterations,
+            duration_ns,
+            config.sample_timeout_ns,
+        );
         if status == SampleStatus::Completed {
             observations.push(RawObservation::new(
                 spec.content_key.clone(),
@@ -206,22 +247,50 @@ pub fn run<C: MonotonicClock, W: Workload<C>>(
                 duration_ns as f64,
             )?);
         }
-        samples.push(SampleRecord {
+        let sample = SampleRecord {
             schedule_index: u32::try_from(index).map_err(|_| "measured schedule exceeds u32")?,
+            phase: RunPhase::Measured,
             arm,
             iterations: selected_iterations,
+            executed_iterations,
             duration_ns,
             counters,
             status,
-        });
+        };
+        attempts.push(sample.clone());
+        samples.push(sample);
     }
     Ok(RunRecord {
         phases,
         calibration,
         realized_schedule,
         samples,
+        attempts,
         observations,
     })
+}
+
+fn classify_attempt(
+    result: Result<BTreeMap<String, u64>, String>,
+    iterations: u64,
+    duration_ns: u64,
+    timeout_ns: u64,
+) -> (BTreeMap<String, u64>, Option<u64>, SampleStatus) {
+    match result {
+        Ok(counters) if duration_ns > timeout_ns => {
+            (counters, Some(iterations), SampleStatus::TimedOut)
+        }
+        Ok(counters) => (counters, Some(iterations), SampleStatus::Completed),
+        Err(error) => (BTreeMap::new(), None, SampleStatus::Failed(bounded(error))),
+    }
+}
+
+fn bounded(mut diagnostic: String) -> String {
+    const LIMIT: usize = 4096;
+    if diagnostic.len() > LIMIT {
+        diagnostic.truncate(LIMIT);
+    }
+    diagnostic
 }
 
 fn elapsed(start: u64, end: u64) -> Result<u64, String> {
@@ -235,6 +304,8 @@ fn calibrated_iterations(probe_ns: u64, config: &RunConfig) -> Result<u64, Strin
     }
     let numerator = config
         .calibration_target_ns
+        .checked_mul(config.calibration_probe_iterations)
+        .ok_or_else(|| "calibration iteration arithmetic overflowed".to_owned())?
         .checked_add(probe_ns - 1)
         .ok_or_else(|| "calibration iteration arithmetic overflowed".to_owned())?;
     Ok((numerator / probe_ns).clamp(1, config.max_iterations))
@@ -384,6 +455,7 @@ mod tests {
             &spec(17),
             &RunConfig {
                 calibration_target_ns: 50,
+                calibration_probe_iterations: 1,
                 max_iterations: 100,
                 sample_timeout_ns: 60,
             },
@@ -442,6 +514,7 @@ mod tests {
             &spec(1),
             &RunConfig {
                 calibration_target_ns: 100,
+                calibration_probe_iterations: 1,
                 max_iterations: 100,
                 sample_timeout_ns: 50,
             },
@@ -473,6 +546,7 @@ mod tests {
     fn checked_calibration_rejects_zero_time_and_overflow() {
         let config = RunConfig {
             calibration_target_ns: u64::MAX,
+            calibration_probe_iterations: 2,
             max_iterations: u64::MAX,
             sample_timeout_ns: 1,
         };

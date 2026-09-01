@@ -79,6 +79,8 @@ pub struct AtelierGuardOptions {
     pub repos_manifest: Option<PathBuf>,
     /// Optional repository filter.
     pub repo_filter: Option<String>,
+    /// Optional rule filter for a focused control-plane gate.
+    pub rule_filter: Option<String>,
     /// Emit JSON instead of text.
     pub json: bool,
     /// Fail the command when error findings are present.
@@ -91,6 +93,7 @@ impl Default for AtelierGuardOptions {
             control_root: PathBuf::from("."),
             repos_manifest: None,
             repo_filter: None,
+            rule_filter: None,
             json: false,
             check: false,
         }
@@ -134,10 +137,19 @@ pub fn atelier_guard(options: AtelierGuardOptions) -> Result<AtelierGuardReport,
     if let Some(filter) = &options.repo_filter {
         repos.retain(|repo| repo.name == *filter);
     }
-    let rules = guideline_rules();
+    let mut rules = guideline_rules();
+    if let Some(filter) = &options.rule_filter
+        && !rules.iter().any(|rule| rule.id == filter)
+    {
+        return Err(format!("unknown atelier-guard rule: {filter}"));
+    }
     let mut findings = Vec::new();
     for repo in &repos {
         findings.extend(scan_repo(repo, &rules)?);
+    }
+    if let Some(filter) = &options.rule_filter {
+        rules.retain(|rule| rule.id == filter);
+        findings.retain(|finding| finding.rule_id == *filter);
     }
     Ok(AtelierGuardReport { rules, findings })
 }
@@ -155,6 +167,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
                 options.repos_manifest = Some(next_path(&mut args, "--repos-manifest")?);
             }
             "--repo" => options.repo_filter = Some(next_string(&mut args, "--repo")?),
+            "--rule" => options.rule_filter = Some(next_string(&mut args, "--rule")?),
             "--json" => options.json = true,
             "--check" => options.check = true,
             "-h" | "--help" => {
@@ -196,9 +209,9 @@ fn guideline_rules() -> Vec<GuidelineRule> {
             "present-tense-public-docs",
             "Public docs use present-tense product language",
             "AGENTS Documentation Rules",
-            GuidelineSeverity::Warning,
-            "public README, generated Markdown, and Rust comments",
-            "scan public-facing text for roadmap, history, and future wording",
+            GuidelineSeverity::Error,
+            "tracked public source, metadata, and authored documentation",
+            "reject roadmap/phase markers and backward/forward roadmap narrative outside explicit generated and provenance lanes",
             Some(
                 "Move roadmap/history language to the control-plane docs (docs/future or docs/history).",
             ),
@@ -377,7 +390,7 @@ fn pretty_json(value: &Value) -> Result<String, String> {
 
 fn print_usage() {
     println!(
-        "usage: xtask atelier-guard [--control-root PATH] [--repos-manifest PATH] [--repo NAME] [--json] [--check]"
+        "usage: xtask atelier-guard [--control-root PATH] [--repos-manifest PATH] [--repo NAME] [--rule ID] [--json] [--check]"
     );
 }
 

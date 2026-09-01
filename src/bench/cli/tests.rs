@@ -132,3 +132,31 @@ fn machine_and_human_faces_project_the_same_report_view() {
         view.baseline_samples, view.candidate_samples
     )));
 }
+
+#[test]
+fn equal_arm_identities_are_refused_before_dispatch() {
+    let build = BuildIdentity {
+        source_revision: "same".into(),
+        target: "x86_64-sim".into(),
+        profile: "release".into(),
+        features: vec![],
+        toolchain: "rustc-test".into(),
+    };
+    let identity = ArmIdentity {
+        executable_content_key: "sha256:same".into(),
+        build,
+        command_identity: "same-command".into(),
+    };
+    let command = CommandSpec {
+        program: "/immutable/workload".into(),
+        arguments: vec!["warm".into()],
+        working_directory: "/immutable".into(),
+        environment: BTreeMap::new(),
+        inherit_environment: false,
+        timeout_ms: 1,
+    };
+    assert_eq!(
+        validate_distinct_arm_values(&identity, &identity, &command, &command).unwrap_err(),
+        "baseline and candidate executable content identities are equal"
+    );
+}

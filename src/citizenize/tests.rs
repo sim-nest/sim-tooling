@@ -35,9 +35,9 @@ pub struct PlainRecord {
     assert!(syn::parse_file(&source).is_ok());
 
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("sim-citizen = \"0.2.0\""));
-    assert!(manifest.contains("sim-citizen-derive = \"0.2.0\""));
-    assert!(manifest.contains("sim-kernel = \"0.2.0\""));
+    assert!(manifest.contains("sim-citizen = \"0.3.0\""));
+    assert!(manifest.contains("sim-citizen-derive = \"0.3.0\""));
+    assert!(manifest.contains("sim-kernel = \"0.3.0\""));
     assert!(!manifest.contains("path ="));
 
     let second = citizenize_path(&fixture).unwrap();
@@ -60,9 +60,9 @@ pub struct PlainRecord {
     citizenize_path(&fixture).unwrap();
 
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("sim-citizen = \"0.2.0\""));
-    assert!(manifest.contains("sim-citizen-derive = \"0.2.0\""));
-    assert!(manifest.contains("sim-kernel = \"0.2.0\""));
+    assert!(manifest.contains("sim-citizen = \"0.3.0\""));
+    assert!(manifest.contains("sim-citizen-derive = \"0.3.0\""));
+    assert!(manifest.contains("sim-kernel = \"0.3.0\""));
     assert!(!manifest.contains("path ="));
 }
 

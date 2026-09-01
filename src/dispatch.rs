@@ -1,7 +1,8 @@
 use crate::{
     atelier, bench, citizenize, crate_catalog, file_size_gate, generator_options, index_check,
     index_doctor, index_find, index_fixpoint, index_merge, index_overlap, index_render,
-    index_route, index_seed, index_snapshot, index_vault, repo_contract, simdoc, validation_matrix,
+    index_route, index_seed, index_snapshot, index_vault, platform_inventory, repo_contract,
+    simdoc, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -81,10 +82,25 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     if matches!(args.as_slice(), [_, command, ..] if command == "index-check") {
         return index_check::run(args);
     }
+    if matches!(args.as_slice(), [_, command, ..] if command == "platform-inventory") {
+        return platform_inventory::run(args);
+    }
 
     match args.as_slice() {
         [_, command, ..] if command == "repo-contract" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
+            let options = repo_contract::parse_options(&args)?;
+            if let Some(emission) = options.emission {
+                let report = repo_contract::emit_contract_artifacts(
+                    &options.repo,
+                    &emission.names,
+                    &emission.out_dir,
+                )?;
+                println!(
+                    "repo-contract: {} package(s), {} artifact(s) emitted",
+                    report.packages, report.artifacts_changed
+                );
+                return Ok(());
+            }
             let report = repo_contract::repo_contract_for_repo(options.check, &options.repo)?;
             if options.check {
                 println!("repo-contract: generated contract files are current");
