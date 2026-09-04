@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::OnceLock};
 
 use super::{CrateInfo, DependencyMode, display_io};
 
@@ -33,13 +33,24 @@ fn dependency_spec(krate: &CrateInfo, dep: &str, mode: DependencyMode) -> String
     }
 }
 
-fn published_version(dep: &str) -> &'static str {
-    match dep {
-        "sim-citizen" => "0.3.0",
-        "sim-citizen-derive" => "0.3.0",
-        "sim-kernel" => "0.3.0",
-        _ => "0.1",
-    }
+pub(super) fn published_version(dep: &str) -> &'static str {
+    static VERSIONS: OnceLock<toml::Table> = OnceLock::new();
+    VERSIONS
+        .get_or_init(|| {
+            let manifest = toml::from_str::<toml::Value>(include_str!("../../Cargo.toml"))
+                .expect("sim-tooling Cargo.toml must parse");
+            manifest
+                .get("package")
+                .and_then(|value| value.get("metadata"))
+                .and_then(|value| value.get("sim"))
+                .and_then(|value| value.get("release-version-bindings"))
+                .and_then(toml::Value::as_table)
+                .cloned()
+                .expect("sim-tooling must declare citizenize release-version bindings")
+        })
+        .get(dep)
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("missing citizenize release-version binding for {dep}"))
 }
 
 fn has_dependency(manifest: &str, name: &str) -> bool {

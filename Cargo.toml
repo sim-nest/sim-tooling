@@ -9,6 +9,11 @@ publish = false
 repository = "https://github.com/sim-nest/sim-tooling"
 homepage = "https://github.com/sim-nest/sim-tooling"
 
+[package.metadata.sim.release-version-bindings]
+sim-citizen = "0.4.0"
+sim-citizen-derive = "0.4.0"
+sim-kernel = "0.4.0"
+
 [workspace]
 resolver = "3"
 members = [
