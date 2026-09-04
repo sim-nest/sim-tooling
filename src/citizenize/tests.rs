@@ -35,9 +35,7 @@ pub struct PlainRecord {
     assert!(syn::parse_file(&source).is_ok());
 
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("sim-citizen = \"0.3.0\""));
-    assert!(manifest.contains("sim-citizen-derive = \"0.3.0\""));
-    assert!(manifest.contains("sim-kernel = \"0.3.0\""));
+    assert_published_dependencies(&manifest);
     assert!(!manifest.contains("path ="));
 
     let second = citizenize_path(&fixture).unwrap();
@@ -60,10 +58,18 @@ pub struct PlainRecord {
     citizenize_path(&fixture).unwrap();
 
     let manifest = fs::read_to_string(fixture.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("sim-citizen = \"0.3.0\""));
-    assert!(manifest.contains("sim-citizen-derive = \"0.3.0\""));
-    assert!(manifest.contains("sim-kernel = \"0.3.0\""));
+    assert_published_dependencies(&manifest);
     assert!(!manifest.contains("path ="));
+}
+
+fn assert_published_dependencies(manifest: &str) {
+    for dependency in ["sim-citizen", "sim-citizen-derive", "sim-kernel"] {
+        let version = deps::published_version(dependency);
+        assert!(
+            manifest.contains(&format!("{dependency} = \"{version}\"")),
+            "missing configured {dependency} release dependency"
+        );
+    }
 }
 
 #[test]
