@@ -90,7 +90,12 @@ fn collect_doc_inputs(root: &Path, dir: &Path, files: &mut Vec<String>) -> Resul
         {
             if matches!(
                 name.as_ref(),
-                ".git" | ".meta-workspace" | "target" | "generated-reports" | "split-reports"
+                ".git"
+                    | ".meta-workspace"
+                    | ".sim"
+                    | "target"
+                    | "generated-reports"
+                    | "split-reports"
             ) {
                 continue;
             }
