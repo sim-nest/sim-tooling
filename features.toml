@@ -50,7 +50,6 @@ summary = "Invoke one statically bound public conformance pack over a bounded ca
 owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use check-pack only with the runtime CheckerBindingId derived from the immutable activation record and one allowed CheckScopeId. Supply sorted key=value evidence on standard input and preserve the emitted activation source, binding, subject, scope, execution, invocation, result, grade, receipt, revocation state, and observations; refusal and UnimplementedPack outcomes never satisfy a phase gate."
-claims_anchors = ["anchor/cli/xtask"]
 claims_specimens = ["spec-test/sim-tooling/src/check_pack"]
 supports = [
   "feature/sim-foundation/conformance-core",
