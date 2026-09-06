@@ -23,6 +23,8 @@
 //!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
+//! - `check-pack` -- invoke one exact public conformance pack over canonical
+//!   evidence supplied on standard input.
 //! - `bench run`, `bench compare`, `bench show`, and `bench check` -- execute,
 //!   inspect, and enforce durable benchmark artifacts.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -44,6 +46,7 @@ pub mod bench;
 
 mod cardspine;
 mod cardspine_state;
+mod check_pack;
 mod citizenize;
 mod content_digest;
 mod crate_catalog;

@@ -29,6 +29,16 @@ cargo run -p xtask -- check-file-sizes
 an entrypoint (`lib.rs`, `main.rs`, or `mod.rs`) exceeds 250 lines or any other
 Rust source file exceeds 700 lines.
 
+## Conformance Packs
+
+`cargo run -p xtask -- check-pack --checker <id> --binding <id> --subject
+<id> --scope <name>` invokes one released public conformance pack. Canonical
+sorted `key=value` evidence arrives on standard input and is limited to 16 KiB.
+The command recomputes the typed subject identity before dispatch, emits one
+`check/result-v1` JSON value, and exits nonzero for wrong scope, substituted
+subject, malformed evidence, refusal, or a declared scope whose scenarios have
+not reached its funded phase.
+
 ## Citizenize
 
 `cargo run -p xtask -- citizenize <crate-name-or-path>` rewrites public

@@ -1,8 +1,8 @@
 use crate::{
-    atelier, bench, citizenize, crate_catalog, file_size_gate, generator_options, index_check,
-    index_doctor, index_find, index_fixpoint, index_merge, index_overlap, index_render,
-    index_route, index_seed, index_snapshot, index_vault, platform_inventory, repo_contract,
-    simdoc, validation_matrix,
+    atelier, bench, check_pack, citizenize, crate_catalog, file_size_gate, generator_options,
+    index_check, index_doctor, index_find, index_fixpoint, index_merge, index_overlap,
+    index_render, index_route, index_seed, index_snapshot, index_vault, platform_inventory,
+    repo_contract, simdoc, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -38,6 +38,9 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "check-file-sizes") {
         return file_size_gate::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, ..] if command == "check-pack") {
+        return check_pack::run(args);
     }
     if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "doctor")
     {
@@ -148,4 +151,26 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
 }
 
-const USAGE_COMMANDS: &str = "repo-contract [--check] [--repo <path>]|validation-matrix [--check] [--repo <path>]|crate-catalog [--check] [--repo <path>]|citizenize [--local-paths] <crate-name-or-path>|simdoc [--check] [--rustdoc auto|skip|force]|index doctor --repo <path> --missing --out <path>|index seed --from <markdown> --out .sim/index/<name>.seed.toml|index merge --fragment <path>... --out <path> [--check]|index fixpoint --input <index.sx> --fragment <path>... --self-feature-repo <path> [--strict <selectors>]|index render --input <index.sx> --out <dir> [--check]|index export --input <index.sx> --profile <profile> --vault-root <dir> [--namespace <relative-path>] [--granularity compact|full] [--plan|--check]|index find --input <index.sx> [--json] [--surface <kind-or-id>] [--declaration-kind <kind>] [--implements <protocol>] [--resolved|--unresolved] [--feature <id-or-key>] [<query>]|index route --input <index.sx> [--json] <task>|index overlap --input <index.sx> [--clusters <report.json>] [--policy <policy.toml>] [--exceptions <classifications.tsv>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]|index snapshot --input <index.sx> --out <path> [--check]|index-check --repo <path> [--strict <category:value,...>]|check-file-sizes [--repo-root <path>]|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]";
+const USAGE_COMMANDS: &str = concat!(
+    "repo-contract [--check] [--repo <path>]",
+    "|validation-matrix [--check] [--repo <path>]",
+    "|crate-catalog [--check] [--repo <path>]",
+    "|citizenize [--local-paths] <crate-name-or-path>",
+    "|simdoc [--check] [--rustdoc auto|skip|force]",
+    "|check-pack --checker <id> --binding <id> --subject <id> --scope <name>",
+    "|index doctor --repo <path> --missing --out <path>",
+    "|index seed --from <markdown> --out .sim/index/<name>.seed.toml",
+    "|index merge --fragment <path>... --out <path> [--check]",
+    "|index fixpoint --input <index.sx> --fragment <path>... --self-feature-repo <path> [--strict <selectors>]",
+    "|index render --input <index.sx> --out <dir> [--check]",
+    "|index export --input <index.sx> --profile <profile> --vault-root <dir> [--namespace <relative-path>] [--granularity compact|full] [--plan|--check]",
+    "|index find --input <index.sx> [--json] [--surface <kind-or-id>] [--declaration-kind <kind>] [--implements <protocol>] [--resolved|--unresolved] [--feature <id-or-key>] [<query>]",
+    "|index route --input <index.sx> [--json] <task>",
+    "|index overlap --input <index.sx> [--clusters <report.json>] [--policy <policy.toml>] [--exceptions <classifications.tsv>] [--control-root <path> --repos-manifest <path>] [--json] [--strict]",
+    "|index snapshot --input <index.sx> --out <path> [--check]",
+    "|index-check --repo <path> [--strict <category:value,...>]",
+    "|check-file-sizes [--repo-root <path>]",
+    "|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]",
+    "|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]",
+    "|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]",
+);

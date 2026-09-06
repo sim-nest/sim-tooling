@@ -278,7 +278,12 @@ fn visit_for_recipes(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result
         {
             if matches!(
                 name.as_ref(),
-                ".git" | ".meta-workspace" | "target" | "generated-reports" | "split-reports"
+                ".git"
+                    | ".meta-workspace"
+                    | ".sim"
+                    | "target"
+                    | "generated-reports"
+                    | "split-reports"
             ) {
                 continue;
             }
@@ -412,9 +417,11 @@ impl GeneratedFile {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{RustdocMode, SimdocOptions};
+    use super::{RustdocMode, SimdocOptions, collect_recipe_files};
 
     #[test]
     fn simdoc_options_accept_repo_root_and_check() {
@@ -460,5 +467,27 @@ mod tests {
         let err = SimdocOptions::parse(&args).unwrap_err();
 
         assert!(err.contains("unknown simdoc argument"));
+    }
+
+    #[test]
+    fn recipe_discovery_excludes_private_work_areas() {
+        let mut root = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        root.push(format!("sim-tooling-recipe-scan-{unique}"));
+        let public = root.join("recipes/01-basics/open");
+        let private = root.join(".sim/build/recipes/copied");
+        fs::create_dir_all(&public).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        fs::write(public.join("recipe.toml"), "id = \"open\"\n").unwrap();
+        fs::write(private.join("recipe.toml"), "id = \"copied\"\n").unwrap();
+
+        assert_eq!(
+            collect_recipe_files(&root).unwrap(),
+            vec!["recipes/01-basics/open/recipe.toml"]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }
