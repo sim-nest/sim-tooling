@@ -3,8 +3,12 @@
 use std::io::Read;
 
 use serde_json::{Value, json};
-use sim_conformance_core::CheckedSubjectId;
-use sim_conformance_packs::{MemorySubject, PackRequest, PackVerdict, packs};
+use sha2::{Digest, Sha256};
+use sim_conformance_core::{
+    CheckInputClosureId, CheckScopeId, CheckedSubjectId, CheckerReceipt, ConformanceError,
+    EvidenceGrade, EvidenceProvenanceId, EvidenceSetId, PolicyId, RevocationStatus,
+};
+use sim_conformance_packs::{MemorySubject, PackRequest, PackVerdict, find_pack, packs};
 use sim_kernel::{ContentId, Datum, Symbol};
 
 const MAX_EVIDENCE_BYTES: u64 = 16_384;
@@ -95,6 +99,49 @@ fn execute(options: &Options, bytes: &[u8]) -> Result<Value, Value> {
             &format!("expected {computed}"),
         ));
     }
+    let spec = find_pack(&options.checker).ok_or_else(|| {
+        refusal(
+            options,
+            "unknown-checker",
+            &format!("no static binding for {}", options.checker),
+        )
+    })?;
+    let binding = spec
+        .checker_binding()
+        .map_err(|error| refusal(options, "invalid-static-binding", &error.to_string()))?;
+    let expected_binding = render(binding.id().content_id());
+    if options.binding != expected_binding {
+        return Err(refusal(
+            options,
+            "wrong-binding",
+            &format!("expected {expected_binding}"),
+        ));
+    }
+    let scope = CheckScopeId::from_text(&options.scope)
+        .map_err(|error| refusal(options, "scope-identity", &error.to_string()))?;
+    let input_closure = CheckInputClosureId::from_fields(vec![(
+        Symbol::qualified("conformance", "evidence"),
+        Datum::String(canonical.clone()),
+    )])
+    .map_err(|error| refusal(options, "input-closure-identity", &error.to_string()))?;
+    let invocation = binding
+        .instantiate(
+            spec.checker_code_id()
+                .map_err(|error| refusal(options, "checker-code-identity", &error.to_string()))?,
+            spec.pack_id()
+                .map_err(|error| refusal(options, "pack-identity", &error.to_string()))?,
+            subject.clone(),
+            scope,
+            input_closure,
+        )
+        .map_err(|error| {
+            let code = if error == ConformanceError::UnauthorizedScope {
+                "wrong-scope"
+            } else {
+                "invocation-refused"
+            };
+            refusal(options, code, &error.to_string())
+        })?;
     let request = PackRequest {
         checker: &options.checker,
         binding: &options.binding,
@@ -106,19 +153,61 @@ fn execute(options: &Options, bytes: &[u8]) -> Result<Value, Value> {
         PackVerdict::Pass {
             result,
             observations,
-        } => Ok(json!({
-            "shape": "check/result-v1",
-            "outcome": "pass",
-            "checker": options.checker,
-            "binding": options.binding,
-            "subject": options.subject,
-            "scope": options.scope,
-            "result": render(result.content_id()),
-            "observations": observations.into_iter().map(|value| json!({
-                "key": value.key,
-                "value": value.value,
-            })).collect::<Vec<_>>(),
-        })),
+        } => {
+            let grade = if options.checker == "checker/c-release" {
+                EvidenceGrade::Release
+            } else {
+                EvidenceGrade::Bootstrap
+            };
+            let provenance = provenance_id(&invocation)
+                .map_err(|error| refusal(options, "provenance-identity", &error.to_string()))?;
+            let support = EvidenceSetId::from_fields(vec![(
+                Symbol::qualified("conformance", "input-closure"),
+                invocation.input_closure().to_datum(),
+            )])
+            .map_err(|error| refusal(options, "support-identity", &error.to_string()))?;
+            let policy = PolicyId::from_text("sim-conformance-packs/revocation-current-v1")
+                .map_err(|error| refusal(options, "policy-identity", &error.to_string()))?;
+            let receipt = CheckerReceipt::passing(
+                &invocation,
+                result.clone(),
+                grade,
+                provenance,
+                policy,
+                support,
+                RevocationStatus::Current,
+            )
+            .map_err(|error| refusal(options, "receipt-refused", &error.to_string()))?;
+            receipt
+                .verify(&binding, &invocation, RevocationStatus::Current)
+                .map_err(|error| refusal(options, "receipt-verification", &error.to_string()))?;
+            Ok(json!({
+                "shape": "check/result-v1",
+                "outcome": "pass",
+                "checker": options.checker,
+                "activation_binding": spec.activation_binding,
+                "binding": options.binding,
+                "checker_code": render(invocation.checker_code().content_id()),
+                "pack": render(invocation.pack().content_id()),
+                "subject": options.subject,
+                "scope": options.scope,
+                "scope_id": render(invocation.scope().content_id()),
+                "execution": render(invocation.execution().id().content_id()),
+                "input_closure": render(invocation.input_closure().content_id()),
+                "invocation": render(invocation.id().content_id()),
+                "result": render(result.content_id()),
+                "grade": if grade == EvidenceGrade::Release { "release" } else { "bootstrap" },
+                "provenance": render(receipt.provenance().content_id()),
+                "policy": render(receipt.policy().content_id()),
+                "support": render(receipt.support().content_id()),
+                "receipt": render(receipt.id().content_id()),
+                "revocation": "current",
+                "observations": observations.into_iter().map(|value| json!({
+                    "key": value.key,
+                    "value": value.value,
+                })).collect::<Vec<_>>(),
+            }))
+        }
         PackVerdict::UnimplementedPack {
             checker,
             scope,
@@ -223,6 +312,26 @@ fn subject_id(
     )])
 }
 
+fn provenance_id(
+    invocation: &sim_conformance_core::CheckInvocation,
+) -> Result<EvidenceProvenanceId, sim_conformance_core::ConformanceError> {
+    let adapter_digest = Sha256::digest(include_bytes!("check_pack.rs"));
+    EvidenceProvenanceId::from_fields(vec![
+        (
+            Symbol::qualified("conformance", "adapter"),
+            Datum::String("sim-tooling/check-pack".into()),
+        ),
+        (
+            Symbol::qualified("conformance", "adapter-source-sha256"),
+            Datum::Bytes(adapter_digest.to_vec()),
+        ),
+        (
+            Symbol::qualified("conformance", "execution"),
+            invocation.execution().id().to_datum(),
+        ),
+    ])
+}
+
 fn refusal(options: &Options, code: &str, detail: &str) -> Value {
     json!({
         "shape": "check/result-v1",
@@ -253,20 +362,26 @@ fn usage(program: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     // conformance: the host adapter binds canonical evidence to one exact
-    // checker, activation binding, subject, and scope and fails closed on
+    // checker, typed runtime binding, subject, and scope and fails closed on
     // substitution or noncanonical input.
 
     fn options(checker: &str, scope: &str, evidence: &str) -> Options {
         let subject = subject_id(evidence).unwrap();
         Options {
             checker: checker.into(),
-            binding: sim_conformance_packs::find_pack(checker)
-                .unwrap()
-                .binding
-                .into(),
+            binding: render(
+                sim_conformance_packs::find_pack(checker)
+                    .unwrap()
+                    .checker_binding()
+                    .unwrap()
+                    .id()
+                    .content_id(),
+            ),
             subject: render(subject.content_id()),
             scope: scope.into(),
         }
@@ -282,10 +397,49 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output["outcome"], "pass");
+        assert_eq!(output["grade"], "bootstrap");
+        assert!(output["invocation"].as_str().unwrap().contains(':'));
+        assert!(output["receipt"].as_str().unwrap().contains(':'));
         assert_eq!(
             output["observations"][0]["key"],
             "identity.cross-architecture-confirmed"
         );
+    }
+
+    #[test]
+    fn production_binding_yields_four_exact_receipts_deterministically() {
+        let facts = |variant: &str| {
+            format!(
+                "identity.all-constructions-funded=true\nidentity.cross-architecture-confirmed=true\nidentity.cross-toolchain-confirmed=true\nidentity.domain-tags-unique=true\nidentity.ephemeral-authority-absent=true\nidentity.expected-constructions=31\nidentity.registered-constructions=31\nidentity.semantic-digests-256-bit=true\nidentity.semantic-storage-separated=true\nsubject.variant={variant}\n"
+            )
+        };
+        let mut invocations = BTreeSet::new();
+        let mut receipts = BTreeSet::new();
+        for variant in ["a", "b"] {
+            let evidence = facts(variant);
+            for scope in ["identity/register", "identity/vectors"] {
+                let options = options("checker/c-id", scope, &evidence);
+                let first = execute(&options, evidence.as_bytes()).unwrap();
+                let second = execute(&options, evidence.as_bytes()).unwrap();
+                assert_eq!(first, second);
+                invocations.insert(first["invocation"].as_str().unwrap().to_owned());
+                receipts.insert(first["receipt"].as_str().unwrap().to_owned());
+            }
+        }
+        assert_eq!(invocations.len(), 4);
+        assert_eq!(receipts.len(), 4);
+    }
+
+    #[test]
+    fn release_pack_issues_release_grade_only_after_every_fact_passes() {
+        let evidence = "release.audit-passed=true\nrelease.authorship-passed=true\nrelease.boot-smoke-passed=true\nrelease.generated-converged=true\nrelease.mirrors-current=true\nrelease.owner-docs-passed=true\nrelease.owner-validation-passed=true\nrelease.packages-assembled=true\nrelease.pins-exact=true\nrelease.publication-confirmed=true\nrelease.standalone-ci-green=true\nrelease.tags-exact=true\n";
+        let output = execute(
+            &options("checker/c-release", "release/nv12-01", evidence),
+            evidence.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(output["grade"], "release");
+        assert_eq!(output["revocation"], "current");
     }
 
     #[test]
@@ -300,6 +454,12 @@ mod tests {
             "subject-mismatch"
         );
         assert!(parse_evidence("b=true\na=true\n").is_err());
+
+        let wrong_scope = options("checker/c-id", "identity/not-bound", evidence);
+        assert_eq!(
+            execute(&wrong_scope, evidence.as_bytes()).unwrap_err()["reason"],
+            "wrong-scope"
+        );
 
         let mut wrong_binding = options("checker/c-id", "identity/vectors", evidence);
         wrong_binding.binding =

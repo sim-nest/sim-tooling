@@ -35,9 +35,10 @@ Rust source file exceeds 700 lines.
 <id> --scope <name>` invokes one released public conformance pack. Canonical
 sorted `key=value` evidence arrives on standard input and is limited to 16 KiB.
 The command recomputes the typed subject identity before dispatch, emits one
-`check/result-v1` JSON value, and exits nonzero for wrong scope, substituted
-subject, malformed evidence, refusal, or a declared scope whose scenarios have
-not reached its funded phase.
+`check/result-v1` JSON value with the exact typed execution, invocation, grade,
+and verified checker-receipt identities, and exits nonzero for wrong scope,
+substituted subject or binding, malformed evidence, refusal, or a declared
+scope whose scenarios have not reached its funded phase.
 
 ## Citizenize
 
