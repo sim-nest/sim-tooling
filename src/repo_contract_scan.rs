@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use serde_json::{Value, json};
@@ -182,6 +183,10 @@ fn recipe_book_entry(
 }
 
 pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
+    if let Some(files) = git_visible_input_files(repo) {
+        return files;
+    }
+
     let mut files = Vec::new();
     for path in [
         "Cargo.toml",
@@ -201,6 +206,71 @@ pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
     files.sort();
     files.dedup();
     files
+}
+
+fn git_visible_input_files(repo: &Path) -> Option<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let paths = String::from_utf8(output.stdout).ok()?;
+    let mut files = paths
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(Path::new)
+        .filter(|path| is_contract_input(path))
+        .map(|path| repo.join(path))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    Some(files)
+}
+
+fn is_contract_input(path: &Path) -> bool {
+    if path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".git" | ".sim" | "target" | ".meta-workspace" | "sim-tooling")
+        )
+    }) {
+        return false;
+    }
+
+    let relative = path
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    if matches!(
+        relative.as_str(),
+        "Cargo.toml" | CONTRACT_CUT_PATH | "features.toml" | "docs/generated/citizens.md"
+    ) {
+        return true;
+    }
+    if matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("Cargo.toml" | "book.toml" | "recipe.toml")
+    ) {
+        return true;
+    }
+    path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+        && matches!(
+            path.components()
+                .next()
+                .and_then(|component| component.as_os_str().to_str()),
+            Some("src" | "crates")
+        )
 }
 
 fn scan_reflection_cards(repo: &Path, cards: &mut BTreeMap<String, Value>) {
@@ -474,8 +544,10 @@ mod tests {
         fs::create_dir_all(root.join("crates/sim-fixture/src")).unwrap();
         fs::create_dir_all(root.join(".sim/local-guard/src")).unwrap();
         fs::create_dir_all(root.join("sim-tooling/src")).unwrap();
+        fs::create_dir_all(root.join("ignored-helper")).unwrap();
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
         fs::write(root.join("Cargo.lock"), "# local ignored lockfile\n").unwrap();
+        fs::write(root.join(".gitignore"), "/ignored-helper/\n").unwrap();
         fs::write(root.join("features.toml"), "schema = \"sim.features\"\n").unwrap();
         fs::write(root.join("src/lib.rs"), "").unwrap();
         fs::write(root.join("src/nested/tool.rs"), "").unwrap();
@@ -492,6 +564,19 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("sim-tooling/src/lib.rs"), "").unwrap();
+        fs::write(
+            root.join("ignored-helper/Cargo.toml"),
+            "[package]\nname = \"ignored-helper\"\n",
+        )
+        .unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
 
         let paths = input_files(&root)
             .into_iter()
@@ -513,6 +598,7 @@ mod tests {
         assert!(!paths.contains(&".sim/local-guard/src/lib.rs".to_owned()));
         assert!(!paths.contains(&"sim-tooling/Cargo.toml".to_owned()));
         assert!(!paths.contains(&"sim-tooling/src/lib.rs".to_owned()));
+        assert!(!paths.contains(&"ignored-helper/Cargo.toml".to_owned()));
 
         fs::remove_dir_all(root).unwrap();
     }
