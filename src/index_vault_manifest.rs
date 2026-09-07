@@ -9,7 +9,9 @@ use crate::{content_digest::content_digest, generated_artifact::ArtifactSet};
 pub(crate) const MANIFEST_FILE: &str = ".sim-index-vault-manifest.json";
 const MANIFEST_SCHEMA_V1: &str = "sim.index-vault-manifest.v1";
 const MANIFEST_SCHEMA_V2: &str = "sim.index-vault-manifest.v2";
+const MANIFEST_SCHEMA_V3: &str = "sim.index-vault-manifest.v3";
 const CODEC_ID: &str = "codec/index-vault";
+const SEMANTIC_DIGEST_ALGORITHM: &str = "core/sha256-datum-v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LegacyVaultManifest {
@@ -53,10 +55,10 @@ impl LegacyVaultManifest {
         };
         reject_empty("namespace", &result.namespace)?;
         reject_empty("profile", &result.profile)?;
-        validate_digest("index_digest", &result.index_digest)?;
+        validate_byte_digest("index_digest", &result.index_digest)?;
         for (path, digest) in &result.artifacts {
             reject_empty("artifact path", path)?;
-            validate_digest(path, digest)?;
+            validate_byte_digest(path, digest)?;
         }
         Ok(result)
     }
@@ -91,9 +93,9 @@ impl VaultManifestSeed {
         };
         reject_empty("profile", &seed.profile)?;
         reject_empty("granularity", &seed.granularity)?;
-        validate_digest("index_digest", &seed.index_digest)?;
-        validate_digest("projection_digest", &seed.projection_digest)?;
-        validate_digest("bundle_root", &seed.bundle_root)?;
+        validate_byte_digest("index_digest", &seed.index_digest)?;
+        validate_semantic_digest("projection_digest", &seed.projection_digest)?;
+        validate_semantic_digest("bundle_root", &seed.bundle_root)?;
         Ok(seed)
     }
 }
@@ -148,7 +150,10 @@ impl VaultManifest {
         if schema == MANIFEST_SCHEMA_V1 {
             return Err("managed namespace uses read-only manifest v1; rerun with --migrate-profile <exact-v1-profile> and a matching --profile v2 target".into());
         }
-        if schema != MANIFEST_SCHEMA_V2 {
+        if schema == MANIFEST_SCHEMA_V2 {
+            return Err("managed namespace uses retired manifest v2 identity spellings; rebuild it from the current codec-owned semantic identities".into());
+        }
+        if schema != MANIFEST_SCHEMA_V3 {
             return Err(format!("unsupported manifest schema `{schema}`"));
         }
         let allowed = [
@@ -184,7 +189,7 @@ impl VaultManifest {
     pub(crate) fn to_bytes(&self) -> Result<Vec<u8>, String> {
         self.validate_shape()?;
         let mut text = serde_json::to_string_pretty(&json!({
-            "schema": MANIFEST_SCHEMA_V2,
+            "schema": MANIFEST_SCHEMA_V3,
             "codec": self.codec,
             "profile": self.profile,
             "granularity": self.granularity,
@@ -226,15 +231,15 @@ impl VaultManifest {
         reject_empty("namespace", &self.namespace)?;
         reject_empty("profile", &self.profile)?;
         reject_empty("granularity", &self.granularity)?;
-        validate_digest("index_digest", &self.index_digest)?;
+        validate_byte_digest("index_digest", &self.index_digest)?;
         if self.codec != CODEC_ID {
             return Err(format!("unsupported manifest codec `{}`", self.codec));
         }
-        validate_digest("projection_digest", &self.projection_digest)?;
-        validate_digest("bundle_root", &self.bundle_root)?;
+        validate_semantic_digest("projection_digest", &self.projection_digest)?;
+        validate_semantic_digest("bundle_root", &self.bundle_root)?;
         for (path, digest) in &self.artifacts {
             reject_empty("artifact path", path)?;
-            validate_digest(path, digest)?;
+            validate_byte_digest(path, digest)?;
         }
         Ok(())
     }
@@ -251,7 +256,7 @@ fn reject_empty(name: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_digest(name: &str, digest: &str) -> Result<(), String> {
+fn validate_byte_digest(name: &str, digest: &str) -> Result<(), String> {
     let Some(hex) = digest.strip_prefix("sha256:") else {
         return Err(format!("manifest {name} digest must start with `sha256:`"));
     };
@@ -264,6 +269,28 @@ fn validate_digest(name: &str, digest: &str) -> Result<(), String> {
         return Err(format!(
             "manifest {name} digest must be a lowercase sha256 hex digest"
         ));
+    }
+    Ok(())
+}
+
+fn validate_semantic_digest(name: &str, digest: &str) -> Result<(), String> {
+    let prefix = format!("{SEMANTIC_DIGEST_ALGORITHM}:");
+    let Some(hex) = digest.strip_prefix(&prefix) else {
+        return Err(format!(
+            "manifest {name} identity must use `{SEMANTIC_DIGEST_ALGORITHM}`"
+        ));
+    };
+    validate_lower_hex(name, hex, "semantic identity")
+}
+
+fn validate_lower_hex(name: &str, hex: &str, role: &str) -> Result<(), String> {
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!(
+            "manifest {name} {role} must contain 32 bytes of hex"
+        ));
+    }
+    if hex.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err(format!("manifest {name} {role} must use lowercase hex"));
     }
     Ok(())
 }

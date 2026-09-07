@@ -279,7 +279,7 @@ impl ManagedNamespace {
             entry.bytes = fs::read(self.target.join(&entry.path))
                 .map_err(|err| format!("read managed vault artifact {}: {err}", entry.path))?;
         }
-        crate::index_vault::refresh_bundle_digests(&mut current);
+        crate::index_vault::refresh_bundle_identities(&mut current)?;
         Ok(current)
     }
 
@@ -518,7 +518,7 @@ fn bundle_from_root(root: &Path, expected: &VaultBundle) -> Result<VaultBundle, 
         entry.bytes = fs::read(root.join(&entry.path))
             .map_err(|error| format!("read staged vault artifact `{}`: {error}", entry.path))?;
     }
-    crate::index_vault::refresh_bundle_digests(&mut bundle);
+    crate::index_vault::refresh_bundle_identities(&mut bundle)?;
     Ok(bundle)
 }
 

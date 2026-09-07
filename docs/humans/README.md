@@ -1299,7 +1299,7 @@ use sim_kernel::EncodePosition;
 
 use crate::{
     index_vault::{
-        ExportMode, IndexExportOptions, export, refresh_bundle_digests, semantic_verify,
+        ExportMode, IndexExportOptions, export, refresh_bundle_identities, semantic_verify,
     },
     index_vault_manifest::{MANIFEST_FILE, VaultManifest},
 };
@@ -1473,7 +1473,7 @@ fn verify_rejects_a_semantically_edited_caller_bundle() {
         .find(|entry| entry.note_kind.is_some())
         .unwrap();
     note.bytes.extend_from_slice(b"\nsemantic edit\n");
-    refresh_bundle_digests(&mut bundle);
+    refresh_bundle_identities(&mut bundle).unwrap();
     assert_contains(
         semantic_verify(&bundle, &projection).unwrap_err(),
         "verify vault semantics",
@@ -2208,7 +2208,7 @@ fn v1_requires_explicit_migration_and_migration_is_idempotent() {
     assert!(
         fs::read_to_string(target.join(MANIFEST_FILE))
             .unwrap()
-            .contains("manifest.v2")
+            .contains("manifest.v3")
     );
     let again = namespace
         .migrate_v1(
@@ -2400,10 +2400,62 @@ fn seed(profile: &str) -> VaultManifestSeed {
             ("anchors".to_owned(), 2),
             ("features".to_owned(), 3),
         ]),
-        "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
-        "sha256:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
+        "core/sha256-datum-v1:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
+        "core/sha256-datum-v1:7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0",
     )
     .unwrap()
+}
+
+#[test]
+fn manifest_refuses_semantic_and_byte_identity_role_crossings() {
+    let hex = "7040c16de1e23dddf77df8ff8043c2bee23b42b47a0f326e5e124ae9bc2178e0";
+    let coverage = BTreeMap::new();
+    let semantic = format!("core/sha256-datum-v1:{hex}");
+
+    assert!(
+        VaultManifestSeed::new(
+            "portable-markdown-v2",
+            "compact",
+            semantic.clone(),
+            coverage.clone(),
+            semantic.clone(),
+            semantic.clone(),
+        )
+        .unwrap_err()
+        .contains("must start with `sha256:`")
+    );
+    assert!(
+        VaultManifestSeed::new(
+            "portable-markdown-v2",
+            "compact",
+            format!("sha256:{hex}"),
+            coverage,
+            format!("sha256:{hex}"),
+            semantic.clone(),
+        )
+        .unwrap_err()
+        .contains("must use `core/sha256-datum-v1`")
+    );
+
+    let retired = format!(
+        r#"{{
+  "schema": "sim.index-vault-manifest.v2",
+  "codec": "codec/index-vault",
+  "profile": "portable-markdown-v2",
+  "granularity": "compact",
+  "index_digest": "sha256:{hex}",
+  "projection_digest": "sha256:{hex}",
+  "bundle_root": "sha256:{hex}",
+  "namespace": "SIM-Index",
+  "coverage": {{}},
+  "artifacts": {{}}
+}}"#
+    );
+    assert!(
+        VaultManifest::from_bytes(retired.as_bytes())
+            .unwrap_err()
+            .contains("retired manifest v2 identity spellings")
+    );
 }
 
 fn read_manifest(root: &Path) -> VaultManifest {
