@@ -16,7 +16,7 @@ use sim_kernel::EncodePosition;
 
 use crate::{
     index_vault::{
-        ExportMode, IndexExportOptions, export, refresh_bundle_digests, semantic_verify,
+        ExportMode, IndexExportOptions, export, refresh_bundle_identities, semantic_verify,
     },
     index_vault_manifest::{MANIFEST_FILE, VaultManifest},
 };
@@ -190,7 +190,7 @@ fn verify_rejects_a_semantically_edited_caller_bundle() {
         .find(|entry| entry.note_kind.is_some())
         .unwrap();
     note.bytes.extend_from_slice(b"\nsemantic edit\n");
-    refresh_bundle_digests(&mut bundle);
+    refresh_bundle_identities(&mut bundle).unwrap();
     assert_contains(
         semantic_verify(&bundle, &projection).unwrap_err(),
         "verify vault semantics",

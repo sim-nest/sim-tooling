@@ -6,13 +6,13 @@ use crate::{
     index_render::load_doc,
     index_vault_manifest::{VaultManifestSeed, sha256_digest},
 };
-use sha2::{Digest, Sha256};
 use sim_codec_index_vault::{
-    VaultBundle, VaultEncoder, VaultVerification, legacy_projection_v1, resolve_profile, verify_v2,
+    VaultBundle, VaultEncoder, VaultVerification, legacy_projection_v1,
+    refresh_bundle_identities as refresh_codec_bundle_identities, resolve_profile, verify_v2,
 };
 use sim_index_core::IndexRow;
 use sim_index_vault_core::{VaultGranularity, VaultProjection};
-use sim_kernel::{ContentId, Symbol};
+use sim_kernel::ContentId;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 const MAX_MISMATCHES: usize = 64;
@@ -187,8 +187,8 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
         granularity_label(options.granularity),
         sha256_digest(&input_bytes),
         manifest_coverage(&bundle, &family_counts),
-        content_text(&bundle.projection_digest),
-        content_text(&bundle.bundle_root),
+        content_text(bundle.projection_digest.content_id()),
+        content_text(bundle.bundle_root.content_id()),
     )?;
     let namespace = ManagedNamespace::open(options.vault_root, options.namespace)?;
     let plan = namespace.plan(&seed, &artifacts);
@@ -243,7 +243,7 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
     Ok(IndexExportReport {
         mode: options.mode,
         profile_id: profile.id.as_str().into(),
-        projection_identity: content_text(&bundle.projection_digest),
+        projection_identity: content_text(bundle.projection_digest.content_id()),
         namespace: diff.namespace,
         granularity: granularity_label(bundle.granularity).into(),
         family_counts,
@@ -256,7 +256,7 @@ pub(crate) fn export(options: IndexExportOptions) -> Result<IndexExportReport, S
         byte_count: plan.byte_count,
         changed_artifacts: diff.changed_artifacts,
         unchanged_artifacts: diff.unchanged_artifacts,
-        bundle_root: content_text(&bundle.bundle_root),
+        bundle_root: content_text(bundle.bundle_root.content_id()),
         verified,
         mismatch_count,
         target: plan.target,
@@ -323,34 +323,17 @@ fn granularity_label(v: VaultGranularity) -> &'static str {
 }
 fn content_text(id: &ContentId) -> String {
     format!(
-        "sha256:{}",
+        "{}:{}",
+        id.algorithm,
         id.bytes
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     )
 }
-pub(crate) fn refresh_bundle_digests(bundle: &mut VaultBundle) {
-    for e in &mut bundle.entries {
-        e.content_digest = content_id(b"sim.index-vault.content.v2\0", &e.bytes);
-    }
-    let mut h = Sha256::new();
-    h.update(b"sim.index-vault.bundle.v2\0");
-    for e in &bundle.entries {
-        h.update(e.path.as_bytes());
-        h.update([0]);
-        h.update(e.content_digest.bytes);
-    }
-    bundle.bundle_root = finish(h);
-}
-fn content_id(domain: &[u8], bytes: &[u8]) -> ContentId {
-    let mut h = Sha256::new();
-    h.update(domain);
-    h.update(bytes);
-    finish(h)
-}
-fn finish(h: Sha256) -> ContentId {
-    ContentId::from_bytes(Symbol::qualified("core", "sha256"), h.finalize().into())
+pub(crate) fn refresh_bundle_identities(bundle: &mut VaultBundle) -> Result<(), String> {
+    refresh_codec_bundle_identities(bundle)
+        .map_err(|error| format!("refresh vault identities: {error}"))
 }
 fn set_mode(slot: &mut Option<ExportMode>, value: ExportMode) -> Result<(), String> {
     if slot.is_some() {
