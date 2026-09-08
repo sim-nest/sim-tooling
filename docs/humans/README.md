@@ -1057,13 +1057,15 @@ mod tests {
     #[test]
     fn release_pack_issues_release_grade_only_after_every_fact_passes() {
         let evidence = "release.audit-passed=true\nrelease.authorship-passed=true\nrelease.boot-smoke-passed=true\nrelease.generated-converged=true\nrelease.mirrors-current=true\nrelease.owner-docs-passed=true\nrelease.owner-validation-passed=true\nrelease.packages-assembled=true\nrelease.pins-exact=true\nrelease.publication-confirmed=true\nrelease.standalone-ci-green=true\nrelease.tags-exact=true\n";
-        let output = execute(
-            &options("checker/c-release", "release/nv12-01", evidence),
-            evidence.as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(output["grade"], "release");
-        assert_eq!(output["revocation"], "current");
+        for scope in ["release/nv12-01", "release/nv12-06"] {
+            let output = execute(
+                &options("checker/c-release", scope, evidence),
+                evidence.as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(output["grade"], "release");
+            assert_eq!(output["revocation"], "current");
+        }
     }
 
     #[test]
