@@ -46,10 +46,10 @@ claims_specimens = [
 [[feature]]
 id = "feature/sim-tooling/conformance-pack-invocation"
 title = "Exact conformance-pack invocation"
-summary = "Invoke one statically bound public conformance pack over a bounded canonical evidence projection, recompute its checked-subject identity, and emit one verified typed invocation and receipt."
+summary = "Invoke one statically bound public conformance pack over a bounded canonical evidence projection and bind its checked result to an exact SDK-owner-issued currentness selection and receipt-specific fresh observation."
 owner = "crate/xtask"
 audiences = ["code", "framework"]
-guidance = "Use check-pack only with the runtime CheckerBindingId derived from the immutable activation record and one allowed CheckScopeId. Supply sorted key=value evidence on standard input and preserve the emitted activation source, binding, subject, scope, execution, invocation, result, grade, receipt, revocation state, and observations; refusal and UnimplementedPack outcomes never satisfy a phase gate."
+guidance = "Call the in-process check-pack adapter only with the runtime CheckerBindingId derived from the immutable activation record, one allowed CheckScopeId, an already qualified SDK-owner-issued CheckerRevocationSet, and the independently selected exact current head. Preserve the emitted activation source, binding, subject, scope, execution, invocation, result, grade, receipt, revocation issuer/source/key/set/head/receipt, and observations. Missing, stale, revoked, substituted, refusal, and UnimplementedPack outcomes never satisfy a phase gate. The bare process command refuses until semantic admission supplies the qualified owner object; do not decode text into authority."
 claims_specimens = ["spec-test/sim-tooling/src/check_pack"]
 supports = [
   "feature/sim-foundation/conformance-core",

@@ -3,10 +3,10 @@
   "generated_by": "cargo run -p xtask -- simdoc",
   "generation_timestamp": "2026-07-12T22:49:46+02:00",
   "generator": "xtask repo-contract v1",
-  "git_commit": "e21080f04ce797e518402943ef447c17825eec9a",
+  "git_commit": "e55a38f6be1ec8f275f0c8daeae56cbdd352ea0a",
   "repo": "sim-tooling",
   "schema": "sim.provenance.v1",
-  "source_commit": "e21080f04ce797e518402943ef447c17825eec9a",
+  "source_commit": "e55a38f6be1ec8f275f0c8daeae56cbdd352ea0a",
   "source_remote": "https://github.com/sim-nest/sim-tooling",
   "validation_commands": [
     "cargo fmt --all --check",
@@ -19,9 +19,9 @@
     "cargo run -p xtask -- validation-matrix --check --repo .",
     "cargo run -p xtask -- crate-catalog --check --repo ."
   ],
-  "workspace_hash": "c67418ad05f44c4c",
+  "workspace_hash": "7c51ac2b1159bd5b",
   "workspace_hash_algorithm": "fnv1a64",
-  "workspace_hash_input_count": 130,
+  "workspace_hash_input_count": 131,
   "workspace_hash_inputs": [
     "Cargo.toml",
     "features.toml",
@@ -80,6 +80,7 @@
     "src/cardspine.rs",
     "src/cardspine_state.rs",
     "src/check_pack.rs",
+    "src/check_pack_test_support.rs",
     "src/citizenize/command.rs",
     "src/citizenize/deps.rs",
     "src/citizenize/edit.rs",

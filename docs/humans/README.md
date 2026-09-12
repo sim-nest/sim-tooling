@@ -18,7 +18,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | Feature | Subject | Specimens | Summary |
 | --- | --- | ---: | --- |
 | `feature/sim-tooling/generated-docs` | `crate/xtask` | 2 | Generate repo contracts, feature maps, card indexes, index fragments and claim certificates, and managed vault note namespaces through xtask; selected repo-contract artifacts can also be emitted without mutating source. |
-| `feature/sim-tooling/conformance-pack-invocation` | `crate/xtask` | 1 | Invoke one statically bound public conformance pack over a bounded canonical evidence projection, recompute its checked-subject identity, and emit one verified typed invocation and receipt. |
+| `feature/sim-tooling/conformance-pack-invocation` | `crate/xtask` | 1 | Invoke one statically bound public conformance pack over a bounded canonical evidence projection and bind its checked result to an exact SDK-owner-issued currentness selection and receipt-specific fresh observation. |
 | `feature/sim-index/core` | `crate/xtask` | 1 | Generate, query, route, prove, and check duplicate implementation overlap, benchmark ownership, and source-backed authored composition claims in the SIM Index graph as a checked constellation surface. |
 | `feature/sim-index/vault-export` | `crate/xtask` | 2 | Load the public SIM Index, delegate complete vault projection and Markdown bundle encoding to their public owners, and materialize the resulting artifacts in one managed namespace. |
 | `feature/sim-tooling/benchmark-environment-compatibility` | `crate/xtask` | 1 | Probe typed host and build evidence and refuse benchmark comparisons when policy-required material fields are unavailable or differ. |
@@ -624,15 +624,16 @@ Source `src/check_pack.rs`:
 ```rust
 //! Exact conformance-pack command adapter.
 
-use std::io::Read;
-
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sim_conformance_core::{
-    CheckInputClosureId, CheckScopeId, CheckedSubjectId, CheckerReceipt, ConformanceError,
-    EvidenceGrade, EvidenceProvenanceId, EvidenceSetId, PolicyId, RevocationStatus,
+    CheckInputClosureId, CheckScopeId, CheckedSubjectId, CheckerReceipt, CheckerRevocationHeadId,
+    CheckerRevocationKey, CheckerRevocationSet, ConformanceError, EvidenceGrade,
+    EvidenceProvenanceId, EvidenceSetId, RevocationStatus,
 };
-use sim_conformance_packs::{MemorySubject, PackRequest, PackVerdict, find_pack, packs};
+use sim_conformance_packs::{
+    MemorySubject, PackRequest, PackVerdict, find_pack, operation_local_policy_id, packs,
+};
 use sim_kernel::{ContentId, Datum, Symbol};
 
 const MAX_EVIDENCE_BYTES: u64 = 16_384;
@@ -640,29 +641,39 @@ const MAX_FACTS: usize = 256;
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = Options::parse(&args)?;
-    let mut bytes = Vec::new();
-    std::io::stdin()
-        .take(MAX_EVIDENCE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("check-pack could not read evidence: {error}"))?;
-    let output = execute(&options, &bytes).map_err(|failure| failure.to_string())?;
-    println!(
-        "{}",
-        serde_json::to_string(&output)
-            .map_err(|error| format!("check-pack could not encode result: {error}"))?
+    let output = refusal(
+        &options,
+        "owner-currentness-required",
+        "check-pack receipt issuance requires an in-process qualified SDK owner revocation set and independently selected current head",
     );
-    Ok(())
+    Err(output.to_string())
 }
 
+/// Exact identities supplied to one conformance-pack invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Options {
+pub struct CheckPackOptions {
     checker: String,
     binding: String,
     subject: String,
     scope: String,
 }
 
-impl Options {
+impl CheckPackOptions {
+    /// Constructs a request without treating any string as currentness authority.
+    pub fn new(
+        checker: impl Into<String>,
+        binding: impl Into<String>,
+        subject: impl Into<String>,
+        scope: impl Into<String>,
+    ) -> Self {
+        Self {
+            checker: checker.into(),
+            binding: binding.into(),
+            subject: subject.into(),
+            scope: scope.into(),
+        }
+    }
+
     fn parse(args: &[String]) -> Result<Self, String> {
         if args.get(1).map(String::as_str) != Some("check-pack") {
             return Err(usage(args.first().map_or("xtask", String::as_str)));
@@ -700,7 +711,20 @@ impl Options {
     }
 }
 
-fn execute(options: &Options, bytes: &[u8]) -> Result<Value, Value> {
+type Options = CheckPackOptions;
+
+/// Runs one exact pack and binds its passing result to owner currentness.
+///
+/// `currentness` must come from the independently qualified SDK owner boundary;
+/// this adapter deliberately has no decoder or constructor for that authority.
+/// `expected_head` is independently selected, so an older snapshot fails closed.
+/// Results and refusals use the bounded `check/result-v1` JSON projection.
+pub fn execute_with_owner_currentness(
+    options: &CheckPackOptions,
+    bytes: &[u8],
+    currentness: &CheckerRevocationSet,
+    expected_head: &CheckerRevocationHeadId,
+) -> Result<Value, Value> {
     if bytes.len() as u64 > MAX_EVIDENCE_BYTES {
         return Err(refusal(
             options,
@@ -766,6 +790,33 @@ fn execute(options: &Options, bytes: &[u8]) -> Result<Value, Value> {
             };
             refusal(options, code, &error.to_string())
         })?;
+    if options.checker != "checker/c-op" || options.scope != "operation/local" {
+        return Err(refusal(
+            options,
+            "owner-currentness-unsupported",
+            "the installed SDK owner currently issues exact currentness only for checker/c-op operation/local",
+        ));
+    }
+    let policy = operation_local_policy_id()
+        .map_err(|error| refusal(options, "policy-identity", &error.to_string()))?;
+    if currentness.policy() != &policy {
+        return Err(refusal(
+            options,
+            "wrong-currentness-policy",
+            "selected owner set does not use the installed operation/local policy",
+        ));
+    }
+    if currentness.head() != expected_head {
+        return Err(refusal(
+            options,
+            "stale-currentness",
+            "selected owner set does not match the independently selected current head",
+        ));
+    }
+    let revocation_key =
+        CheckerRevocationKey::for_invocation(binding.revocation_source().clone(), &invocation)
+            .map_err(|error| refusal(options, "revocation-key", &error.to_string()))?;
+    let selection = currentness.lookup(&revocation_key);
     let request = PackRequest {
         checker: &options.checker,
         binding: &options.binding,
@@ -790,20 +841,20 @@ fn execute(options: &Options, bytes: &[u8]) -> Result<Value, Value> {
                 invocation.input_closure().to_datum(),
             )])
             .map_err(|error| refusal(options, "support-identity", &error.to_string()))?;
-            let policy = PolicyId::from_text("sim-conformance-packs/revocation-current-v1")
-                .map_err(|error| refusal(options, "policy-identity", &error.to_string()))?;
             let receipt = CheckerReceipt::passing(
+                &binding,
                 &invocation,
                 result.clone(),
                 grade,
                 provenance,
                 policy,
                 support,
-                RevocationStatus::Current,
+                &selection,
             )
             .map_err(|error| refusal(options, "receipt-refused", &error.to_string()))?;
+            let observation = selection.bind_receipt(receipt.id().clone());
             receipt
-                .verify(&binding, &invocation, RevocationStatus::Current)
+                .verify(&binding, &invocation, &observation)
                 .map_err(|error| refusal(options, "receipt-verification", &error.to_string()))?;
             Ok(json!({
                 "shape": "check/result-v1",
@@ -825,7 +876,17 @@ fn execute(options: &Options, bytes: &[u8]) -> Result<Value, Value> {
                 "policy": render(receipt.policy().content_id()),
                 "support": render(receipt.support().content_id()),
                 "receipt": render(receipt.id().content_id()),
-                "revocation": "current",
+                "revocation": match observation.status() {
+                    RevocationStatus::Unknown => "unknown",
+                    RevocationStatus::Current => "current",
+                    RevocationStatus::Revoked => "revoked",
+                },
+                "revocation_issuer": render(observation.issuer().content_id()),
+                "revocation_source": render(observation.source().content_id()),
+                "revocation_key": render(observation.key().id().content_id()),
+                "revocation_set": render(observation.set().content_id()),
+                "revocation_head": render(observation.head().content_id()),
+                "revocation_receipt": render(observation.receipt().content_id()),
                 "observations": observations.into_iter().map(|value| json!({
                     "key": value.key,
                     "value": value.value,
@@ -989,16 +1050,23 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+    use crate::check_pack_test_support::{head, operation_evidence};
+    use sim_conformance_core::{
+        CheckerRevocationDecision, PolicyId, ProofCodeId, RevocationSourceId,
+    };
+    use sim_conformance_packs::{
+        OperationLocalRevocationDecision, issue_operation_local_revocation_set,
+    };
 
     // conformance: the host adapter binds canonical evidence to one exact
     // checker, typed runtime binding, subject, and scope and fails closed on
     // substitution or noncanonical input.
 
-    fn options(checker: &str, scope: &str, evidence: &str) -> Options {
+    fn options(checker: &str, scope: &str, evidence: &str) -> CheckPackOptions {
         let subject = subject_id(evidence).unwrap();
-        Options {
-            checker: checker.into(),
-            binding: render(
+        CheckPackOptions::new(
+            checker,
+            render(
                 sim_conformance_packs::find_pack(checker)
                     .unwrap()
                     .checker_binding()
@@ -1006,94 +1074,248 @@ mod tests {
                     .id()
                     .content_id(),
             ),
-            subject: render(subject.content_id()),
-            scope: scope.into(),
-        }
+            render(subject.content_id()),
+            scope,
+        )
+    }
+
+    fn owner_set(
+        evidence: &str,
+        head: &CheckerRevocationHeadId,
+        status: RevocationStatus,
+    ) -> CheckerRevocationSet {
+        let subject = subject_id(evidence).unwrap();
+        let decision = match status {
+            RevocationStatus::Current => OperationLocalRevocationDecision::current(subject),
+            RevocationStatus::Revoked => OperationLocalRevocationDecision::revoked(subject),
+            RevocationStatus::Unknown => {
+                return issue_operation_local_revocation_set(head.clone(), []).unwrap();
+            }
+        };
+        issue_operation_local_revocation_set(head.clone(), [decision]).unwrap()
+    }
+
+    fn execute_operation(
+        evidence: &str,
+        currentness: &CheckerRevocationSet,
+        expected_head: &CheckerRevocationHeadId,
+    ) -> Result<Value, Value> {
+        execute_with_owner_currentness(
+            &options("checker/c-op", "operation/local", evidence),
+            evidence.as_bytes(),
+            currentness,
+            expected_head,
+        )
     }
 
     #[test]
-    fn canonical_identity_vector_subject_passes() {
-        let evidence =
-            "identity.cross-architecture-confirmed=true\nidentity.cross-toolchain-confirmed=true\n";
-        let output = execute(
-            &options("checker/c-id", "identity/vectors", evidence),
-            evidence.as_bytes(),
-        )
-        .unwrap();
+    fn sdk_owner_currentness_yields_receipt_bound_fresh_observation() {
+        let evidence = operation_evidence("positive");
+        let expected_head = head("sdk/revocations/positive");
+        let currentness = owner_set(&evidence, &expected_head, RevocationStatus::Current);
+        let output = execute_operation(&evidence, &currentness, &expected_head).unwrap();
         assert_eq!(output["outcome"], "pass");
         assert_eq!(output["grade"], "bootstrap");
         assert!(output["invocation"].as_str().unwrap().contains(':'));
         assert!(output["receipt"].as_str().unwrap().contains(':'));
+        assert_eq!(output["revocation"], "current");
+        assert_eq!(output["revocation_receipt"], output["receipt"]);
         assert_eq!(
-            output["observations"][0]["key"],
-            "identity.cross-architecture-confirmed"
+            output["revocation_set"],
+            render(currentness.id().content_id())
+        );
+        assert_eq!(
+            output["revocation_head"],
+            render(expected_head.content_id())
         );
     }
 
     #[test]
-    fn production_binding_yields_four_exact_receipts_deterministically() {
-        let facts = |variant: &str| {
-            format!(
-                "identity.all-constructions-funded=true\nidentity.cross-architecture-confirmed=true\nidentity.cross-toolchain-confirmed=true\nidentity.domain-tags-unique=true\nidentity.ephemeral-authority-absent=true\nidentity.expected-constructions=31\nidentity.registered-constructions=31\nidentity.semantic-digests-256-bit=true\nidentity.semantic-storage-separated=true\nsubject.variant={variant}\n"
-            )
-        };
+    fn exact_currentness_yields_deterministic_distinct_receipts() {
         let mut invocations = BTreeSet::new();
         let mut receipts = BTreeSet::new();
         for variant in ["a", "b"] {
-            let evidence = facts(variant);
-            for scope in ["identity/register", "identity/vectors"] {
-                let options = options("checker/c-id", scope, &evidence);
-                let first = execute(&options, evidence.as_bytes()).unwrap();
-                let second = execute(&options, evidence.as_bytes()).unwrap();
-                assert_eq!(first, second);
-                invocations.insert(first["invocation"].as_str().unwrap().to_owned());
-                receipts.insert(first["receipt"].as_str().unwrap().to_owned());
-            }
+            let evidence = operation_evidence(variant);
+            let expected_head = head("sdk/revocations/deterministic");
+            let currentness = owner_set(&evidence, &expected_head, RevocationStatus::Current);
+            let first = execute_operation(&evidence, &currentness, &expected_head).unwrap();
+            let second = execute_operation(&evidence, &currentness, &expected_head).unwrap();
+            assert_eq!(first, second);
+            invocations.insert(first["invocation"].as_str().unwrap().to_owned());
+            receipts.insert(first["receipt"].as_str().unwrap().to_owned());
         }
-        assert_eq!(invocations.len(), 4);
-        assert_eq!(receipts.len(), 4);
+        assert_eq!(invocations.len(), 2);
+        assert_eq!(receipts.len(), 2);
     }
 
     #[test]
-    fn release_pack_issues_release_grade_only_after_every_fact_passes() {
-        let evidence = "release.audit-passed=true\nrelease.authorship-passed=true\nrelease.boot-smoke-passed=true\nrelease.generated-converged=true\nrelease.mirrors-current=true\nrelease.owner-docs-passed=true\nrelease.owner-validation-passed=true\nrelease.packages-assembled=true\nrelease.pins-exact=true\nrelease.publication-confirmed=true\nrelease.standalone-ci-green=true\nrelease.tags-exact=true\n";
-        for scope in ["release/nv12-01", "release/nv12-06"] {
-            let output = execute(
-                &options("checker/c-release", scope, evidence),
-                evidence.as_bytes(),
-            )
+    fn missing_revoked_and_stale_currentness_fail_closed() {
+        let evidence = operation_evidence("refusals");
+        let current_head = head("sdk/revocations/current");
+        for status in [RevocationStatus::Unknown, RevocationStatus::Revoked] {
+            let set = owner_set(&evidence, &current_head, status);
+            assert_eq!(
+                execute_operation(&evidence, &set, &current_head).unwrap_err()["reason"],
+                "receipt-refused"
+            );
+        }
+        let stale_head = head("sdk/revocations/stale");
+        let stale = owner_set(&evidence, &stale_head, RevocationStatus::Current);
+        assert_eq!(
+            execute_operation(&evidence, &stale, &current_head).unwrap_err()["reason"],
+            "stale-currentness"
+        );
+    }
+
+    #[test]
+    fn substituted_subject_policy_source_and_noncanonical_input_fail_closed() {
+        let evidence = operation_evidence("original");
+        let expected_head = head("sdk/revocations/substitution");
+        let currentness = owner_set(&evidence, &expected_head, RevocationStatus::Current);
+        let substituted = operation_evidence("substituted");
+        assert_eq!(
+            execute_operation(&substituted, &currentness, &expected_head).unwrap_err()["reason"],
+            "receipt-refused"
+        );
+
+        let binding = find_pack("checker/c-op")
+            .unwrap()
+            .checker_binding()
             .unwrap();
-            assert_eq!(output["grade"], "release");
-            assert_eq!(output["revocation"], "current");
-        }
-    }
+        let wrong_policy = CheckerRevocationSet::from_owner_snapshot(
+            binding.owner().clone(),
+            binding.revocation_source().clone(),
+            PolicyId::from_text("policy/wrong").unwrap(),
+            expected_head.clone(),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(
+            execute_operation(&evidence, &wrong_policy, &expected_head).unwrap_err()["reason"],
+            "wrong-currentness-policy"
+        );
 
-    #[test]
-    fn substituted_subject_and_unsorted_facts_fail_closed() {
-        let evidence = "a=true\nb=true\n";
-        let mut wrong = options("checker/c-id", "identity/vectors", evidence);
+        let wrong_source = CheckerRevocationSet::from_owner_snapshot(
+            binding.owner().clone(),
+            RevocationSourceId::from_text("fixture/wrong-source").unwrap(),
+            operation_local_policy_id().unwrap(),
+            expected_head.clone(),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(
+            execute_operation(&evidence, &wrong_source, &expected_head).unwrap_err()["reason"],
+            "receipt-refused"
+        );
+
+        let spec = find_pack("checker/c-op").unwrap();
+        let substituted_code = ProofCodeId::from_text(&format!(
+            "sim-conformance-packs@0.6.1;build-inputs-sha256={}",
+            "a".repeat(64)
+        ))
+        .unwrap();
+        assert_ne!(substituted_code, spec.checker_code_id().unwrap());
+        let substituted_key = CheckerRevocationKey::new(
+            binding.revocation_source().clone(),
+            binding.id().clone(),
+            subject_id(&evidence).unwrap(),
+            substituted_code,
+            spec.pack_id().unwrap(),
+        )
+        .unwrap();
+        let substituted_code_set = CheckerRevocationSet::from_owner_snapshot(
+            binding.owner().clone(),
+            binding.revocation_source().clone(),
+            operation_local_policy_id().unwrap(),
+            expected_head.clone(),
+            vec![
+                CheckerRevocationDecision::new(substituted_key, RevocationStatus::Current).unwrap(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            execute_operation(&evidence, &substituted_code_set, &expected_head).unwrap_err()["reason"],
+            "receipt-refused"
+        );
+
+        let mut wrong = options("checker/c-op", "operation/local", &evidence);
         wrong.subject =
             "core/sha256-datum-v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                 .into();
         assert_eq!(
-            execute(&wrong, evidence.as_bytes()).unwrap_err()["reason"],
+            execute_with_owner_currentness(
+                &wrong,
+                evidence.as_bytes(),
+                &currentness,
+                &expected_head,
+            )
+            .unwrap_err()["reason"],
             "subject-mismatch"
         );
         assert!(parse_evidence("b=true\na=true\n").is_err());
 
-        let wrong_scope = options("checker/c-id", "identity/not-bound", evidence);
+        let wrong_scope = options("checker/c-op", "operation/not-bound", &evidence);
         assert_eq!(
-            execute(&wrong_scope, evidence.as_bytes()).unwrap_err()["reason"],
+            execute_with_owner_currentness(
+                &wrong_scope,
+                evidence.as_bytes(),
+                &currentness,
+                &expected_head,
+            )
+            .unwrap_err()["reason"],
             "wrong-scope"
         );
 
-        let mut wrong_binding = options("checker/c-id", "identity/vectors", evidence);
+        let mut wrong_binding = options("checker/c-op", "operation/local", &evidence);
         wrong_binding.binding =
             "core/sha256-datum-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 .into();
         assert_eq!(
-            execute(&wrong_binding, evidence.as_bytes()).unwrap_err()["reason"],
+            execute_with_owner_currentness(
+                &wrong_binding,
+                evidence.as_bytes(),
+                &currentness,
+                &expected_head,
+            )
+            .unwrap_err()["reason"],
             "wrong-binding"
+        );
+    }
+
+    #[test]
+    fn unsupported_pack_and_cli_without_owner_object_refuse() {
+        let evidence =
+            "identity.cross-architecture-confirmed=true\nidentity.cross-toolchain-confirmed=true\n";
+        let operation = operation_evidence("unsupported");
+        let expected_head = head("sdk/revocations/unsupported");
+        let currentness = owner_set(&operation, &expected_head, RevocationStatus::Current);
+        assert_eq!(
+            execute_with_owner_currentness(
+                &options("checker/c-id", "identity/vectors", evidence),
+                evidence.as_bytes(),
+                &currentness,
+                &expected_head,
+            )
+            .unwrap_err()["reason"],
+            "owner-currentness-unsupported"
+        );
+
+        let command = vec![
+            "xtask".into(),
+            "check-pack".into(),
+            "--checker".into(),
+            "checker/c-op".into(),
+            "--binding".into(),
+            "binding".into(),
+            "--subject".into(),
+            "subject".into(),
+            "--scope".into(),
+            "operation/local".into(),
+        ];
+        assert!(
+            run(command)
+                .unwrap_err()
+                .contains("owner-currentness-required")
         );
     }
 }

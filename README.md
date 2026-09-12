@@ -31,14 +31,21 @@ Rust source file exceeds 700 lines.
 
 ## Conformance Packs
 
-`cargo run -p xtask -- check-pack --checker <id> --binding <id> --subject
-<id> --scope <name>` invokes one released public conformance pack. Canonical
-sorted `key=value` evidence arrives on standard input and is limited to 16 KiB.
-The command recomputes the typed subject identity before dispatch, emits one
-`check/result-v1` JSON value with the exact typed execution, invocation, grade,
-and verified checker-receipt identities, and exits nonzero for wrong scope,
-substituted subject or binding, malformed evidence, refusal, or a declared
-scope whose scenarios have not reached its funded phase.
+The `check_pack::execute_with_owner_currentness` adapter invokes one exact
+public conformance pack. Canonical sorted `key=value` evidence is limited to 16
+KiB. The caller must supply an SDK-owner-issued revocation set plus the
+independently selected current head through the in-process qualification
+boundary. The adapter recomputes the typed subject identity, binds the exact
+selection into the receipt, immediately verifies a receipt-specific fresh
+observation, and emits one `check/result-v1` JSON value with the set, head, key,
+receipt, invocation, and observations. Missing, revoked, stale, wrong-policy,
+wrong-source, or substituted inputs fail closed.
+
+The bare `cargo run -p xtask -- check-pack ...` process interface cannot carry
+that qualified Rust object and therefore refuses with
+`owner-currentness-required`. A serialized authority format is intentionally
+not inferred here; semantic admission and current re-resolution remain the
+qualification owner's next integration step.
 
 ## Citizenize
 
