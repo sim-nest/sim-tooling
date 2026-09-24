@@ -12,7 +12,8 @@
 //! layout its class owner reads (`sim_platform_ubuntu_pc::native_evidence`):
 //! `completed-success`, `completed-diverged`, `before-cas`,
 //! `before-acknowledgement`, `timeout`, `cancellation`, `formatter`,
-//! `validation`, `docs`, `refusal`, and `post-gate-<site>` for every site.
+//! `validation`, `docs`, `refusal`, and `post-gate-<site>` for every native
+//! post-gate site (projection-final-image stays a typed pending member).
 //! Every specimen is re-verified through its public owner verifier; the
 //! definitions are frozen from those verified specimens, the four-role corpus
 //! is built with its provider-bound before-acknowledgement, every admission
@@ -161,10 +162,15 @@ fn run(invocation: &Invocation) -> Result<()> {
     let witness = corpus
         .post_gate_witness()
         .ok_or("post-gate witness absent after admission")?;
-    let pending = witness.pending_sites()?.join(",");
+    let pending = witness
+        .pending()
+        .iter()
+        .map(|member| member.site)
+        .collect::<Vec<_>>()
+        .join(",");
     let inputs = compose_operation_local(&corpus)?;
     println!(
-        "SIM_NATIVE_CORPUS schema=v1 corpus={corpus_identity} definition={} post-gate={} post-gate-pending={pending} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
+        "SIM_NATIVE_CORPUS schema=v2 corpus={corpus_identity} definition={} post-gate={} post-gate-pending={pending} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
         content_text(corpus.definition_identity()),
         content_text(witness.identity()),
         content_text(inputs.support_definition().identity()),
