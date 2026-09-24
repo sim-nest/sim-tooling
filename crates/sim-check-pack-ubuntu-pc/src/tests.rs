@@ -42,113 +42,37 @@ fn platform_fact_table_is_exact_closed_and_named_by_the_platform() {
 }
 
 #[test]
-fn current_platform_facts_cannot_blanket_prove_twenty_two_facts() {
-    let contributions = BTreeMap::from([
-        (
-            "operation.local-port-is-portable",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-command-is-installed-and-allowlisted",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-command-id-binds-complete-spec",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-environment-sealed",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-writable-roots-confined",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-network-absent",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-network-grant-separate",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-release-credentials-absent",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-descendants-zero",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-scratch-zero",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-independent-postcondition",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-test-success-observed",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-test-failure-observed",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-timeout-terminates-group",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-cancellation-terminates-group",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-signal-escalation-bounded",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-formatter-mutation-observed",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-manifest-script-bytes-exact",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-validation-command-exact",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-docs-command-exact",
-            Vec::<Contribution<'_>>::new(),
-        ),
-        (
-            "operation.local-later-owner-gates-reachable",
-            Vec::<Contribution<'_>>::new(),
-        ),
-    ]);
+fn platform_and_specimen_facts_cover_all_twenty_two_facts() {
+    let mut contributions = PLATFORM_FACTS
+        .iter()
+        .map(|(_, name)| (*name, Vec::<Contribution<'_>>::new()))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(missing_roles(&contributions).len(), 2);
+    for specimen in [
+        "operation.local-test-success-observed",
+        "operation.local-test-failure-observed",
+    ] {
+        contributions.insert(specimen, Vec::new());
+    }
     assert_eq!(
         missing_roles(&contributions),
         MISSING_PLATFORM_WITNESS_ROLES
+    );
+    assert!(MISSING_PLATFORM_WITNESS_ROLES.is_empty());
+    contributions.remove("operation.local-model-interpolation-refused");
+    assert_eq!(
+        missing_roles(&contributions),
+        ["model-interpolation-refused"],
+        "an absent refusal witness is still reported"
     );
 }
 
 #[test]
 fn missing_role_report_is_complete_bounded_and_unambiguous() {
     assert_eq!(FACTS.len(), 22);
-    assert_eq!(MISSING_PLATFORM_WITNESS_ROLES.len(), 1);
-    assert!(
-        MISSING_PLATFORM_WITNESS_ROLES
-            .windows(2)
-            .all(|pair| pair[0] != pair[1])
-    );
-    let error = UbuntuOperationLocalCorpusError::MissingNativeRoles(
-        MISSING_PLATFORM_WITNESS_ROLES.to_vec(),
-    );
-    let rendered = error.to_string();
-    for role in MISSING_PLATFORM_WITNESS_ROLES {
+    let missing = ["model-interpolation-refused", "descendants-zero"].to_vec();
+    let rendered = UbuntuOperationLocalCorpusError::MissingNativeRoles(missing.clone()).to_string();
+    for role in missing {
         assert!(rendered.contains(role));
     }
 }

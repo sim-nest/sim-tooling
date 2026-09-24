@@ -32,7 +32,7 @@ pub(crate) enum Contribution<'a> {
 }
 
 /// Every C-OP fact the platform owner can witness, with its checker name.
-pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 19] = [
+pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 20] = [
     (
         OperationLocalVerifiedFact::PortIsPortable,
         "operation.local-port-is-portable",
@@ -108,6 +108,10 @@ pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 19] = [
     (
         OperationLocalVerifiedFact::LaterOwnerGatesReachable,
         "operation.local-later-owner-gates-reachable",
+    ),
+    (
+        OperationLocalVerifiedFact::ModelInterpolationRefused,
+        "operation.local-model-interpolation-refused",
     ),
 ];
 

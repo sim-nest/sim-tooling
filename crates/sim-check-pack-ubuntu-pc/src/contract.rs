@@ -35,4 +35,5 @@ pub(crate) const FACTS: [&str; 22] = [
 /// Names intentionally match the semantic obligation rather than a caller
 /// selected specimen label. A later platform API must provide a typed opaque
 /// role for each member before this producer can classify it as present.
-pub const MISSING_PLATFORM_WITNESS_ROLES: [&str; 1] = ["model-interpolation-refused"];
+/// Empty: the platform derives every C-OP fact from its corpus.
+pub const MISSING_PLATFORM_WITNESS_ROLES: [&str; 0] = [];
