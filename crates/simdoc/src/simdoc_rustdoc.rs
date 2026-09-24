@@ -20,7 +20,7 @@ pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), Stri
     // dependency graph, not an authority to rewrite it.  In particular, a
     // shared constellation resolver may make newer packages visible than the
     // standalone lock selected by the owning repository.
-    command.args(["doc", "--locked"]);
+    command.args(["doc", "--locked", "--offline"]);
     match env::var("SIMDOC_CARGO_MANIFEST_PATH") {
         Ok(manifest_path) => {
             command.args(["--manifest-path", &manifest_path]);

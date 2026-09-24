@@ -342,7 +342,7 @@ fn check_files(root: &Path, files: &[GeneratedFile]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "stale generated doc artifacts: {}; run `cargo run -p xtask -- simdoc`",
+            "stale generated doc artifacts: {}; run the isolated simdoc encoder",
             stale.join(", ")
         ))
     }
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn simdoc_carries_every_repo_contract_projection() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = crate::tooling_checkout_root();
         let paths = expected_files(&root)
             .unwrap()
             .files

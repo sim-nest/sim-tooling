@@ -15,3 +15,6 @@
 
 # Local Atelier graph caches.
 /.sim/
+
+# Nested isolated workspace build output.
+/crates/*/target/

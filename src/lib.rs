@@ -11,7 +11,8 @@
 //!
 //! # Commands
 //!
-//! - `simdoc` -- build, or `--check`, the documentation lanes: API docs, agent
+//! - `cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml --
+//!   simdoc` -- build, or `--check`, the documentation lanes: API docs, agent
 //!   cards, human docs, diagrams, and split contract files under `docs/`.
 //! - `repo-contract` -- generate or check the per-repo contract files, or emit
 //!   selected current artifacts to a preopened output directory without
@@ -53,7 +54,6 @@ pub mod bench;
 
 mod build_inputs;
 mod cardspine;
-mod cardspine_state;
 mod citizenize;
 mod content_digest;
 mod crate_catalog;
@@ -93,14 +93,12 @@ mod index_vault;
 mod index_vault_manifest;
 mod json_render;
 mod platform_inventory;
+mod recipe_discovery;
 mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
 mod repo_contract_scan;
 mod sealed_resources;
-mod simdoc;
-mod simdoc_index;
-mod simdoc_rustdoc;
 mod validation_matrix;
 
 #[cfg(test)]
@@ -124,8 +122,9 @@ pub use validation_matrix::{ValidationMatrixReport, validation_matrix};
 /// Dispatches an xtask command-line argument vector to the matching task.
 ///
 /// `args` is the full process argument vector. Remaining arguments select a task
-/// such as `simdoc`, `repo-contract`, `atelier-capsule`, or `atelier-shell` and
-/// its optional flags or argument.
+/// such as `repo-contract`, `atelier-capsule`, or `atelier-shell` and its
+/// optional flags or argument. The documentation command has a separate,
+/// isolated Cargo resolver root.
 /// Returns a usage error for an unrecognized command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
     dispatch::dispatch(args)

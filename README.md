@@ -19,7 +19,7 @@ These commands are the repository gate recorded in the constellation manifest.
 
 ```bash
 cargo fmt --all --check && cargo test && cargo clippy --all-targets -- -D warnings && cargo doc --no-deps
-cargo run -p xtask -- simdoc --check
+cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc --check
 cargo run -p xtask -- check-file-sizes
 ```
 
@@ -146,7 +146,8 @@ imports notes. Logseq support means its Markdown file graph, not its DB graph.
 
 ## Documentation Lanes
 
-`cargo run -p xtask -- simdoc` builds the public documentation lanes:
+`cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc`
+builds the public documentation lanes:
 
 - API docs: `target/doc/`
 - Agent cards: `docs/agents/cards.jsonl` and `docs/agents/card-index.json`

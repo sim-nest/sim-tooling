@@ -1,0 +1,30 @@
+[package]
+name = "simdoc"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Standalone SIM generated-document encoder."
+publish = false
+repository = "https://github.com/sim-nest/sim-tooling"
+homepage = "https://github.com/sim-nest/sim-tooling"
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+serde_json = "1"
+sha2 = "0.10"
+sim-cookbook = "0.4.0"
+sim-codec-index = "=0.3.1"
+sim-codec-json = "=0.4.0"
+sim-index-core = "0.4.0"
+sim-index-vault-core = "0.2.0"
+sim-kernel = "0.4.0"
+sim-lib-net-core = "0.4.0"
+syn = { version = "2", features = ["fold", "full", "visit"] }
+toml = "0.8"
+
+[lints.rust]
+unsafe_code = "deny"

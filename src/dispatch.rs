@@ -4,10 +4,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::{
-    atelier, bench, build_inputs, citizenize, crate_catalog, file_size_gate,
-    generator_options, index_check, index_doctor, index_find, index_fixpoint, index_merge,
-    index_overlap, index_render, index_route, index_seed, index_snapshot, index_vault,
-    platform_inventory, repo_contract, sealed_resources, simdoc, validation_matrix,
+    atelier, bench, build_inputs, citizenize, crate_catalog, file_size_gate, generator_options,
+    index_check, index_doctor, index_find, index_fixpoint, index_merge, index_overlap,
+    index_render, index_route, index_seed, index_snapshot, index_vault, platform_inventory,
+    repo_contract, sealed_resources, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -15,7 +15,10 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
         return bench::cli::run(args);
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "simdoc") {
-        return simdoc::run(args);
+        return Err(
+            "simdoc moved to its isolated resolver root; run `cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc ...`"
+                .to_owned(),
+        );
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "atelier-site") {
         return atelier::run(args);
@@ -170,7 +173,6 @@ const USAGE_COMMANDS: &str = concat!(
     "|validation-matrix [--check] [--repo <path>]",
     "|crate-catalog [--check] [--repo <path>]",
     "|citizenize [--local-paths] <crate-name-or-path>",
-    "|simdoc [--check] [--rustdoc auto|skip|force]",
     "|check-pack (moved to sim-check-pack-xtask)",
     "|build-inputs <select|derive|materialize|finalize> ...",
     "|sealed-resources <capture --plan <plan.json> --expected-plan-sha256 <hex> --selection <new-selection.json>|materialize --selection <selection.json> --expected-selection-sha256 <hex> --destination <new-path>> --owner-root <path>...",

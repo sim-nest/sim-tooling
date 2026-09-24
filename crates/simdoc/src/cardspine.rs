@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::{
     content_digest::content_digest,
-    recipe_discovery::{collect_recipe_files, repo_name},
+    simdoc::{collect_recipe_files, repo_name},
 };
 
 /// Content-id algorithm tag for build-side documentation Cards.
