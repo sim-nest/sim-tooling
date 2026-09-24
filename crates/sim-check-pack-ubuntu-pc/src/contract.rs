@@ -35,10 +35,9 @@ pub(crate) const FACTS: [&str; 22] = [
 /// Names intentionally match the semantic obligation rather than a caller
 /// selected specimen label. A later platform API must provide a typed opaque
 /// role for each member before this producer can classify it as present.
-pub const MISSING_PLATFORM_WITNESS_ROLES: [&str; 6] = [
+pub const MISSING_PLATFORM_WITNESS_ROLES: [&str; 5] = [
     "manifest-script-bytes-exact",
     "model-interpolation-refused",
-    "formatter-mutation-observed",
     "validation-command-exact",
     "docs-command-exact",
     "later-owner-gates-reachable",
