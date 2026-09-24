@@ -6,7 +6,8 @@
 use crate::{
     atelier, bench, build_inputs, citizenize, file_size_gate, index_check, index_doctor,
     index_find, index_fixpoint, index_merge, index_overlap, index_render, index_route, index_seed,
-    index_snapshot, index_vault, platform_inventory, sealed_resources, simdoc_pin, simdoc_route,
+    index_snapshot, index_vault, license_gate, platform_inventory, sealed_resources, simdoc_pin,
+    simdoc_route,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -45,6 +46,9 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "check-file-sizes") {
         return file_size_gate::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, ..] if command == "check-license") {
+        return license_gate::run(args);
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "check-pack") {
         return Err(
@@ -148,6 +152,7 @@ const USAGE_COMMANDS: &str = concat!(
     "|index snapshot --input <index.sx> --out <path> [--check]",
     "|index-check --repo <path> [--strict <category:value,...>]",
     "|check-file-sizes [--repo-root <path>]",
+    "|check-license [--repo-root <path>] [--base <rev>] [--strict]",
     "|atelier-site [--check]|atelier-cassette [--check]|atelier-capsule [--check]",
     "|atelier-index [--check]|atelier-radar <query>|atelier-guard [--check]",
     "|atelier-tools [--check]|atelier-shell [--backend source-radar|contract-native] [--check]",
