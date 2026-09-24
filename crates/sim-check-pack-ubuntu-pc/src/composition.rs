@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! One-way platform-corpus to neutral-checker composition.
 
 use std::collections::BTreeMap;
@@ -23,10 +28,11 @@ pub(crate) enum Contribution<'a> {
         acceptance: &'a ContentId,
         binding: &'a VerifiedOperationLocalSpecimenBinding,
     },
-    Baseline(&'a VerifiedOperationLocalFactWitness),
+    Platform(&'a VerifiedOperationLocalFactWitness),
 }
 
-const BASELINE_FACTS: [(OperationLocalVerifiedFact, &str); 11] = [
+/// Every C-OP fact the platform owner can witness, with its checker name.
+pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 13] = [
     (
         OperationLocalVerifiedFact::PortIsPortable,
         "operation.local-port-is-portable",
@@ -71,6 +77,14 @@ const BASELINE_FACTS: [(OperationLocalVerifiedFact, &str); 11] = [
         OperationLocalVerifiedFact::IndependentPostcondition,
         "operation.local-independent-postcondition",
     ),
+    (
+        OperationLocalVerifiedFact::TimeoutTerminatesGroup,
+        "operation.local-timeout-terminates-group",
+    ),
+    (
+        OperationLocalVerifiedFact::CancellationTerminatesGroup,
+        "operation.local-cancellation-terminates-group",
+    ),
 ];
 
 pub(crate) fn compose(
@@ -78,16 +92,16 @@ pub(crate) fn compose(
 ) -> Result<UbuntuOperationLocalInputs, UbuntuOperationLocalCorpusError> {
     validate_platform_corpus(corpus)?;
     let mut contributions = BTreeMap::new();
-    for (role, fact) in BASELINE_FACTS {
-        let witness = corpus.fact_witness(role).ok_or_else(|| {
-            UbuntuOperationLocalCorpusError::MissingNativeRoles(vec![role.as_str()])
-        })?;
+    for (role, fact) in PLATFORM_FACTS {
+        let Some(witness) = corpus.fact_witness(role) else {
+            continue;
+        };
         if witness.fact() != role {
             return Err(UbuntuOperationLocalCorpusError::AmbiguousNativeRole(
                 role.as_str(),
             ));
         }
-        contributions.insert(fact, vec![Contribution::Baseline(witness)]);
+        contributions.insert(fact, vec![Contribution::Platform(witness)]);
     }
     add_platform_contribution(
         &mut contributions,
@@ -230,7 +244,7 @@ fn support_identity(
                     ),
                 ],
             },
-            Contribution::Baseline(witness) => Datum::Node {
+            Contribution::Platform(witness) => Datum::Node {
                 tag: Symbol::qualified("conformance", "operation-local-platform-witness-v1"),
                 fields: vec![
                     (Symbol::new("witness"), content_id_datum(witness.identity())),

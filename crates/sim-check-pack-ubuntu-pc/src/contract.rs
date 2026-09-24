@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Closed fact inventory for the exact C-OP contract.
 
 pub(crate) const FACTS: [&str; 22] = [
@@ -25,19 +30,17 @@ pub(crate) const FACTS: [&str; 22] = [
     "operation.local-later-owner-gates-reachable",
 ];
 
-/// Exact native witness roles still absent after the sound j/k baseline.
+/// Exact native witness roles the platform owner cannot yet derive.
 ///
 /// Names intentionally match the semantic obligation rather than a caller
 /// selected specimen label. A later platform API must provide a typed opaque
 /// role for each member before this producer can classify it as present.
-pub const MISSING_PLATFORM_WITNESS_ROLES: [&str; 9] = [
+pub const MISSING_PLATFORM_WITNESS_ROLES: [&str; 7] = [
     "manifest-script-bytes-exact",
     "model-interpolation-refused",
     "formatter-mutation-observed",
     "validation-command-exact",
     "docs-command-exact",
-    "timeout-terminates-group",
-    "cancellation-terminates-group",
     "signal-escalation-bounded",
     "later-owner-gates-reachable",
 ];
