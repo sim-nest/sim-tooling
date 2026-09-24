@@ -166,19 +166,51 @@ fn run(invocation: &Invocation) -> Result<()> {
         .pending()
         .iter()
         .map(|member| member.site)
-        .collect::<Vec<_>>()
-        .join(",");
+        .collect::<Vec<_>>();
     let inputs = compose_operation_local(&corpus)?;
     println!(
-        "SIM_NATIVE_CORPUS schema=v2 corpus={corpus_identity} definition={} post-gate={} post-gate-pending={pending} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
-        content_text(corpus.definition_identity()),
-        content_text(witness.identity()),
-        content_text(inputs.support_definition().identity()),
-        content_text(inputs.evidence().subject_id()?.content_id()),
-        content_text(inputs.evidence().input_closure_id()?.content_id()),
+        "{}",
+        corpus_record(&CorpusRecord {
+            corpus: &corpus_identity,
+            definition: &content_text(corpus.definition_identity()),
+            post_gate: &content_text(witness.identity()),
+            pending: &pending,
+            support: &content_text(inputs.support_definition().identity()),
+            subject: &content_text(inputs.evidence().subject_id()?.content_id()),
+            input_closure: &content_text(inputs.evidence().input_closure_id()?.content_id()),
+        })?
     );
     println!("{}", inputs.evidence().canonical());
     Ok(())
+}
+
+/// The identities one composed corpus record names.
+struct CorpusRecord<'a> {
+    corpus: &'a str,
+    definition: &'a str,
+    post_gate: &'a str,
+    pending: &'a [&'a str],
+    support: &'a str,
+    subject: &'a str,
+    input_closure: &'a str,
+}
+
+/// The v2 corpus record: the three-site post-gate witness always names its
+/// pending projection member, and both authority flags stay false.
+fn corpus_record(record: &CorpusRecord<'_>) -> Result<String> {
+    if record.pending.is_empty() || record.pending.iter().any(|site| site.is_empty()) {
+        return Err("the NV12.05 post-gate witness always names its pending site".into());
+    }
+    Ok(format!(
+        "SIM_NATIVE_CORPUS schema=v2 corpus={} definition={} post-gate={} post-gate-pending={} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
+        record.corpus,
+        record.definition,
+        record.post_gate,
+        record.pending.join(","),
+        record.support,
+        record.subject,
+        record.input_closure,
+    ))
 }
 
 fn main() -> Result<()> {
@@ -189,6 +221,25 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_corpus_record_is_exactly_v2_with_its_pending_projection_member() {
+        let record = |pending: &'static [&'static str]| CorpusRecord {
+            corpus: "c",
+            definition: "d",
+            post_gate: "p",
+            pending,
+            support: "s",
+            subject: "j",
+            input_closure: "i",
+        };
+        assert_eq!(
+            corpus_record(&record(&["projection-final-image"])).unwrap(),
+            "SIM_NATIVE_CORPUS schema=v2 corpus=c definition=d post-gate=p post-gate-pending=projection-final-image support=s subject=j input-closure=i native-authority=false m5-qualified=false"
+        );
+        assert!(corpus_record(&record(&[])).is_err());
+        assert!(corpus_record(&record(&[""])).is_err());
+    }
 
     fn arguments(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
