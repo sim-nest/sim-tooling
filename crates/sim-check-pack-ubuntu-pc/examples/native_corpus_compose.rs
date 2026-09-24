@@ -154,11 +154,7 @@ fn run(invocation: &Invocation) -> Result<()> {
     corpus.admit_post_gate_specimens(&post_gate_definition, post_gate)?;
 
     let corpus_identity = content_text(corpus.identity());
-    if let Some(expected) = &invocation.expect_corpus
-        && &corpus_identity != expected
-    {
-        return Err(format!("corpus {corpus_identity} differs from expected {expected}").into());
-    }
+    require_pin(&corpus_identity, invocation.expect_corpus.as_deref())?;
     let witness = corpus
         .post_gate_witness()
         .ok_or("post-gate witness absent after admission")?;
@@ -182,6 +178,17 @@ fn run(invocation: &Invocation) -> Result<()> {
     );
     println!("{}", inputs.evidence().canonical());
     Ok(())
+}
+
+/// Requires the derived corpus identity to be exactly the reviewed pin, when
+/// one is given, before anything is printed.
+fn require_pin(corpus: &str, expected: Option<&str>) -> Result<()> {
+    match expected {
+        Some(expected) if corpus != expected => {
+            Err(format!("corpus {corpus} differs from expected {expected}").into())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// The identities one composed corpus record names.
@@ -239,6 +246,25 @@ mod tests {
         );
         assert!(corpus_record(&record(&[])).is_err());
         assert!(corpus_record(&record(&[""])).is_err());
+    }
+
+    #[test]
+    fn only_the_exact_pinned_corpus_is_accepted() {
+        let corpus = "core/sha256:ab01";
+        require_pin(corpus, None).unwrap();
+        require_pin(corpus, Some(corpus)).unwrap();
+        for other in [
+            "core/sha256:ab02",
+            "core/sha256:ab0",
+            "core/sha256:AB01",
+            "",
+        ] {
+            let error = require_pin(corpus, Some(other)).unwrap_err().to_string();
+            assert_eq!(
+                error,
+                format!("corpus {corpus} differs from expected {other}")
+            );
+        }
     }
 
     fn arguments(values: &[&str]) -> Vec<String> {
