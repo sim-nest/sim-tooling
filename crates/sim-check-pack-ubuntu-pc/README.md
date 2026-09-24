@@ -13,8 +13,12 @@ both the canonical evidence and each support identity from the contributing
 acceptance identities, their verified platform bindings, the corpus and
 definition identities, and the exact producer/checker build inputs.
 
-The initial platform corpus proves completed success, deliberate divergence,
-and durable before-CAS incompletion. Those roles establish the success and
-failure observations; they do not imply the other 20 facts. The refusal names
-those missing native roles so later platform-owner additions close the same
-contract without adding a caller-label seam.
+The platform corpus admits four baseline roles (completed success,
+deliberate divergence, before-CAS incompletion and before-acknowledgement
+incompletion) and then extensions: bounded stops (timeout and cancellation),
+the formatter mutation, the owner validation/docs command pair, the owner
+refusal of an interpolated command, and the post-gate witness (three native
+sites plus a typed pending projection member). Together these carry typed
+native witnesses for all 22 facts. Until the authoritative native batch is
+produced and reviewed, those witnesses exist only in source and rehearsal:
+no receipt from this crate is evidence of a native run by itself.
