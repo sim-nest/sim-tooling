@@ -9,10 +9,12 @@
 //! input is the platform owner's opaque, exact-role corpus. It refuses before
 //! constructing evidence if that corpus cannot account for all 22 checker
 //! facts through independently verified native roles. A corpus with admitted
-//! stop and formatter specimens soundly accounts for seventeen facts (eleven
-//! shared j/k facts, successful and failing test observation, timeout and
-//! cancellation group termination, the bounded single-kill stop, and an
-//! observed formatter mutation) and refuses the remaining five atomically.
+//! stop, formatter and owner-command specimens soundly accounts for
+//! twenty-one facts: eleven shared j/k facts, successful and failing test
+//! observation, timeout and cancellation group termination, the bounded
+//! single-kill stop, an observed formatter mutation, byte-exact manifest
+//! scripts, exact validation and docs commands, and reachable later owner
+//! gates. It refuses the remaining one atomically.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -31,10 +33,12 @@ use sim_platform_ubuntu_pc::VerifiedOperationLocalCorpus;
 /// Both completed roles establish eleven closed baseline facts plus successful
 /// and failing test observation; admitted stop specimens establish timeout and
 /// cancellation group termination and the bounded single-kill stop; an
-/// admitted formatter checkout specimen establishes the formatter mutation. Incomplete roles remain bound into the
-/// corpus identity but are not promoted into unrelated assertions. Until typed
-/// native roles cover every fact, this function returns one atomic refusal
-/// naming every missing role and constructs no evidence or support definition.
+/// admitted formatter checkout specimen establishes the formatter mutation;
+/// admitted owner-command specimens establish the four manifest facts.
+/// Incomplete roles remain bound into the corpus identity but are not promoted
+/// into unrelated assertions. Until typed native roles cover every fact, this
+/// function returns one atomic refusal naming every missing role and constructs
+/// no evidence or support definition.
 ///
 /// # Errors
 ///

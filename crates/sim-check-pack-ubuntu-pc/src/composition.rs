@@ -32,7 +32,7 @@ pub(crate) enum Contribution<'a> {
 }
 
 /// Every C-OP fact the platform owner can witness, with its checker name.
-pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 15] = [
+pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 19] = [
     (
         OperationLocalVerifiedFact::PortIsPortable,
         "operation.local-port-is-portable",
@@ -92,6 +92,22 @@ pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 15] = [
     (
         OperationLocalVerifiedFact::FormatterMutationObserved,
         "operation.local-formatter-mutation-observed",
+    ),
+    (
+        OperationLocalVerifiedFact::ManifestScriptBytesExact,
+        "operation.local-manifest-script-bytes-exact",
+    ),
+    (
+        OperationLocalVerifiedFact::ValidationCommandExact,
+        "operation.local-validation-command-exact",
+    ),
+    (
+        OperationLocalVerifiedFact::DocsCommandExact,
+        "operation.local-docs-command-exact",
+    ),
+    (
+        OperationLocalVerifiedFact::LaterOwnerGatesReachable,
+        "operation.local-later-owner-gates-reachable",
     ),
 ];
 

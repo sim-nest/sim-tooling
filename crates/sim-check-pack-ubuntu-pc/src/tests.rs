@@ -112,6 +112,22 @@ fn current_platform_facts_cannot_blanket_prove_twenty_two_facts() {
             "operation.local-formatter-mutation-observed",
             Vec::<Contribution<'_>>::new(),
         ),
+        (
+            "operation.local-manifest-script-bytes-exact",
+            Vec::<Contribution<'_>>::new(),
+        ),
+        (
+            "operation.local-validation-command-exact",
+            Vec::<Contribution<'_>>::new(),
+        ),
+        (
+            "operation.local-docs-command-exact",
+            Vec::<Contribution<'_>>::new(),
+        ),
+        (
+            "operation.local-later-owner-gates-reachable",
+            Vec::<Contribution<'_>>::new(),
+        ),
     ]);
     assert_eq!(
         missing_roles(&contributions),
@@ -122,7 +138,7 @@ fn current_platform_facts_cannot_blanket_prove_twenty_two_facts() {
 #[test]
 fn missing_role_report_is_complete_bounded_and_unambiguous() {
     assert_eq!(FACTS.len(), 22);
-    assert_eq!(MISSING_PLATFORM_WITNESS_ROLES.len(), 5);
+    assert_eq!(MISSING_PLATFORM_WITNESS_ROLES.len(), 1);
     assert!(
         MISSING_PLATFORM_WITNESS_ROLES
             .windows(2)
