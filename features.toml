@@ -46,13 +46,36 @@ claims_specimens = [
 [[feature]]
 id = "feature/sim-tooling/conformance-pack-invocation"
 title = "Exact conformance-pack invocation"
-summary = "Invoke one statically bound public conformance pack over a bounded canonical evidence projection and bind its checked result to an exact SDK-owner-issued currentness selection and receipt-specific fresh observation."
-owner = "crate/xtask"
+summary = "Prepare one statically bound public conformance pack over bounded canonical evidence without authority, then bind the same checked result to an exact SDK-owner-issued currentness selection and receipt-specific fresh observation."
+owner = "crate/sim-check-pack"
 audiences = ["code", "framework"]
-guidance = "Call the in-process check-pack adapter only with the runtime CheckerBindingId derived from the immutable activation record, one allowed CheckScopeId, an already qualified SDK-owner-issued CheckerRevocationSet, and the independently selected exact current head. Preserve the emitted activation source, binding, subject, scope, execution, invocation, result, grade, receipt, revocation issuer/source/key/set/head/receipt, and observations. Missing, stale, revoked, substituted, refusal, and UnimplementedPack outcomes never satisfy a phase gate. The bare process command refuses until semantic admission supplies the qualified owner object; do not decode text into authority."
+guidance = "Use prepare_operation_local when an operator-bootstrap producer needs the deterministic expected binding, invocation, result, observations, support, build graph, bootstrap grade, and policy without constructing an SDK owner. A prepared value has no currentness, revocation observation, or receipt. Call the in-process live adapter only with the weak operation handle issued by the live SDK boot owner; issuance consumes that same preparation and re-resolves the result against the same live generation. Preserve the emitted activation source, binding, subject, scope, execution, invocation, result, grade, receipt, revocation issuer/source/key/set/head/receipt, and observations. Missing, dead-owner, foreign, revoked, substituted, refusal, and UnimplementedPack outcomes never satisfy a phase gate. The bare process command refuses because authority has no serialized construction path."
+claims_anchors = [
+  "anchor/crate/sim-check-pack",
+  "anchor/rustdoc/sim-check-pack/prepare_operation_local",
+  "anchor/rustdoc/sim-check-pack/invoke_operation_local",
+]
 claims_specimens = ["spec-test/sim-tooling/src/check_pack"]
 supports = [
   "feature/sim-foundation/conformance-core",
+  "feature/sim-sdk/neutral-conformance-packs",
+]
+
+[[feature]]
+id = "feature/sim-tooling/ubuntu-operation-local-corpus"
+title = "Opaque Ubuntu operation evidence composition"
+summary = "Derive the complete operation/local checker evidence and support only from an exact platform-owner-verified native corpus, refusing atomically while any typed witness role is absent."
+owner = "crate/sim-check-pack-ubuntu-pc"
+audiences = ["code", "framework"]
+guidance = "Pass the opaque VerifiedOperationLocalCorpus produced by sim-platform-ubuntu-pc to compose_operation_local. The producer accepts no fact booleans, support ids, paths, logs, specimen labels, or authority. It binds every support member to the corpus, immutable role definition, contributing acceptance and platform-binding identities, producer build graph, and neutral checker build graph. Treat MissingNativeRoles as an incomplete native evidence packet; never infer one requirement from an unrelated success, divergence, or crash specimen. Currentness and receipt issuance remain with the live SDK owner after authority-free preparation."
+claims_anchors = [
+  "anchor/crate/sim-check-pack-ubuntu-pc",
+  "anchor/rustdoc/sim-check-pack-ubuntu-pc/compose_operation_local",
+]
+claims_specimens = ["spec-test/sim-tooling/crates/sim-check-pack-ubuntu-pc/src/tests"]
+supports = [
+  "feature/sim-platform/real-local-check-adapter",
+  "feature/sim-tooling/conformance-pack-invocation",
   "feature/sim-sdk/neutral-conformance-packs",
 ]
 

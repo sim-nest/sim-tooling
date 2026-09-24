@@ -180,8 +180,13 @@ fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
         generated_contract_file(&contract_files, "provenance.json")?,
         generated_contract_file(&contract_files, "repo-contract.json")?,
         generated_contract_file(&contract_files, "rustdoc-index.json")?,
+        generated_contract_file(&contract_files, "rustdoc-index.md")?,
         generated_contract_file(&contract_files, "card-index.json")?,
+        generated_contract_file(&contract_files, "card-index.md")?,
         generated_contract_file(&contract_files, "feature-map.json")?,
+        generated_contract_file(&contract_files, "feature-map.md")?,
+        generated_contract_file(&contract_files, "repo-contract.md")?,
+        generated_contract_file(&contract_files, "sim-index-fragment.claims.sx")?,
         generated_contract_file(&contract_files, "sim-index-fragment.sx")?,
     ];
     Ok(ExpectedFiles { spine, files })
@@ -417,11 +422,38 @@ impl GeneratedFile {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{RustdocMode, SimdocOptions, collect_recipe_files};
+    use super::{RustdocMode, SimdocOptions, collect_recipe_files, expected_files};
+
+    #[test]
+    fn simdoc_carries_every_repo_contract_projection() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let paths = expected_files(&root)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| file.path)
+            .collect::<BTreeSet<_>>();
+        for name in [
+            "card-index.json",
+            "card-index.md",
+            "feature-map.json",
+            "feature-map.md",
+            "provenance.json",
+            "repo-contract.json",
+            "repo-contract.md",
+            "rustdoc-index.json",
+            "rustdoc-index.md",
+            "sim-index-fragment.claims.sx",
+            "sim-index-fragment.sx",
+        ] {
+            assert!(paths.contains(&format!("docs/generated/{name}")));
+        }
+    }
 
     #[test]
     fn simdoc_options_accept_repo_root_and_check() {

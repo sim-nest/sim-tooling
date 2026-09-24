@@ -1,0 +1,8 @@
+id = "operation-local"
+title = "Compose operation-local evidence"
+codec = "lisp"
+setup = "setup.siml"
+purpose = "purpose.md"
+order = 10
+tags = ["conformance", "native", "ubuntu", "evidence"]
+requires = ["conformance-core", "neutral-conformance-packs"]

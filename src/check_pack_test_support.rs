@@ -1,7 +1,5 @@
 //! Shared fixtures for the exact check-pack currentness boundary.
 
-use sim_conformance_core::CheckerRevocationHeadId;
-
 pub(crate) fn operation_evidence(variant: &str) -> String {
     let mut facts = vec![
         "operation.local-cancellation-terminates-group=true",
@@ -31,8 +29,4 @@ pub(crate) fn operation_evidence(variant: &str) -> String {
     facts.push(&variant);
     facts.sort_unstable();
     facts.into_iter().map(|fact| format!("{fact}\n")).collect()
-}
-
-pub(crate) fn head(name: &str) -> CheckerRevocationHeadId {
-    CheckerRevocationHeadId::from_text(name).unwrap()
 }

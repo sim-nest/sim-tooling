@@ -31,21 +31,30 @@ Rust source file exceeds 700 lines.
 
 ## Conformance Packs
 
-The `check_pack::execute_with_owner_currentness` adapter invokes one exact
-public conformance pack. Canonical sorted `key=value` evidence is limited to 16
-KiB. The caller must supply an SDK-owner-issued revocation set plus the
-independently selected current head through the in-process qualification
-boundary. The adapter recomputes the typed subject identity, binds the exact
-selection into the receipt, immediately verifies a receipt-specific fresh
-observation, and emits one `check/result-v1` JSON value with the set, head, key,
-receipt, invocation, and observations. Missing, revoked, stale, wrong-policy,
-wrong-source, or substituted inputs fail closed.
+`sim_check_pack::prepare_operation_local` is the authority-free
+operator-bootstrap seam. It executes the same pure pack evaluation and binds
+the exact evidence, support, native invocation, adapter/checker build graphs,
+bootstrap grade, and policy used by live issuance. Its prepared value contains
+no owner handle, currentness, revocation observation, or receipt. False or
+incompletely supported facts refuse the whole preparation.
 
-The bare `cargo run -p xtask -- check-pack ...` process interface cannot carry
-that qualified Rust object and therefore refuses with
-`owner-currentness-required`. A serialized authority format is intentionally
-not inferred here; semantic admission and current re-resolution remain the
-qualification owner's next integration step.
+The `sim_check_pack_xtask::execute_with_owner_currentness` adapter invokes one exact
+public conformance pack. Canonical sorted `key=value` evidence is limited to 16
+KiB. The caller must supply the weak operation handle issued by the live SDK
+boot owner through the in-process qualification boundary. The owner checks the
+sealed evidence, selects currentness, issues an opaque qualified artifact, and
+immediately re-resolves it against the same live generation. The adapter emits
+one `check/result-v1` JSON value with the set, head, key, receipt, invocation,
+and observations. Missing, revoked, dead-owner, foreign, or substituted inputs
+fail closed.
+
+The checker command is isolated from the documentation tool at
+`cargo run --manifest-path crates/Cargo.toml -p sim-check-pack-xtask --
+check-pack ...`. Its bare process interface cannot carry that qualified Rust
+object and therefore refuses with `owner-currentness-required`. The owner
+handle and opaque qualified artifact have no serialized construction path;
+semantic admission and current re-resolution stay with the live qualification
+owner.
 
 ## Citizenize
 

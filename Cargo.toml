@@ -16,7 +16,11 @@ sim-kernel = "0.4.0"
 
 [workspace]
 resolver = "3"
-members = [
+members = []
+exclude = [
+    "crates/sim-check-pack",
+    "crates/sim-check-pack-ubuntu-pc",
+    "crates/sim-check-pack-xtask",
 ]
 
 [workspace.package]
@@ -38,8 +42,6 @@ sim-cookbook = "0.4.0"
 sim-codec-index = "0.3.0"
 sim-codec-index-vault = "0.2.0"
 sim-codec-json = "0.4.0"
-sim-conformance-core = "0.2.0"
-sim-conformance-packs = "0.6.1"
 sim-index-core = "0.4.0"
 sim-index-vault-core = "0.2.0"
 sim-kernel = "0.4.0"

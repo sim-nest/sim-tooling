@@ -34,7 +34,7 @@ fn simdoc_generated_contracts_list_root_package() {
     let root = source_checkout_root();
     let artifacts = contract_artifacts(&root).unwrap();
 
-    assert_eq!(artifacts.package_count, 1);
+    assert_eq!(artifacts.package_count, 3);
 
     let feature_map = generated_json(&artifacts, "feature-map.json");
     let provenance = generated_json(&artifacts, "provenance.json");
@@ -47,7 +47,16 @@ fn simdoc_generated_contracts_list_root_package() {
         )
         .unwrap();
 
-    assert_eq!(feature_map["packages"][0]["package"], "xtask");
+    let package_names = feature_map["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|package| package["package"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        package_names,
+        ["sim-check-pack", "sim-check-pack-ubuntu-pc", "xtask"]
+    );
     assert_eq!(provenance["schema"], "sim.provenance.v1");
     assert_eq!(provenance["repo"], "sim-tooling");
     assert_eq!(provenance["generated_by"], "cargo run -p xtask -- simdoc");
@@ -59,10 +68,21 @@ fn simdoc_generated_contracts_list_root_package() {
             .is_some_and(|remote| remote.starts_with("https://github.com/"))
     );
     assert_eq!(provenance["git_commit"], provenance["source_commit"]);
-    assert_eq!(rustdoc_index["packages"][0]["package"], "xtask");
-    assert_eq!(repo_contract["packages"][0]["name"], "xtask");
-    assert_eq!(repo_contract["packages"][0]["manifest"], "Cargo.toml");
-    assert_eq!(repo_contract["packages"][0]["root"], "");
+    assert!(
+        rustdoc_index["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| package["package"] == "xtask")
+    );
+    let root_package = repo_contract["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["root"] == "")
+        .unwrap();
+    assert_eq!(root_package["name"], "xtask");
+    assert_eq!(root_package["manifest"], "Cargo.toml");
     assert!(
         index_fragment
             .subjects

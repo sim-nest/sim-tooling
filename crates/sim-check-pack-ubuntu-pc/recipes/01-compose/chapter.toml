@@ -1,0 +1,3 @@
+title = "Corpus composition"
+order = 10
+summary = "Require one platform-owned typed witness for every checker fact."

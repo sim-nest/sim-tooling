@@ -4,4 +4,6 @@
 
 | Package | Group | Summary |
 | --- | --- | --- |
+| `sim-check-pack` | `workspace` | Exact native invocation of SIM's public conformance packs. |
+| `sim-check-pack-ubuntu-pc` | `workspace` | Ubuntu composition for opaque native operation/local evidence. |
 | `xtask` | `workspace` | xtask: the SIM constellation build and documentation tool. |

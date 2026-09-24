@@ -1,4 +1,19 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::{fs, path::PathBuf};
+
+#[test]
+fn check_pack_reports_its_separate_checker_workspace() {
+    let err = xtask::run(vec!["xtask".to_owned(), "check-pack".to_owned()])
+        .expect_err("checker command must be unavailable without its feature");
+    assert_eq!(
+        err,
+        "check-pack moved to the checker workspace; run `cargo run --manifest-path crates/Cargo.toml -p sim-check-pack-xtask -- check-pack ...`"
+    );
+}
 
 #[test]
 fn simdoc_extra_flags_reach_simdoc_parser() {

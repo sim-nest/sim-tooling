@@ -1,8 +1,13 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use crate::{
-    atelier, bench, check_pack, citizenize, crate_catalog, file_size_gate, generator_options,
-    index_check, index_doctor, index_find, index_fixpoint, index_merge, index_overlap,
-    index_render, index_route, index_seed, index_snapshot, index_vault, platform_inventory,
-    repo_contract, simdoc, validation_matrix,
+    atelier, bench, build_inputs, citizenize, crate_catalog, file_size_gate,
+    generator_options, index_check, index_doctor, index_find, index_fixpoint, index_merge,
+    index_overlap, index_render, index_route, index_seed, index_snapshot, index_vault,
+    platform_inventory, repo_contract, sealed_resources, simdoc, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -40,7 +45,16 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
         return file_size_gate::run(args);
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "check-pack") {
-        return check_pack::run(args);
+        return Err(
+            "check-pack moved to the checker workspace; run `cargo run --manifest-path crates/Cargo.toml -p sim-check-pack-xtask -- check-pack ...`"
+                .to_owned(),
+        );
+    }
+    if matches!(args.as_slice(), [_, command, ..] if command == "build-inputs") {
+        return build_inputs::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, ..] if command == "sealed-resources") {
+        return sealed_resources::run(args);
     }
     if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "doctor")
     {
@@ -157,7 +171,9 @@ const USAGE_COMMANDS: &str = concat!(
     "|crate-catalog [--check] [--repo <path>]",
     "|citizenize [--local-paths] <crate-name-or-path>",
     "|simdoc [--check] [--rustdoc auto|skip|force]",
-    "|check-pack --checker <id> --binding <id> --subject <id> --scope <name>",
+    "|check-pack (moved to sim-check-pack-xtask)",
+    "|build-inputs <select|derive|materialize|finalize> ...",
+    "|sealed-resources <capture --plan <plan.json> --expected-plan-sha256 <hex> --selection <new-selection.json>|materialize --selection <selection.json> --expected-selection-sha256 <hex> --destination <new-path>> --owner-root <path>...",
     "|index doctor --repo <path> --missing --out <path>",
     "|index seed --from <markdown> --out .sim/index/<name>.seed.toml",
     "|index merge --fragment <path>... --out <path> [--check]",

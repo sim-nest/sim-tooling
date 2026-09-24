@@ -302,10 +302,10 @@ fn should_descend(path: &Path) -> bool {
 }
 
 pub(crate) fn is_test_source(rel: &str) -> bool {
-    rel.contains("/tests/")
-        || rel.ends_with("/tests.rs")
-        || rel.ends_with("_tests.rs")
-        || rel.contains("/test_support/")
+    rel.split('/').any(|component| {
+        let stem = component.strip_suffix(".rs").unwrap_or(component);
+        stem == "tests" || stem.ends_with("_tests") || stem == "test_support"
+    })
 }
 
 pub(crate) fn codec_language(package: &PackageContract) -> Option<String> {
@@ -396,6 +396,28 @@ mod tests {
     use sim_codec_index::{IndexCodec, IndexForm};
 
     use super::*;
+
+    #[test]
+    fn test_only_source_components_never_enter_public_discovery() {
+        for path in [
+            "crates/demo/tests/public_api.rs",
+            "crates/demo/src/tests.rs",
+            "crates/demo/src/command_tests.rs",
+            "crates/demo/src/handoff_tests/supplied.rs",
+            "crates/demo/src/test_support.rs",
+            "crates/demo/src/test_support/fixture.rs",
+        ] {
+            assert!(is_test_source(path), "expected test-only source: {path}");
+        }
+
+        for path in [
+            "crates/demo/src/lib.rs",
+            "crates/demo/src/contest.rs",
+            "crates/demo/src/attests/value.rs",
+        ] {
+            assert!(!is_test_source(path), "expected production source: {path}");
+        }
+    }
 
     #[test]
     fn package_subjects_emit_containment_edges() {

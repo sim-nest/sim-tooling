@@ -5,4 +5,6 @@
 | Card | Kind | Owner | Summary |
 | --- | --- | --- | --- |
 | `browse/catalog` | `browse-root` | `workspace` | root browse catalog |
+| `cookbook/check-pack` | `cookbook-recipe` | `sim-check-pack` | Invoke one exact native checker binding under live owner authority. |
+| `cookbook/ubuntu-operation-local-corpus` | `cookbook-recipe` | `sim-check-pack-ubuntu-pc` | Compose exact native evidence without caller-authored truth or authority. |
 | `registry/catalog` | `browse-registry` | `workspace` | registry catalog browse card |

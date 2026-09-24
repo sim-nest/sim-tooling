@@ -13,5 +13,5 @@ Normal rows are the fast local validation surface for this repository. Slow rows
 | ID | Mode | Scope | Subject | Command | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | `workspace-check` | `normal` | `workspace` | `workspace` | `cargo check --workspace` | Every workspace member compiles with its default feature set. |
-| `group-workspace` | `normal` | `split-group` | `workspace` | `cargo check -p xtask` | Representative package `xtask` for repository group `workspace`. |
+| `group-workspace` | `normal` | `split-group` | `workspace` | `cargo check -p sim-check-pack` | Representative package `sim-check-pack` for repository group `workspace`. |
 | `slow-benches` | `slow` | `slow` | `benches` | `cargo check --benches --all-features` | Bench targets compile under the full feature closure. |

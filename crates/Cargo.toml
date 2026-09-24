@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = [
+    "sim-check-pack",
+    "sim-check-pack-ubuntu-pc",
+    "sim-check-pack-xtask",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MPL-2.0"
+repository = "https://github.com/sim-nest/sim-tooling"
+homepage = "https://github.com/sim-nest/sim-tooling"
+
+[workspace.lints.rust]
+unsafe_code = "deny"

@@ -1,0 +1,3 @@
+title = "Native binding"
+order = 10
+summary = "Keep native calls distinct from process-command bindings."

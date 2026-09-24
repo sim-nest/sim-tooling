@@ -1,0 +1,8 @@
+id = "operation-local"
+title = "Operation-local native binding"
+codec = "lisp"
+setup = "setup.siml"
+purpose = "purpose.md"
+order = 10
+tags = ["conformance", "native", "currentness", "bootstrap"]
+requires = ["conformance-core", "neutral-conformance-packs"]

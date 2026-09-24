@@ -1,0 +1,5 @@
+book = "ubuntu-operation-local-corpus"
+title = "Opaque Ubuntu operation evidence"
+summary = "Compose exact native evidence without caller-authored truth or authority."
+order = 356
+chapters = ["01-compose"]

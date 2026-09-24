@@ -1,0 +1,10 @@
+{"kind":"recipe","path":"crates/sim-check-pack-ubuntu-pc/recipes/01-compose/chapter.toml"}
+{"kind":"recipe","path":"crates/sim-check-pack-ubuntu-pc/recipes/01-compose/operation-local/purpose.md"}
+{"kind":"recipe","path":"crates/sim-check-pack-ubuntu-pc/recipes/01-compose/operation-local/recipe.toml"}
+{"kind":"recipe","path":"crates/sim-check-pack-ubuntu-pc/recipes/01-compose/operation-local/setup.siml"}
+{"kind":"recipe","path":"crates/sim-check-pack-ubuntu-pc/recipes/book.toml"}
+{"kind":"recipe","path":"crates/sim-check-pack/recipes/01-native/chapter.toml"}
+{"kind":"recipe","path":"crates/sim-check-pack/recipes/01-native/operation-local/purpose.md"}
+{"kind":"recipe","path":"crates/sim-check-pack/recipes/01-native/operation-local/recipe.toml"}
+{"kind":"recipe","path":"crates/sim-check-pack/recipes/01-native/operation-local/setup.siml"}
+{"kind":"recipe","path":"crates/sim-check-pack/recipes/book.toml"}

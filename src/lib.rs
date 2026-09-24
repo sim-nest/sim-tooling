@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! xtask: the SIM constellation build and documentation tool.
 //!
 //! xtask runs repository maintenance and documentation tasks over a SIM repo
@@ -23,8 +28,10 @@
 //!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
-//! - `check-pack` -- bind one exact pack result to an SDK-owner-issued
-//!   currentness set supplied through the in-process qualification boundary.
+//! - `sim-check-pack-xtask` -- bind one exact pack result to an SDK-owner-issued
+//!   currentness set supplied through the separate in-process qualification boundary.
+//! - `build-inputs` and `sealed-resources` -- materialize exact Cargo inputs
+//!   and disjoint immutable native build resources as bounded regular files.
 //! - `bench run`, `bench compare`, `bench show`, and `bench check` -- execute,
 //!   inspect, and enforce durable benchmark artifacts.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -44,11 +51,9 @@
 pub mod atelier;
 pub mod bench;
 
+mod build_inputs;
 mod cardspine;
 mod cardspine_state;
-pub mod check_pack;
-#[cfg(test)]
-mod check_pack_test_support;
 mod citizenize;
 mod content_digest;
 mod crate_catalog;
@@ -92,6 +97,7 @@ mod repo_contract;
 mod repo_contract_cut;
 mod repo_contract_render;
 mod repo_contract_scan;
+mod sealed_resources;
 mod simdoc;
 mod simdoc_index;
 mod simdoc_rustdoc;

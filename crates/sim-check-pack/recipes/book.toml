@@ -1,0 +1,5 @@
+book = "check-pack"
+title = "Native conformance-pack invocation"
+summary = "Invoke one exact native checker binding under live owner authority."
+order = 355
+chapters = ["01-native"]
