@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::composition::{Contribution, PLATFORM_FACTS, missing_roles};
+use crate::composition::{Contribution, PLATFORM_FACTS, missing_roles, platform_contributions};
 use crate::contract::FACTS;
 
 #[test]
@@ -104,6 +104,10 @@ fn current_platform_facts_cannot_blanket_prove_twenty_two_facts() {
             "operation.local-cancellation-terminates-group",
             Vec::<Contribution<'_>>::new(),
         ),
+        (
+            "operation.local-signal-escalation-bounded",
+            Vec::<Contribution<'_>>::new(),
+        ),
     ]);
     assert_eq!(
         missing_roles(&contributions),
@@ -114,7 +118,7 @@ fn current_platform_facts_cannot_blanket_prove_twenty_two_facts() {
 #[test]
 fn missing_role_report_is_complete_bounded_and_unambiguous() {
     assert_eq!(FACTS.len(), 22);
-    assert_eq!(MISSING_PLATFORM_WITNESS_ROLES.len(), 7);
+    assert_eq!(MISSING_PLATFORM_WITNESS_ROLES.len(), 6);
     assert!(
         MISSING_PLATFORM_WITNESS_ROLES
             .windows(2)
@@ -126,5 +130,23 @@ fn missing_role_report_is_complete_bounded_and_unambiguous() {
     let rendered = error.to_string();
     for role in MISSING_PLATFORM_WITNESS_ROLES {
         assert!(rendered.contains(role));
+    }
+}
+
+#[test]
+fn absent_platform_witnesses_are_all_reported_in_one_refusal() {
+    let contributions = platform_contributions(|_| None).unwrap();
+    assert!(contributions.is_empty());
+    let missing = missing_roles(&contributions);
+    assert_eq!(missing.len(), FACTS.len());
+    for (fact, _) in PLATFORM_FACTS {
+        assert!(
+            missing.contains(&fact.as_str()),
+            "{} not reported",
+            fact.as_str()
+        );
+    }
+    for role in MISSING_PLATFORM_WITNESS_ROLES {
+        assert!(missing.contains(&role), "{role} not reported");
     }
 }

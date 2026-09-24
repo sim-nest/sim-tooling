@@ -32,7 +32,7 @@ pub(crate) enum Contribution<'a> {
 }
 
 /// Every C-OP fact the platform owner can witness, with its checker name.
-pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 13] = [
+pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 14] = [
     (
         OperationLocalVerifiedFact::PortIsPortable,
         "operation.local-port-is-portable",
@@ -85,24 +85,17 @@ pub(crate) const PLATFORM_FACTS: [(OperationLocalVerifiedFact, &str); 13] = [
         OperationLocalVerifiedFact::CancellationTerminatesGroup,
         "operation.local-cancellation-terminates-group",
     ),
+    (
+        OperationLocalVerifiedFact::SignalEscalationBounded,
+        "operation.local-signal-escalation-bounded",
+    ),
 ];
 
 pub(crate) fn compose(
     corpus: &VerifiedOperationLocalCorpus,
 ) -> Result<UbuntuOperationLocalInputs, UbuntuOperationLocalCorpusError> {
     validate_platform_corpus(corpus)?;
-    let mut contributions = BTreeMap::new();
-    for (role, fact) in PLATFORM_FACTS {
-        let Some(witness) = corpus.fact_witness(role) else {
-            continue;
-        };
-        if witness.fact() != role {
-            return Err(UbuntuOperationLocalCorpusError::AmbiguousNativeRole(
-                role.as_str(),
-            ));
-        }
-        contributions.insert(fact, vec![Contribution::Platform(witness)]);
-    }
+    let mut contributions = platform_contributions(|fact| corpus.fact_witness(fact))?;
     add_platform_contribution(
         &mut contributions,
         "operation.local-test-success-observed",
@@ -177,6 +170,28 @@ fn add_platform_contribution<'a>(
             acceptance: corpus.specimen(role).identity(),
             binding: corpus.binding(role),
         });
+}
+
+/// Collects every platform-derived witness the lookup can supply.
+///
+/// An absent witness is not an error here: it is reported, together with
+/// every other absent fact, by [`missing_roles`] before any evidence exists.
+pub(crate) fn platform_contributions<'a>(
+    lookup: impl Fn(OperationLocalVerifiedFact) -> Option<&'a VerifiedOperationLocalFactWitness>,
+) -> Result<BTreeMap<&'static str, Vec<Contribution<'a>>>, UbuntuOperationLocalCorpusError> {
+    let mut contributions = BTreeMap::new();
+    for (role, fact) in PLATFORM_FACTS {
+        let Some(witness) = lookup(role) else {
+            continue;
+        };
+        if witness.fact() != role {
+            return Err(UbuntuOperationLocalCorpusError::AmbiguousNativeRole(
+                role.as_str(),
+            ));
+        }
+        contributions.insert(fact, vec![Contribution::Platform(witness)]);
+    }
+    Ok(contributions)
 }
 
 pub(crate) fn missing_roles(
