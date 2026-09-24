@@ -23,10 +23,10 @@
 use sim_check_pack_ubuntu_pc::compose_operation_local;
 use sim_kernel::ContentId;
 use sim_platform_ubuntu_pc::{
-    NativeAcceptanceClass, OperationLocalCorpusDefinition, OperationLocalFormatterDefinition,
-    OperationLocalOwnerCommandDefinition, OperationLocalPostGateDefinition,
-    OperationLocalRefusalDefinition, OperationLocalSpecimenExpectation,
-    OperationLocalStopDefinition, POST_GATE_SITES, VerifiedNativeAcceptance,
+    NATIVE_POST_GATE_SITES, NativeAcceptanceClass, OperationLocalCorpusDefinition,
+    OperationLocalFormatterDefinition, OperationLocalOwnerCommandDefinition,
+    OperationLocalPostGateDefinition, OperationLocalRefusalDefinition,
+    OperationLocalSpecimenExpectation, OperationLocalStopDefinition, VerifiedNativeAcceptance,
     verify_native_specimen_directory, verify_operation_local_corpus_with_provider_bound,
     verify_provider_bound_specimen_directory,
 };
@@ -136,7 +136,9 @@ fn run(invocation: &Invocation) -> Result<()> {
     let refusal_definition = OperationLocalRefusalDefinition::from_verified(&refusal)?;
     corpus.admit_refusal_specimen(&refusal_definition, refusal)?;
 
-    let post_gate = POST_GATE_SITES
+    // Only the native sites; projection-final-image stays a typed pending
+    // member completed by the projection-boundary packet (G5).
+    let post_gate = NATIVE_POST_GATE_SITES
         .iter()
         .map(|site| {
             specimen(
@@ -159,9 +161,10 @@ fn run(invocation: &Invocation) -> Result<()> {
     let witness = corpus
         .post_gate_witness()
         .ok_or("post-gate witness absent after admission")?;
+    let pending = witness.pending_sites()?.join(",");
     let inputs = compose_operation_local(&corpus)?;
     println!(
-        "SIM_NATIVE_CORPUS schema=v1 corpus={corpus_identity} definition={} post-gate={} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
+        "SIM_NATIVE_CORPUS schema=v1 corpus={corpus_identity} definition={} post-gate={} post-gate-pending={pending} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
         content_text(corpus.definition_identity()),
         content_text(witness.identity()),
         content_text(inputs.support_definition().identity()),
