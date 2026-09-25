@@ -6,4 +6,5 @@
 | --- | --- | ---: | ---: |
 | `sim-check-pack` | `workspace` | 0 | 0 |
 | `sim-check-pack-ubuntu-pc` | `workspace` | 0 | 0 |
+| `sim-check-pack-xtask` | `workspace` | 0 | 0 |
 | `xtask` | `workspace` | 0 | 0 |

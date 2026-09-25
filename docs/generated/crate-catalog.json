@@ -1,6 +1,6 @@
 {
   "generator": "xtask crate-catalog v1",
-  "package_count": 3,
+  "package_count": 4,
   "packages": [
     {
       "description": "Repository maintenance tasks.",
@@ -27,6 +27,20 @@
       "root": "crates/sim-check-pack-ubuntu-pc",
       "target_kinds": [
         "custom-build",
+        "example",
+        "lib"
+      ]
+    },
+    {
+      "description": "In-process command boundary for SIM conformance-pack checks.",
+      "generated_readme": true,
+      "manifest": "crates/sim-check-pack-xtask/Cargo.toml",
+      "name": "sim-check-pack-xtask",
+      "publish": "false",
+      "readme": "crates/sim-check-pack-xtask/README.md",
+      "root": "crates/sim-check-pack-xtask",
+      "target_kinds": [
+        "bin",
         "lib"
       ]
     },

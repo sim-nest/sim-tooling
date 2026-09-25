@@ -16,6 +16,13 @@
       "summary": "Ubuntu composition for opaque native operation/local evidence."
     },
     {
+      "crate_name": "sim_check_pack_xtask",
+      "group": "workspace",
+      "manifest": "crates/sim-check-pack-xtask/Cargo.toml",
+      "package": "sim-check-pack-xtask",
+      "summary": "Isolated checker command and in-process qualification adapter."
+    },
+    {
       "crate_name": "xtask",
       "group": "workspace",
       "manifest": "Cargo.toml",

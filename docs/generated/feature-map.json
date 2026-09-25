@@ -14,6 +14,11 @@
     {
       "features": [],
       "group": "workspace",
+      "package": "sim-check-pack-xtask"
+    },
+    {
+      "features": [],
+      "group": "workspace",
       "package": "xtask"
     }
   ]
