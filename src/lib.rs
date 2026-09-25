@@ -54,6 +54,7 @@ pub mod bench;
 
 mod build_inputs;
 mod cardspine;
+mod cargo_home;
 mod citizenize;
 mod content_digest;
 mod dispatch;

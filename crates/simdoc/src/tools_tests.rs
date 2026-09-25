@@ -33,7 +33,7 @@ fn running_cargo() -> PathBuf {
 #[test]
 fn the_toolchain_that_built_simdoc_is_accepted() {
     let tools = Tools::verify(&running_cargo(), &BUILT_WITH, &GIT_LOCATIONS).unwrap();
-    let command = tools.cargo();
+    let command = tools.command(&tools.cargo);
     assert_eq!(command.get_program(), running_cargo().as_os_str());
     assert_eq!(tools::tools().unwrap().bin, tools.bin);
 }
@@ -84,6 +84,110 @@ fn a_toolchain_that_reports_other_commits_is_refused() {
 }
 
 #[test]
+fn any_cargo_configuration_that_could_apply_refuses_the_run() {
+    let base = scratch("tools-config");
+    let work = base.join("a/b/work");
+    fs::create_dir_all(&work).unwrap();
+    require_no_cargo_config(&[work.as_path()]).unwrap();
+    // An ancestor's `.cargo/config.toml` or extensionless `config`.
+    for (dir, name) in [
+        ("a", "config.toml"),
+        ("a/b", "config"),
+        ("a/b/work", "config.toml"),
+    ] {
+        let cargo = base.join(dir).join(".cargo");
+        fs::create_dir_all(&cargo).unwrap();
+        fs::write(cargo.join(name), "paths = [\"/evil\"]\n").unwrap();
+        let err = require_no_cargo_config(&[work.as_path()]).unwrap_err();
+        assert!(
+            err.contains("Cargo configuration") && err.contains(name),
+            "{err}"
+        );
+        fs::remove_file(cargo.join(name)).unwrap();
+        require_no_cargo_config(&[work.as_path()]).unwrap();
+    }
+    // A symlinked configuration counts.
+    let cargo = base.join("a/.cargo");
+    std::os::unix::fs::symlink("/dev/null", cargo.join("config.toml")).unwrap();
+    assert!(require_no_cargo_config(&[work.as_path()]).is_err());
+    fs::remove_file(cargo.join("config.toml")).unwrap();
+    // Manifest ancestries are checked as well as the working directory.
+    let elsewhere = base.join("elsewhere");
+    fs::create_dir_all(elsewhere.join(".cargo")).unwrap();
+    fs::write(elsewhere.join(".cargo/config.toml"), "").unwrap();
+    let manifest_dir = elsewhere.join("m");
+    fs::create_dir_all(&manifest_dir).unwrap();
+    assert!(require_no_cargo_config(&[work.as_path(), manifest_dir.as_path()]).is_err());
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn cargo_runs_with_a_private_home_and_never_the_callers() {
+    let tools = Tools::verify(&running_cargo(), &BUILT_WITH, &GIT_LOCATIONS).unwrap();
+    let work = scratch("tools-home");
+    let command = tools.cargo_in(&work, &[], None).unwrap();
+    let envs = command
+        .get_envs()
+        .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let home = PathBuf::from(envs[&OsString::from("CARGO_HOME")].clone().unwrap());
+    assert!(home.starts_with(env::temp_dir()) && home.is_dir());
+    assert_eq!(
+        envs[&OsString::from("HOME")],
+        envs[&OsString::from("CARGO_HOME")]
+    );
+    assert!(!envs.contains_key(&OsString::from("CARGO_TARGET_DIR")));
+    let mode = fs::metadata(&home).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "the private home is owner-only");
+    fs::remove_dir_all(work).unwrap();
+}
+
+#[test]
+fn a_locked_cargo_run_sees_only_verified_registry_crates_in_a_private_home() {
+    let tools = Tools::verify(&running_cargo(), &BUILT_WITH, &GIT_LOCATIONS).unwrap();
+    let lock =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock")).unwrap();
+    let work = scratch("tools-locked-home");
+    let command = tools.cargo_in(&work, &[], Some(&lock)).unwrap();
+    let home = command
+        .get_envs()
+        .find(|(name, _)| *name == "CARGO_HOME")
+        .and_then(|(_, value)| value.map(PathBuf::from))
+        .unwrap();
+    let real =
+        crate::cargo_home::real_cargo_home(None, env::var_os("CARGO_HOME"), env::var_os("HOME"))
+            .unwrap();
+    assert_ne!(home, real, "the caller's Cargo home was handed to cargo");
+    let cache = fs::read_dir(home.join("registry/cache"))
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap();
+    assert!(
+        fs::read_dir(cache.path())
+            .unwrap()
+            .flatten()
+            .any(|file| file.file_name().to_string_lossy().starts_with("sha2-")),
+        "the locked crates are in the private cache"
+    );
+    assert!(!home.join("config.toml").exists() && !home.join("registry/src").exists());
+    fs::remove_dir_all(work).unwrap();
+}
+
+#[test]
+fn git_runs_with_program_launching_settings_pinned_off() {
+    let tools = Tools::verify(&running_cargo(), &BUILT_WITH, &GIT_LOCATIONS).unwrap();
+    let args = tools
+        .git()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    for setting in ["core.fsmonitor=false", "core.hooksPath=/dev/null"] {
+        assert!(args.iter().any(|arg| arg == setting), "{setting}");
+    }
+}
+
+#[test]
 fn a_program_that_is_not_an_absolute_path_is_never_looked_up() {
     let err = Tools::verify(Path::new("cargo"), &BUILT_WITH, &GIT_LOCATIONS).unwrap_err();
     assert!(err.contains("not an absolute path"), "{err}");
@@ -104,7 +208,7 @@ fn a_git_that_is_not_root_owned_and_sealed_is_refused() {
 #[test]
 fn children_run_with_a_cleared_environment_and_a_path_of_the_toolchain_only() {
     let tools = Tools::verify(&running_cargo(), &BUILT_WITH, &GIT_LOCATIONS).unwrap();
-    for command in [tools.cargo(), tools.rustc(), tools.git()] {
+    for command in [tools.command(&tools.cargo), tools.rustc(), tools.git()] {
         let envs = command
             .get_envs()
             .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
@@ -147,10 +251,13 @@ fn children_run_with_a_cleared_environment_and_a_path_of_the_toolchain_only() {
     }
 }
 
-/// Every process spawn in simdoc's non-test code must be in `tools.rs`.
+/// Every process spawn in simdoc's non-test code must be in `tools.rs`, and
+/// every file write in `publication.rs` (generated output) or one of the few
+/// local-cache writers.
 #[derive(Default)]
 struct Spawns {
     found: Vec<String>,
+    writes: Vec<String>,
 }
 
 fn is_test_attribute(attribute: &Attribute) -> bool {
@@ -181,6 +288,17 @@ impl<'ast> Visit<'ast> for Spawns {
                 .collect::<Vec<_>>();
             if names.len() >= 2 && names[names.len() - 2..] == ["Command", "new"] {
                 self.found.push(names.join("::"));
+            }
+            if names.len() >= 2
+                && matches!(
+                    names[names.len() - 2..],
+                    [ref module, ref function]
+                        if (module == "fs" && ["write", "copy", "rename", "remove_file"].contains(&function.as_str()))
+                            || (module == "File" && function == "create")
+                            || (module == "OpenOptions" && function == "new")
+                )
+            {
+                self.writes.push(names.join("::"));
             }
         }
         syn::visit::visit_expr_call(self, call);
@@ -221,5 +339,48 @@ fn no_code_outside_tools_spawns_a_process_or_a_shell() {
     assert!(
         offenders.is_empty(),
         "process spawned outside tools.rs: {offenders:?}"
+    );
+}
+
+/// Generated bytes reach a file only through `publication::write` (which
+/// guards every byte and refuses symlinks). The other writers are private
+/// scratch (`cargo_home`), the local card cache, and the docs fingerprint
+/// cache; anything new must be named here in a reviewed change.
+#[test]
+fn no_code_writes_a_file_outside_the_publication_guard() {
+    // `repo_contract_cli.rs` writes the `--emit` artifacts to a preopened
+    // output directory, from bytes `contract_artifacts` already guarded.
+    const WRITERS: [&str; 5] = [
+        "publication.rs",
+        "cargo_home.rs",
+        "cardspine_state.rs",
+        "simdoc_rustdoc.rs",
+        "repo_contract_cli.rs",
+    ];
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    source_files(&src, &mut files);
+    let mut offenders = Vec::new();
+    for file in files {
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        if WRITERS.contains(&name.as_str())
+            || name.ends_with("_tests.rs")
+            || name.ends_with("_fixture.rs")
+        {
+            continue;
+        }
+        let parsed = syn::parse_file(&fs::read_to_string(&file).unwrap()).unwrap();
+        let mut spawns = Spawns::default();
+        spawns.visit_file(&parsed);
+        offenders.extend(
+            spawns
+                .writes
+                .into_iter()
+                .map(|write| format!("{name}: {write}")),
+        );
+    }
+    assert!(
+        offenders.is_empty(),
+        "file written outside the guard: {offenders:?}"
     );
 }

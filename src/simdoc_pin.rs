@@ -368,10 +368,7 @@ fn reported(tool: &Path) -> Result<(String, String, String), String> {
 }
 
 /// The environment variables a launched child inherits from the caller.
-const PASSED_ENVIRONMENT: [&str; 9] = [
-    "HOME",
-    "CARGO_HOME",
-    "CARGO_TARGET_DIR",
+const PASSED_ENVIRONMENT: [&str; 6] = [
     "CARGO_NET_OFFLINE",
     "LANG",
     "LC_ALL",
@@ -381,6 +378,23 @@ const PASSED_ENVIRONMENT: [&str; 9] = [
 ];
 
 impl Toolchain {
+    /// [`Toolchain::command`] run in `cwd`, provided no Cargo configuration
+    /// applies to `cwd` or to any of `manifests` (see
+    /// [`crate::toolchain_identity::require_no_cargo_config`]).
+    pub(crate) fn command_in(
+        &self,
+        program: &Path,
+        cwd: &Path,
+        manifests: &[&Path],
+    ) -> Result<Command, String> {
+        let mut places = vec![cwd];
+        places.extend(manifests.iter().copied());
+        crate::toolchain_identity::require_no_cargo_config(&places)?;
+        let mut command = self.command(program);
+        command.current_dir(cwd);
+        Ok(command)
+    }
+
     /// A command that runs `program` (an absolute path) with a cleared
     /// environment, a `PATH` of this toolchain's directory and the system
     /// binary directories, and this toolchain named for every tool.

@@ -84,7 +84,7 @@ fn is_git_root(dir: &Path) -> bool {
 
 fn cargo_workspace_root(dir: &Path) -> Result<Option<PathBuf>, String> {
     let output = crate::tools::tools()?
-        .cargo()
+        .cargo_in(dir, &[], None)?
         .args([
             "metadata",
             "--locked",

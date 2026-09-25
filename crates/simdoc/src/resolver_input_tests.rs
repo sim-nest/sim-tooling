@@ -38,7 +38,9 @@ impl Layout {
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
              [dependencies]\nhelper = { path = \"../../libs/helper\" }\n",
         );
-        layout.write("sim-private/.meta-workspace/packages/app/src/lib.rs", "");
+        // The repository's own package sources live in the repository; the
+        // farm package links to them.
+        layout.write("sim-app/src/lib.rs", "");
         layout.write(
             "sim-private/.meta-workspace/libs/helper/Cargo.toml",
             "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
@@ -51,6 +53,38 @@ impl Layout {
             "sim-app/Cargo.toml",
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         );
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["add", "-A"],
+            vec![
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--no-verify",
+                "-mfixture",
+            ],
+        ] {
+            assert!(
+                Command::new("git")
+                    .args(&args)
+                    .current_dir(layout.base.join("sim-app"))
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        std::os::unix::fs::symlink(
+            layout.base.join("sim-app/src"),
+            layout
+                .base
+                .join("sim-private/.meta-workspace/packages/app/src"),
+        )
+        .unwrap();
         let status = Command::new(env!("CARGO"))
             .args(["generate-lockfile", "--offline", "--manifest-path"])
             .arg(layout.manifest())
@@ -132,18 +166,19 @@ fn a_manifest_only_change_moves_the_identity_and_the_cache_key() {
 #[test]
 fn a_symlink_inside_a_path_package_is_refused() {
     let layout = Layout::new("resolver-symlink");
+    layout.write("sim-app/untracked.txt", "stray\n");
     std::os::unix::fs::symlink(
-        layout.repo().join("Cargo.toml"),
+        layout.repo().join("untracked.txt"),
         layout
             .base
             .join("sim-private/.meta-workspace/libs/helper/src/extra.rs"),
     )
     .unwrap();
 
-    // The target is a file of a directory that is no Git checkout.
+    // The target is a file the sibling checkout does not track.
     let err = validate(&layout.manifest(), &layout.repo()).unwrap_err();
     assert!(
-        err.contains("refused: link target is not inside a Git checkout"),
+        err.contains("untracked.txt") && err.contains("refused"),
         "{err}"
     );
 }

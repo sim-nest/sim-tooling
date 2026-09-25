@@ -271,6 +271,45 @@ fn every_launched_command_runs_under_a_cleared_environment() {
 }
 
 #[test]
+fn a_launched_cargo_refuses_any_configuration_that_could_apply() {
+    let toolchain = Toolchain {
+        cargo: PathBuf::from("/toolchains/1.96.0/bin/cargo"),
+        rustc: PathBuf::from("/toolchains/1.96.0/bin/rustc"),
+        rustdoc: PathBuf::from("/toolchains/1.96.0/bin/rustdoc"),
+        channel: "1.96.0".to_owned(),
+        host: "x86_64-unknown-linux-gnu".to_owned(),
+    };
+    let base = temp_root("pin-config");
+    let work = base.join("a/work");
+    fs::create_dir_all(&work).unwrap();
+    let cargo = base.join("a/.cargo");
+    fs::create_dir_all(&cargo).unwrap();
+    for name in ["config.toml", "config"] {
+        fs::write(cargo.join(name), "paths = [\"/evil\"]\n").unwrap();
+        let err =
+            crate::toolchain_identity::require_no_cargo_config(&[work.as_path()]).unwrap_err();
+        assert!(
+            err.contains("Cargo configuration") && err.contains(name),
+            "{err}"
+        );
+        fs::remove_file(cargo.join(name)).unwrap();
+    }
+    crate::toolchain_identity::require_no_cargo_config(&[work.as_path()]).unwrap();
+    // `command_in` runs the guard before it hands back a command.
+    fs::write(cargo.join("config.toml"), "").unwrap();
+    assert!(
+        toolchain
+            .command_in(&toolchain.cargo, &work, &[])
+            .unwrap_err()
+            .contains("Cargo configuration")
+    );
+    fs::remove_file(cargo.join("config.toml")).unwrap();
+    let command = toolchain.command_in(&toolchain.cargo, &work, &[]).unwrap();
+    assert_eq!(command.get_current_dir(), Some(work.as_path()));
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn the_built_identity_must_match_every_committed_field() {
     let pin = sample_pin();
     let toolchain = Toolchain {

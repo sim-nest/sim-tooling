@@ -32,15 +32,7 @@ use std::{
 use crate::build_identity::{tool_identity, toolchain_digest};
 
 /// Environment variables children may inherit.
-const PASSED_ENVIRONMENT: [&str; 7] = [
-    "HOME",
-    "CARGO_HOME",
-    "CARGO_TARGET_DIR",
-    "CARGO_NET_OFFLINE",
-    "LANG",
-    "LC_ALL",
-    "TMPDIR",
-];
+const PASSED_ENVIRONMENT: [&str; 4] = ["CARGO_NET_OFFLINE", "LANG", "LC_ALL", "TMPDIR"];
 /// System binary directories a child's `PATH` may include, after the
 /// toolchain directory.
 const SYSTEM_PATH: &str = "/usr/bin:/bin";
@@ -157,9 +149,40 @@ impl Tools {
         })
     }
 
-    /// A `cargo` invocation with the scrubbed environment.
-    pub(crate) fn cargo(&self) -> Command {
-        self.command(&self.cargo)
+    /// A `cargo` invocation with the scrubbed environment, run in `cwd`,
+    /// provided no Cargo configuration file can apply to it (none in `.cargo`
+    /// of any ancestor of `cwd` or of any of `manifests`), and with a private
+    /// Cargo home (see [`crate::cargo_home`]) holding exactly the registry
+    /// crates `lock` names, checksum-verified (`None`: an empty home). The
+    /// caller's `CARGO_HOME`, `HOME`, and `CARGO_TARGET_DIR` never reach it:
+    /// configuration can replace sources and dependencies, and unpacked
+    /// registry sources are unbound input.
+    pub(crate) fn cargo_in(
+        &self,
+        cwd: &Path,
+        manifests: &[&Path],
+        lock: Option<&str>,
+    ) -> Result<Command, String> {
+        let mut places = vec![cwd];
+        places.extend(manifests.iter().copied());
+        require_no_cargo_config(&places)?;
+        let home = match lock {
+            None => crate::cargo_home::hermetic_home(Path::new("/nonexistent"), None, "cargo")?,
+            Some(lock) => {
+                let real = crate::cargo_home::real_cargo_home(
+                    env::var_os("SIMDOC_REAL_CARGO_HOME"),
+                    env::var_os("CARGO_HOME"),
+                    env::var_os("HOME"),
+                )?;
+                crate::cargo_home::hermetic_home(&real, Some(lock), "cargo")?
+            }
+        };
+        let mut command = self.command(&self.cargo);
+        command
+            .current_dir(cwd)
+            .env("CARGO_HOME", &home)
+            .env("HOME", &home);
+        Ok(command)
     }
 
     /// A `rustc` invocation with the scrubbed environment.
@@ -171,7 +194,15 @@ impl Tools {
     /// system Git configuration.
     pub(crate) fn git(&self) -> Command {
         let mut command = self.command(&self.git);
+        // The repository's own configuration is still read, so the two
+        // settings that make Git run a program on a plain read are pinned off.
         command
+            .args([
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_TERMINAL_PROMPT", "0");
@@ -198,6 +229,30 @@ impl Tools {
             .env("RUSTC_WORKSPACE_WRAPPER", "");
         command
     }
+}
+
+/// Refuses when a Cargo configuration file exists where Cargo would read it
+/// for a run in any of `places`: `config` or `config.toml` in `.cargo` of the
+/// place or any ancestor. (Cargo's own home is private and empty of
+/// configuration: see [`crate::cargo_home`].)
+pub(crate) fn require_no_cargo_config(places: &[&Path]) -> Result<(), String> {
+    for place in places {
+        let place = place.canonicalize().unwrap_or_else(|_| place.to_path_buf());
+        for dir in place.ancestors() {
+            for name in ["config", "config.toml"] {
+                let file = dir.join(".cargo").join(name);
+                if fs::symlink_metadata(&file).is_ok() {
+                    return Err(format!(
+                        "refused: Cargo configuration {} would apply; it can replace sources or \
+                         dependencies and inject flags, linkers, or environment, and no identity \
+                         binds it. Remove it or run from a tree it does not cover",
+                        file.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn reported_identity(tool: &Path) -> Result<(String, String), String> {

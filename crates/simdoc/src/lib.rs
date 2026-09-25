@@ -9,6 +9,7 @@
 #![deny(missing_docs)]
 
 mod bounded_process;
+mod cargo_home;
 // Shared with the build script; the toolchain rules are used at run time too.
 #[allow(dead_code)]
 #[path = "../build_identity.rs"]
@@ -29,6 +30,7 @@ mod index_surface_scan;
 mod json_render;
 mod owned;
 mod publication;
+mod recipe_evidence;
 mod recipe_gate;
 mod repo_contract;
 mod repo_contract_cli;

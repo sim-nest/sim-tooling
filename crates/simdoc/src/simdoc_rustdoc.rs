@@ -23,7 +23,36 @@ pub(crate) fn run_api_docs(
         return Ok(());
     }
 
-    let mut command = crate::tools::tools()?.cargo();
+    let manifests = resolver
+        .map(|input| input.manifest.as_path())
+        .into_iter()
+        .collect::<Vec<_>>();
+    // A `target` that is a link would send Cargo's writes elsewhere.
+    if fs::symlink_metadata(root.join("target")).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(format!(
+            "refused: {} is a symlink; cargo doc would write through it",
+            root.join("target").display()
+        ));
+    }
+    let lock_path = resolver.map_or_else(
+        || root.join("Cargo.lock"),
+        |input| input.manifest.with_file_name("Cargo.lock"),
+    );
+    // The lock that decides which registry crates are built must be the
+    // repository's own (a tracked file), or the shared resolver's (bound by
+    // its digest). An untracked repository lock is refused, not read.
+    let lock = if resolver.is_some() {
+        fs::read_to_string(lock_path).ok()
+    } else {
+        crate::owned::read_to_string(lock_path).ok()
+    };
+    // Cargo builds into a fresh private target directory: a `target` left in
+    // the tree (untracked, so anyone's) is never reused, whatever it holds.
+    // `cargo doc` here only verifies the dependency graph; nothing it writes
+    // is read back.
+    let target = crate::cargo_home::private_dir("doc-target")?;
+    let mut command = crate::tools::tools()?.cargo_in(root, &manifests, lock.as_deref())?;
+    command.env("CARGO_TARGET_DIR", &target);
     // Documentation generation is a verifier of the repository's selected
     // dependency graph, not an authority to rewrite it.  In particular, a
     // shared constellation resolver may make newer packages visible than the
@@ -48,9 +77,10 @@ pub(crate) fn run_api_docs(
     }
     let status = command
         .arg("--no-deps")
-        .current_dir(root)
         .status()
-        .map_err(|err| format!("cargo doc: {err}"))?;
+        .map_err(|err| format!("cargo doc: {err}"));
+    let _ = fs::remove_dir_all(&target);
+    let status = status?;
     if status.success() {
         if let Some(input) = resolver {
             input.remeasure(root)?;

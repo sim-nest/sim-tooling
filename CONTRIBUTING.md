@@ -42,6 +42,12 @@ program found on `PATH`: it launches only the toolchain pinned under
 `rustc`, `rustdoc`, and libraries are checked against a committed digest and
 commits), and `git` from a root-owned system location. A reviewer refreshes
 that pin, after reading the engine diff, with `cargo run -p xtask -- simdoc-pin`.
+It also refuses to run when any Cargo configuration file (`config` or
+`config.toml` in Cargo's home or in a `.cargo` of any ancestor directory) could
+apply, because such a file can replace the engine's dependencies. The complete
+list of what simdoc allows at each boundary, and refuses, is
+`docs/simdoc-trust-boundaries.md`; change an allowed set there and in code in
+the same reviewed change.
 
 Please keep source and Markdown ASCII-only, and add or update tests for behavior
 you change. Public APIs carry `#![deny(missing_docs)]`; document new public items.

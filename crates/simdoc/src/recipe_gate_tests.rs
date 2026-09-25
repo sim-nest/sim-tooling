@@ -158,3 +158,58 @@ fn simdoc_never_executes_a_recipe_script_of_any_kind() {
         assert!(!marker.exists(), "{kind}: a repository script was executed");
     }
 }
+
+/// The production entrypoint stops on malformed recipe material: removing the
+/// `validate` call from `simdoc` makes this test fail (the direct tests above
+/// call `validate` themselves and would not notice).
+#[test]
+fn a_malformed_recipe_stops_generation_through_the_public_route() {
+    let repo = recipes_repo("recipe-gate-route");
+    repo.write(RECIPE, "title = \n");
+    repo.commit();
+    let err = repo.run_simdoc(&[]).unwrap_err();
+    assert!(
+        err.contains("recipe validation failed") && err.contains(RECIPE),
+        "{err}"
+    );
+    assert!(
+        !repo
+            .path()
+            .join("docs/generated/repo-contract.json")
+            .exists()
+    );
+    let err = repo.run_simdoc(&["--check"]).unwrap_err();
+    assert!(err.contains("recipe validation failed"), "{err}");
+}
+
+/// A tracked recipe script is not evidence that recipes run: the generated
+/// index claims a check only for a declared validation consumer.
+#[test]
+fn generated_recipe_evidence_names_only_a_declared_consumer() {
+    let repo = recipes_repo("recipe-gate-evidence");
+    repo.write(
+        "recipes/book.toml",
+        "book = \"fixture\"\ntitle = \"Fixture\"\nsummary = \"Fixture recipes.\"\n",
+    );
+    plant_script(&repo, &repo.path().parent().unwrap().join("never-runs"));
+    repo.commit();
+    repo.run_simdoc(&[]).unwrap();
+    let fragment = "docs/generated/sim-index-fragment.sx";
+    assert!(
+        !repo.read(fragment).contains("check-recipes"),
+        "no consumer declared"
+    );
+
+    let manifest = repo.read("Cargo.toml").replace(
+        "docs-command = \"cargo run -p xtask -- simdoc\"",
+        "docs-command = \"cargo run -p xtask -- simdoc\"\n\
+         validation-commands = [\"sh scripts/check-recipes.sh\"]",
+    );
+    repo.write("Cargo.toml", &manifest);
+    repo.commit();
+    repo.run_simdoc(&[]).unwrap();
+    assert!(
+        repo.read(fragment).contains("check-recipes"),
+        "consumer declared"
+    );
+}

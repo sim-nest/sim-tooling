@@ -13,6 +13,18 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// The reviewed consumption API a test target defines beside its tests: it
+/// is added to any fixture source that calls it without defining it.
+pub(crate) const CONSUME_FIXTURE_HELPER: &str = "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n";
+
+pub(crate) fn with_helper(text: &str) -> String {
+    if text.contains("consume_fixture(") && !text.contains("fn consume_fixture") {
+        format!("{CONSUME_FIXTURE_HELPER}{text}")
+    } else {
+        text.to_owned()
+    }
+}
+
 /// A temporary repository with a public origin, removed on drop.
 pub(crate) struct FixtureRepo {
     pub(crate) root: PathBuf,
@@ -69,7 +81,7 @@ impl FixtureRepo {
     pub(crate) fn write(&self, relative: &str, text: &str) {
         let path = self.root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, text).unwrap();
+        fs::write(path, with_helper(text)).unwrap();
     }
 
     /// Commits everything with a fixed committer date.
@@ -117,6 +129,35 @@ impl FixtureRepo {
         ];
         args.extend(extra.iter().map(|arg| (*arg).to_owned()));
         crate::run(args)
+    }
+
+    /// Removes a file from the index (leaving it on disk) and commits.
+    pub(crate) fn git_untrack(&self, relative: &str) {
+        self.git(&["rm", "--cached", "--quiet", relative]);
+        self.commit_index_only();
+    }
+
+    fn commit_index_only(&self) {
+        self.git(&[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "untrack",
+        ]);
+    }
+
+    /// Removes a file from the repository and commits the removal.
+    pub(crate) fn git_remove(&self, relative: &str) {
+        fs::remove_file(self.root.join(relative)).unwrap();
+        self.commit();
     }
 
     /// Reads one repository file.

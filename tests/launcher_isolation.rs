@@ -235,12 +235,26 @@ fn a_fake_rustup_and_fake_path_tools_are_never_run_before_or_after_launch() {
     assert_eq!(ran(&marker), "", "a counterfeit program was executed");
 }
 
-/// The engine executable the launcher just built.
+/// The engine executable, built once per test process into a private target
+/// directory by the toolchain running these tests. (The launcher itself builds
+/// into its own private directory, which it removes with its process.)
 fn engine_binary() -> PathBuf {
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| tooling_root().join("crates/simdoc/target"));
-    target.join("debug/simdoc")
+    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let target = scratch("isolation-engine-target");
+            let status = Command::new(env!("CARGO"))
+                .current_dir(tooling_root())
+                .args(["build", "--quiet", "--locked", "--manifest-path"])
+                .arg(tooling_root().join("crates/simdoc/Cargo.toml"))
+                .arg("--target-dir")
+                .arg(&target)
+                .status()
+                .unwrap();
+            assert!(status.success(), "build the engine");
+            target.join("debug/simdoc")
+        })
+        .clone()
 }
 
 #[test]
@@ -279,4 +293,88 @@ fn a_counterfeit_toolchain_is_refused_by_content_and_no_rustup_is_consulted() {
     );
     assert!(!out.join("repo-contract.json").exists());
     assert_eq!(ran(&marker), "", "a counterfeit program was executed");
+}
+
+/// Cargo configuration can replace the engine's dependencies (`paths`, source
+/// replacement) while the engine still reports its expected identity. The
+/// caller's Cargo home and target directory never reach a cargo run, and a
+/// configuration in an ancestor of the repository refuses the engine's run.
+#[test]
+fn cargo_configuration_never_reaches_the_engine() {
+    let real_cargo = PathBuf::from(env!("CARGO"));
+    let repo = fixture("isolation-config");
+    let out = scratch("isolation-config-out");
+
+    // The caller's Cargo home never reaches the build: a hostile configuration
+    // there (which would break or redirect any cargo that read it) has no
+    // effect, and neither does a caller-chosen target directory.
+    let cargo_home = scratch("isolation-config-home");
+    fs::write(
+        cargo_home.join("config.toml"),
+        "paths = [\"/nonexistent-override\"]\n",
+    )
+    .unwrap();
+    // The crate cache is the caller's; only its checksummed archives are used.
+    std::os::unix::fs::symlink(home().join(".cargo/registry"), cargo_home.join("registry"))
+        .unwrap();
+    let target = scratch("isolation-config-target");
+    let real_home = home();
+    let output = emit(
+        &repo,
+        &out,
+        &[
+            ("HOME", &real_home),
+            ("CARGO", &real_cargo),
+            ("CARGO_HOME", &cargo_home),
+            ("CARGO_TARGET_DIR", &target),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_dir(&target).unwrap().count(),
+        0,
+        "the caller's target was used"
+    );
+
+    // The engine: a `.cargo/config.toml` above the repository refuses it.
+    let ok = emit(&repo, &out, &[("HOME", &home()), ("CARGO", &real_cargo)]);
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let parent = repo.parent().unwrap();
+    fs::create_dir_all(parent.join(".cargo")).unwrap();
+    fs::write(
+        parent.join(".cargo/config.toml"),
+        "[build]\nrustflags = [\"--cfg=evil\"]\n[env]\nEVIL = \"1\"\n",
+    )
+    .unwrap();
+    let engine = engine_binary();
+    let mut command = Command::new(&engine);
+    command
+        .env_clear()
+        .env("HOME", home())
+        .env("CARGO", &real_cargo)
+        .current_dir(&repo)
+        .args([
+            "repo-contract",
+            "--repo",
+            ".",
+            "--emit",
+            "repo-contract.json",
+            "--out-dir",
+        ])
+        .arg(scratch("isolation-config-out2"));
+    let refused = command.output().unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("Cargo configuration") && stderr.contains("would apply"),
+        "{stderr}"
+    );
 }

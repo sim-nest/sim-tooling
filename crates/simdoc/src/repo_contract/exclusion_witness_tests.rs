@@ -3,6 +3,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::fs;
+
 use super::super::policy_fixture::{Repo, cargo_metadata};
 use super::*;
 
@@ -35,43 +37,160 @@ fn refused(repo: &Repo) -> String {
 #[test]
 fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
     let dead = [
-        ("comment", "// tests/ui\n#[test]\nfn t() {}\n"),
-        ("doc", "///tests/ui\n#[test]\nfn t() {}\n"),
+        (
+            "comment",
+            "// consume_fixture(\"tests/ui\")\n#[test]\nfn t() {}\n",
+        ),
+        (
+            "doc",
+            "///consume_fixture(\"tests/ui\")\n#[test]\nfn t() {}\n",
+        ),
         (
             "unreached",
-            "fn helper() { run(\"tests/ui\"); }\n#[test]\nfn t() {}\n",
+            "fn helper() { let d = consume_fixture(\"tests/ui\"); }\n#[test]\nfn t() {}\n",
         ),
         (
             "cfg-off",
-            "#[cfg(any())]\n#[test]\nfn t() { run(\"tests/ui\"); }\n#[test]\nfn u() {}\n",
+            "#[cfg(any())]\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n#[test]\nfn u() {}\n",
         ),
         (
             "ignored",
-            "#[ignore]\n#[test]\nfn t() { run(\"tests/ui\"); }\n",
+            "#[ignore]\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
         ),
         (
             "if-false",
-            "#[test]\nfn t() { if false { run(\"tests/ui\"); } }\n",
+            "#[test]\nfn t() { if false { let d = consume_fixture(\"tests/ui\"); } }\n",
         ),
         (
             "macro-definition",
-            "#[test]\nfn t() {\n    macro_rules! m { () => { run(\"tests/ui\") }; }\n}\n",
+            "#[test]\nfn t() {\n    macro_rules! m { () => { consume_fixture(\"tests/ui\") }; }\n}\n",
+        ),
+        (
+            "macro-definition-with-a-call-shaped-body",
+            "#[test]\nfn t() {\n    macro_rules! m { consume_fixture(\"tests/ui\") }\n}\n",
+        ),
+        (
+            "attribute-value",
+            "#[doc = consume_fixture(\"tests/ui\")]\n#[test]\nfn t() {}\n",
+        ),
+        // A no-op stand-in for the API, or a target switched off as a whole.
+        (
+            "noop-helper",
+            "fn consume_fixture(_: &str) -> u8 { 0 }\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "file-level-cfg",
+            "#![cfg(any())]\nfn consume_fixture(relative: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "cfg-macro-condition",
+            "#[test]\nfn t() { if cfg!(windows) { let d = consume_fixture(\"tests/ui\"); } }\n",
+        ),
+        (
+            "dropped-underscore-name",
+            "#[test]\nfn t() { let _dir = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "dropped-method-chain",
+            "#[test]\nfn t() { consume_fixture(\"tests/ui\").to_owned(); }\n",
+        ),
+        (
+            "dropped-drop",
+            "#[test]\nfn t() { drop(consume_fixture(\"tests/ui\")); }\n",
+        ),
+        // A consumption whose value is dropped on the spot consumes nothing.
+        (
+            "dropped-statement",
+            "#[test]\nfn t() { consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "dropped-let-wild",
+            "#[test]\nfn t() { let _ = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        // Code that never runs, however it is written.
+        (
+            "closure",
+            "#[test]\nfn t() { let f = || consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "nested-fn",
+            "#[test]\nfn t() {\n    fn never() { let d = consume_fixture(\"tests/ui\"); }\n}\n",
+        ),
+        (
+            "cfg-on-statement",
+            "#[test]\nfn t() {\n    #[cfg(any())]\n    let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
+        (
+            "cfg-on-expression",
+            "#[test]\nfn t() {\n    #[cfg(any())]\n    { let d = consume_fixture(\"tests/ui\"); }\n}\n",
+        ),
+        (
+            "after-return",
+            "#[test]\nfn t() {\n    return;\n    #[allow(unreachable_code)]\n    let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
+        (
+            "if-not-true",
+            "#[test]\nfn t() { if !true { let d = consume_fixture(\"tests/ui\"); } }\n",
+        ),
+        (
+            "if-cfg-any",
+            "#[test]\nfn t() { if cfg!(any()) { let d = consume_fixture(\"tests/ui\"); } }\n",
+        ),
+        (
+            "while-false",
+            "#[test]\nfn t() { while false { let d = consume_fixture(\"tests/ui\"); } }\n",
+        ),
+        (
+            "cfg-attr-ignore",
+            "#[cfg_attr(all(), ignore)]\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "stringify",
+            "#[test]\nfn t() { let s = stringify!(consume_fixture(\"tests/ui\")); }\n",
+        ),
+        (
+            "user-macro",
+            "macro_rules! discard { ($($t:tt)*) => {}; }\n\
+             #[test]\nfn t() { discard!(consume_fixture(\"tests/ui\")); }\n",
+        ),
+        // Rust resolves a local definition over an import.
+        (
+            "local-shadows-glob-import",
+            "fn dir() { let d = consume_fixture(\"tests/ui\"); }\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    fn dir() {}\n    #[test]\n    fn t() { dir(); }\n}\n",
+        ),
+        // Not the API: a bare literal, a differently named call, a prose value.
+        ("bare-literal", "#[test]\nfn t() { run(\"tests/ui\"); }\n"),
+        (
+            "other-call",
+            "#[test]\nfn t() { load_fixture(\"tests/ui\"); }\n",
         ),
         (
             "prose",
-            "#[test]\nfn t() { run(\"see tests/ui for cases\"); }\n",
+            "#[test]\nfn t() { let d = consume_fixture(\"see tests/ui for cases\"); }\n",
         ),
         (
             "other-path",
-            "#[test]\nfn t() { run(\"tests/ui/other\"); }\n",
+            "#[test]\nfn t() { let d = consume_fixture(\"tests/ui/other\"); }\n",
         ),
         (
             "unused-const",
-            "const DIR: &str = \"tests/ui\";\n#[test]\nfn t() {}\n",
+            "const DIR: &str = \"tests/ui\";\n#[test]\nfn t() { consume_fixture(DIR); }\n",
+        ),
+        // A same-named function in an unrelated module does not lend its body.
+        (
+            "namesake-in-other-module",
+            "mod unrelated { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\n\
+             fn dir() {}\n#[test]\nfn t() { dir(); }\n",
+        ),
+        (
+            "namesake-in-sibling-module",
+            "mod a { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\n\
+             mod b { pub fn dir() {} #[test] fn t() { dir(); } }\n",
         ),
         (
             "not-a-test",
-            "mod helpers { pub fn dir() -> &'static str { \"tests/ui\" } }\nfn main_like() {}\n",
+            "mod helpers { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\nfn main_like() {}\n",
         ),
     ];
     for (label, source) in dead {
@@ -89,26 +208,40 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         );
     }
     let live = [
-        ("direct", "#[test]\nfn t() { run(\"tests/ui\"); }\n"),
         (
-            "helper",
-            "fn dir() -> &'static str { \"tests/ui\" }\n#[test]\nfn t() { run(dir()); }\n",
+            "direct",
+            "#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
         ),
         (
-            "const",
-            "const DIR: &str = \"tests/ui\";\n#[test]\nfn t() { run(DIR); }\n",
+            "helper",
+            "fn dir() { let d = consume_fixture(\"tests/ui\"); }\n#[test]\nfn t() { dir(); }\n",
+        ),
+        (
+            "qualified-module-path",
+            "mod h { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\n\
+             #[test]\nfn t() { h::dir(); }\n",
+        ),
+        (
+            "glob-import-of-parent",
+            "fn dir() { let d = consume_fixture(\"tests/ui\"); }\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn t() { dir(); }\n}\n",
+        ),
+        (
+            "named-import",
+            "mod h { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\n\
+             use h::dir;\n#[test]\nfn t() { dir(); }\n",
         ),
         (
             "macro-arguments",
-            "#[test]\nfn t() { assert!(run(\"./tests/ui/Cargo.toml\")); }\n",
+            "#[test]\nfn t() { assert!(consume_fixture(\"./tests/ui/\")); }\n",
         ),
         (
             "test-module",
-            "#[cfg(test)]\nmod inner {\n#[test]\nfn t() { run(\"tests/ui\"); }\n}\n",
+            "#[cfg(test)]\nmod inner {\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n}\n",
         ),
         (
             "if-true",
-            "#[test]\nfn t() { if true { run(\"tests/ui\"); } }\n",
+            "#[test]\nfn t() { if true { let d = consume_fixture(\"tests/ui\"); } }\n",
         ),
     ];
     for (label, source) in live {
@@ -124,6 +257,26 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
 }
 
 #[test]
+fn a_test_target_switched_off_is_not_a_consumer() {
+    let repo = fixture_repo("witness-test-false", "test-fixture", "tests/ui.rs", "");
+    repo.write(
+        "tests/ui.rs",
+        "#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+    );
+    cargo_metadata(&repo.root).unwrap();
+    let manifest = fs::read_to_string(repo.root.join("Cargo.toml")).unwrap();
+    fs::write(
+        repo.root.join("Cargo.toml"),
+        manifest.replace(
+            "[workspace]",
+            "[[test]]\nname = \"ui\"\ntest = false\n\n[workspace]",
+        ),
+    )
+    .unwrap();
+    assert!(refused(&repo).contains("not a test target of a contract package"));
+}
+
+#[test]
 fn a_test_consumer_that_does_not_parse_is_refused() {
     let repo = fixture_repo("witness-unparsed", "test-fixture", "tests/ui.rs", "");
     repo.write("tests/ui.rs", "fn (\n");
@@ -131,45 +284,97 @@ fn a_test_consumer_that_does_not_parse_is_refused() {
 }
 
 /// A repository whose fixture `recipes/fixture/case` is excluded.
-fn recipe_repo(label: &str, book: &str) -> Repo {
+fn recipe_repo(label: &str, recipe: &str) -> Repo {
     let repo = Repo::new(label);
     repo.nested_workspace("recipes/fixture", &["case"]);
     repo.package("recipes/fixture/case", "case", "publish = false\n");
-    repo.write("recipes/book.toml", book);
+    repo.write("recipes/use/recipe.toml", recipe);
+    repo.write("recipes/book.toml", "fixtures = [\"recipes/fixture\"]\n");
     repo.root_package(
         "app",
         "contract-exclusions = [{ path = \"recipes/fixture\", class = \"recipe-fixture\", \
-         consumer = \"recipes/book.toml\", reason = \"cases\" }]",
+         consumer = \"recipes/use/recipe.toml\", reason = \"cases\" }]",
     );
     repo
 }
 
 #[test]
-fn only_a_parsed_value_of_a_recipe_manifest_consumes_a_recipe_fixture() {
-    for (label, book) in [
-        ("comment", "# recipes/fixture\nbook = \"x\"\n"),
-        ("prose", "summary = \"uses recipes/fixture heavily\"\n"),
-        ("key", "\"recipes/fixture\" = 1\n"),
-        ("table", "[\"recipes/fixture\"]\nbook = \"x\"\n"),
-        ("unrelated", "book = \"x\"\n"),
+fn only_the_typed_fixtures_field_of_a_recipe_consumes_a_recipe_fixture() {
+    for (label, recipe) in [
+        ("comment", "# recipes/fixture\ntitle = \"x\"\n"),
+        ("note", "title = \"x\"\nnote = \"recipes/fixture\"\n"),
+        (
+            "prose",
+            "title = \"x\"\nsummary = \"uses recipes/fixture heavily\"\n",
+        ),
+        ("key", "title = \"x\"\n\"recipes/fixture\" = 1\n"),
+        ("table", "title = \"x\"\n[\"recipes/fixture\"]\nk = 1\n"),
+        (
+            "other-field",
+            "title = \"x\"\nrequires = [\"recipes/fixture\"]\n",
+        ),
+        (
+            "nested-fixtures",
+            "title = \"x\"\n[extra]\nfixtures = [\"recipes/fixture\"]\n",
+        ),
+        (
+            "unrelated",
+            "title = \"x\"\nfixtures = [\"recipes/other\"]\n",
+        ),
+        ("empty", "title = \"x\"\nfixtures = []\n"),
     ] {
-        let repo = recipe_repo(&format!("witness-recipe-dead-{label}"), book);
+        let repo = recipe_repo(&format!("witness-recipe-dead-{label}"), recipe);
         let err = refused(&repo);
         assert!(
-            err.contains("is not consumed by recipes/book.toml"),
+            err.contains("is not consumed by recipes/use/recipe.toml"),
             "{label}: {err}"
         );
     }
-    for (label, book) in [
-        ("repo-relative", "fixture = \"recipes/fixture\"\n"),
-        ("array", "fixtures = [\"recipes/fixture/\"]\n"),
-        ("nested", "[[uses]]\npath = \"fixture\"\n"),
+    for (label, recipe) in [
+        (
+            "repo-relative",
+            "title = \"x\"\nfixtures = [\"recipes/fixture\"]\n",
+        ),
+        (
+            "trailing-slash",
+            "title = \"x\"\nfixtures = [\"a\", \"recipes/fixture/\"]\n",
+        ),
+        (
+            "consumer-relative",
+            "title = \"x\"\nfixtures = [\"../fixture\"]\n",
+        ),
     ] {
-        let repo = recipe_repo(&format!("witness-recipe-live-{label}"), book);
-        cargo_metadata(&repo.root).unwrap_or_else(|err| panic!("{label}: {err}"));
+        let repo = recipe_repo(&format!("witness-recipe-live-{label}"), recipe);
+        if label == "consumer-relative" {
+            // `..` is not a plain relative path: refused, never normalized.
+            assert!(refused(&repo).contains("is not consumed"), "{label}");
+        } else {
+            cargo_metadata(&repo.root).unwrap_or_else(|err| panic!("{label}: {err}"));
+        }
     }
-    let repo = recipe_repo("witness-recipe-broken", "book = \n");
+    let repo = recipe_repo(
+        "witness-recipe-typed",
+        "title = \"x\"\nfixtures = \"recipes/fixture\"\n",
+    );
+    assert!(refused(&repo).contains("`fixtures` must be an array"));
+    let repo = recipe_repo(
+        "witness-recipe-typed-entry",
+        "title = \"x\"\nfixtures = [3]\n",
+    );
+    assert!(refused(&repo).contains("must be a path string"));
+    let repo = recipe_repo("witness-recipe-broken", "title = \n");
     assert!(refused(&repo).contains("does not parse as TOML"));
+    // A book manifest is not a recipe: it cannot consume a fixture.
+    let repo = recipe_repo(
+        "witness-recipe-book",
+        "title = \"x\"\nfixtures = [\"recipes/fixture\"]\n",
+    );
+    repo.root_package(
+        "app",
+        "contract-exclusions = [{ path = \"recipes/fixture\", class = \"recipe-fixture\", \
+         consumer = \"recipes/book.toml\", reason = \"cases\" }]",
+    );
+    assert!(refused(&repo).contains("not a `recipe.toml`"));
 }
 
 const HARNESS: &str = "cargo test --manifest-path tests/ui/case/Cargo.toml";
@@ -193,16 +398,45 @@ fn harness_repo(label: &str, consumer: &str, commands: &[&str], with_test: bool)
 }
 
 #[test]
-fn a_harness_needs_a_declared_command_that_runs_it_and_a_matching_target() {
+fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers() {
     let repo = harness_repo("witness-harness-ok", HARNESS, &[HARNESS], true);
     cargo_metadata(&repo.root).unwrap();
 
     let undeclared = harness_repo("witness-harness-undeclared", HARNESS, &["cargo test"], true);
     assert!(refused(&undeclared).contains("not one of the root manifest's `validation-commands`"));
 
-    let chained = "cargo test --manifest-path tests/ui/case/Cargo.toml && true";
-    let repo = harness_repo("witness-harness-chained", chained, &[chained], true);
-    assert!(refused(&repo).contains("not a plain `cargo test` or `cargo run`"));
+    // Commands that do not execute the harness, or that filter what runs.
+    for (label, extra) in [
+        ("no-run", " --no-run"),
+        ("filter", " some_test"),
+        ("target-select", " --test run"),
+        ("lib-only", " --lib"),
+        ("package", " -p case"),
+        ("program-args", " -- --ignored"),
+        ("list", " -- --list"),
+        ("chained", " && true"),
+        (
+            "duplicate-manifest",
+            " --manifest-path tests/ui/case/Cargo.toml",
+        ),
+    ] {
+        let command = format!("{HARNESS}{extra}");
+        let repo = harness_repo(
+            &format!("witness-harness-{label}"),
+            &command,
+            &[&command],
+            true,
+        );
+        assert!(
+            refused(&repo).contains("not a plain `cargo test` or `cargo run`"),
+            "{label}"
+        );
+    }
+    for accepted in [" --locked", " --offline --locked", " --release", " -q"] {
+        let command = format!("{HARNESS}{accepted}");
+        let repo = harness_repo("witness-harness-flags", &command, &[&command], true);
+        cargo_metadata(&repo.root).unwrap_or_else(|err| panic!("{accepted}: {err}"));
+    }
 
     let other = "cargo test --manifest-path tests/other/Cargo.toml";
     let repo = harness_repo("witness-harness-other", other, &[other], true);
@@ -211,7 +445,59 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_matching_target() {
     let lib_only = harness_repo("witness-harness-lib-only", HARNESS, &[HARNESS], false);
     assert!(refused(&lib_only).contains("has no test target"));
 
+    // Only the exact layout counts: a nested `.rs` is no test target, and
+    // `autotests = false` turns the automatic layout off.
+    let nested = harness_repo("witness-harness-nested", HARNESS, &[HARNESS], false);
+    nested.write("tests/ui/case/tests/helpers/util.rs", "pub fn util() {}\n");
+    assert!(refused(&nested).contains("has no test target"));
+    let no_auto = harness_repo("witness-harness-noauto", HARNESS, &[HARNESS], true);
+    no_auto.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\nautotests = false\n\n[dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    assert!(refused(&no_auto).contains("has no test target"));
+    no_auto.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\nautotests = false\n\n[[test]]\nname = \"run\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    cargo_metadata(&no_auto.root).unwrap();
+    // A declared target that the plain command does not run, or that replaces
+    // the automatic one of its name, is not a target.
+    for (label, extra) in [
+        (
+            "required-features",
+            "[features]\nnever = []\n\n[[test]]\nname = \"run\"\nrequired-features = [\"never\"]\n",
+        ),
+        ("test-false", "[[test]]\nname = \"run\"\ntest = false\n"),
+    ] {
+        let repo = harness_repo(
+            &format!("witness-harness-{label}"),
+            HARNESS,
+            &[HARNESS],
+            true,
+        );
+        repo.package(
+            "tests/ui/case",
+            "case",
+            &format!(
+                "publish = false\n\n[dependencies]\napp = {{ path = \"../../..\" }}\n\n{extra}"
+            ),
+        );
+        assert!(refused(&repo).contains("has no test target"), "{label}");
+    }
+    let subdir = harness_repo("witness-harness-subdir", HARNESS, &[HARNESS], false);
+    subdir.write("tests/ui/case/tests/run/main.rs", "#[test]\nfn run() {}\n");
+    cargo_metadata(&subdir.root).unwrap();
+
     let run = "cargo run --manifest-path tests/ui/case/Cargo.toml";
+    // Several binaries and no `default-run`: Cargo refuses to pick one.
+    let two = harness_repo("witness-harness-two-bins", run, &[run], false);
+    two.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    two.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
+    assert!(refused(&two).contains("has no binary target"));
     let tests_only = harness_repo("witness-harness-run-tests", run, &[run], true);
     assert!(refused(&tests_only).contains("has no binary target"));
     let binary = harness_repo("witness-harness-run-bin", run, &[run], false);
@@ -230,11 +516,15 @@ fn cargo_invocations_are_read_as_tokens() {
         Some(("test", "a/Cargo.toml".to_owned()))
     );
     assert_eq!(
-        cargo_invocation("cargo run --manifest-path=a/Cargo.toml -- x"),
+        cargo_invocation("cargo run --manifest-path=a/Cargo.toml"),
         Some(("run", "a/Cargo.toml".to_owned()))
     );
     for command in [
         "cargo test",
+        "cargo test --no-run --manifest-path a/Cargo.toml",
+        "cargo test --manifest-path a/Cargo.toml filter",
+        "cargo test --manifest-path a/Cargo.toml -- --ignored",
+        "cargo test --manifest-path a/Cargo.toml --manifest-path b/Cargo.toml",
         "cargo doc --manifest-path a/Cargo.toml",
         "sh cargo test --manifest-path a/Cargo.toml",
         "cargo test --manifest-path a/Cargo.toml; rm x",

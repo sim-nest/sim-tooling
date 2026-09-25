@@ -34,6 +34,8 @@ use package_projection::*;
 // instead of compiling any of it.
 #[path = "repo_contract/exclusion_witness.rs"]
 mod exclusion_witness;
+#[path = "repo_contract/fixture_consumption.rs"]
+mod fixture_consumption;
 #[cfg(test)]
 #[path = "repo_contract/policy_fixture.rs"]
 mod policy_fixture;

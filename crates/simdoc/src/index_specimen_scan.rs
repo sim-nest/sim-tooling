@@ -30,7 +30,7 @@ pub(crate) fn discovered(repo: &Path, packages: &[PackageContract]) -> Vec<Disco
         .collect::<BTreeSet<_>>();
     let mut specimens = BTreeMap::new();
     let mut checked_recipe_paths = BTreeSet::new();
-    let recipe_harness = recipe_harness(repo);
+    let recipe_harness = crate::recipe_evidence::recipe_harness(repo);
 
     for book in recipe_books(repo, &package_groups) {
         let Some(recipes) = book["recipes"].as_array() else {
@@ -225,19 +225,6 @@ fn language_value(value: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-fn recipe_harness(repo: &Path) -> Option<String> {
-    if crate::owned::read_to_string(repo.join("xtask/src/main.rs"))
-        .map(|text| text.contains("\"check-recipes\""))
-        .unwrap_or(false)
-    {
-        Some("xtask check-recipes".to_owned())
-    } else if crate::owned::is_owned_file(repo.join("scripts/check-recipes.sh")) {
-        Some("sh scripts/check-recipes.sh".to_owned())
-    } else {
-        None
-    }
-}
-
 fn toml_string_value(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let trimmed = line.trim();
@@ -337,11 +324,16 @@ mod tests {
         fs::create_dir_all(&conformance_dir).unwrap();
         fs::create_dir_all(&root_conformance_dir).unwrap();
         fs::create_dir_all(&xtask_dir).unwrap();
-        fs::write(root.join("Cargo.toml"), "[package]\nname = \"sim-demo\"\n").unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"sim-demo\"\n\n[workspace.metadata.sim]\n\
+             validation-commands = [\"cargo run -p xtask -- check-recipes\"]\n",
+        )
+        .unwrap();
         fs::write(root.join("recipes/book.toml"), "book = \"sim-demo\"\n").unwrap();
         fs::write(
             xtask_dir.join("main.rs"),
-            "fn main() { let _ = \"check-recipes\"; }\n",
+            "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => {} _ => {} } }\n",
         )
         .unwrap();
         fs::write(
@@ -414,23 +406,6 @@ mod tests {
         );
 
         fs::remove_dir_all(parent).unwrap();
-    }
-
-    #[test]
-    fn an_untracked_recipe_script_is_not_a_harness() {
-        let repo = crate::test_fixture::FixtureRepo::nested("harness-untracked");
-        repo.write("scripts/check-recipes.sh", "#!/bin/sh\n");
-        let root = repo.path().canonicalize().unwrap();
-        let scope = crate::owned::enter(&root).unwrap();
-        assert_eq!(recipe_harness(&root), None);
-        scope.finish().unwrap();
-        repo.commit();
-        let scope = crate::owned::enter(&root).unwrap();
-        assert_eq!(
-            recipe_harness(&root).as_deref(),
-            Some("sh scripts/check-recipes.sh")
-        );
-        scope.finish().unwrap();
     }
 
     #[test]

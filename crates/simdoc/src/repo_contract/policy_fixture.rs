@@ -53,7 +53,7 @@ impl Repo {
     pub(in crate::repo_contract) fn write(&self, relative: &str, text: &str) {
         let path = self.root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, text).unwrap();
+        fs::write(path, crate::test_fixture::with_helper(text)).unwrap();
     }
 
     pub(in crate::repo_contract) fn root_package(&self, name: &str, sim_metadata: &str) {

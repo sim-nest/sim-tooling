@@ -17,10 +17,10 @@ use crate::resolver_input::{ResolverInput, validate};
 // targets that are tracked ordinary files of sibling checkouts, and nothing
 // else, without the identity recording any path.
 
-/// `checkouts/sim-app` (the documented repository), `checkouts/sim-lib` (a
+/// `checkouts/sim-app` (the documented repository), `checkouts/sim-app` (a
 /// sibling checkout holding the package sources), and
 /// `checkouts/sim-private/.meta-workspace/packages/lib`, a real package
-/// directory whose `src`, `recipes`, and `README.md` are links into sim-lib.
+/// directory whose `src`, `recipes`, and `README.md` are links into sim-app.
 struct Farm {
     base: PathBuf,
 }
@@ -37,13 +37,23 @@ impl Farm {
         let farm = Self { base };
         farm.write(
             "sim-app/Cargo.toml",
-            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [workspace]\nmembers = [\"xtask\"]\n",
         );
-        farm.write("sim-lib/crates/lib/src/lib.rs", "pub fn one() {}\n");
-        farm.write("sim-lib/crates/lib/src/nested/mod.rs", "pub fn two() {}\n");
-        farm.write("sim-lib/crates/lib/recipes/r.toml", "title = \"r\"\n");
-        farm.write("sim-lib/crates/lib/README.md", "# lib\n");
-        for repo in ["sim-app", "sim-lib"] {
+        farm.write(
+            "sim-app/xtask/Cargo.toml",
+            "[package]\nname = \"xtask\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        farm.write("sim-app/xtask/src/main.rs", "fn main() {}\n");
+        farm.write(
+            "sim-other/crates/xtask/src/lib.rs",
+            "pub fn stranger() {}\n",
+        );
+        farm.write("sim-app/crates/lib/src/lib.rs", "pub fn one() {}\n");
+        farm.write("sim-app/crates/lib/src/nested/mod.rs", "pub fn two() {}\n");
+        farm.write("sim-app/crates/lib/recipes/r.toml", "title = \"r\"\n");
+        farm.write("sim-app/crates/lib/README.md", "# lib\n");
+        for repo in ["sim-app", "sim-other"] {
             farm.git(repo, &["init", "--quiet"]);
             farm.git(repo, &["add", "-A"]);
             farm.git(
@@ -65,15 +75,25 @@ impl Farm {
         let package = "sim-private/.meta-workspace/packages/lib";
         farm.write(
             "sim-private/.meta-workspace/Cargo.toml",
-            "[workspace]\nresolver = \"3\"\nmembers = [\"packages/lib\"]\n",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"packages/lib\", \"packages/xtask\"]\n",
         );
+        farm.write(
+            "sim-private/.meta-workspace/packages/xtask/Cargo.toml",
+            "[package]\nname = \"xtask\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        symlink(
+            farm.base.join("sim-other/crates/xtask/src"),
+            farm.base
+                .join("sim-private/.meta-workspace/packages/xtask/src"),
+        )
+        .unwrap();
         farm.write(
             &format!("{package}/Cargo.toml"),
             "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         );
         for name in ["src", "recipes", "README.md"] {
             symlink(
-                farm.base.join("sim-lib/crates/lib").join(name),
+                farm.base.join("sim-app/crates/lib").join(name),
                 farm.base.join(package).join(name),
             )
             .unwrap();
@@ -133,19 +153,19 @@ fn a_symlink_farm_is_bound_by_the_content_of_its_canonical_targets() {
     assert_eq!(input.selected, ["lib"]);
     assert_eq!(input.closure_packages, 1);
     let text = input.projection().to_string();
-    for leak in ["/", "checkouts", "sim-lib", "sim-private", "src", "recipes"] {
+    for leak in ["/", "checkouts", "sim-app", "sim-private", "src", "recipes"] {
         assert!(!text.contains(leak), "{leak} in {text}");
     }
     input.remeasure(&farm.repo()).unwrap();
 
     // A change to a tracked target file behind a link moves the identity...
-    farm.write("sim-lib/crates/lib/src/nested/mod.rs", "pub fn TWO() {}\n");
+    farm.write("sim-app/crates/lib/src/nested/mod.rs", "pub fn TWO() {}\n");
     let changed = farm.validate().unwrap();
     assert_ne!(changed.closure_sha256, input.closure_sha256);
     assert_ne!(changed.cache_key(), input.cache_key());
     assert!(input.remeasure(&farm.repo()).is_err());
     // ...and so does a change behind a file link.
-    farm.write("sim-lib/crates/lib/README.md", "# LIB\n");
+    farm.write("sim-app/crates/lib/README.md", "# LIB\n");
     assert_ne!(
         farm.validate().unwrap().closure_sha256,
         changed.closure_sha256
@@ -153,29 +173,143 @@ fn a_symlink_farm_is_bound_by_the_content_of_its_canonical_targets() {
 }
 
 #[test]
-fn ignored_build_output_inside_a_linked_tree_is_not_read() {
-    let farm = Farm::new("farm-target");
-    let before = farm.validate().unwrap();
-    farm.write("sim-lib/crates/lib/src/target/debug/junk", "junk");
-    assert_eq!(farm.validate().unwrap(), before);
+fn a_namesake_package_of_another_repository_is_not_selected_or_bound() {
+    let farm = Farm::new("farm-namesake");
+    let input = farm.validate().unwrap();
+    // The farm's `xtask` is sim-other's: the repository's own `xtask` is not
+    // in the farm, so only `lib` is documented and bound.
+    assert_eq!(input.selected, ["lib"]);
+    assert_eq!(input.closure_packages, 1);
+    farm.write("sim-other/crates/xtask/src/lib.rs", "pub fn changed() {}\n");
+    farm.write("sim-other/crates/xtask/src/untracked.rs", "stray\n");
+    assert_eq!(farm.validate().unwrap(), input);
 }
 
 #[test]
-fn an_ignored_file_in_a_linked_tree_is_neither_read_nor_bound() {
-    let farm = Farm::new("farm-ignored");
-    farm.write("sim-lib/.gitignore", "/crates/lib/src/generated.rs\n");
-    farm.write("sim-lib/crates/lib/src/generated.rs", "first\n");
-    let before = farm.validate().unwrap();
+fn a_package_of_the_repository_is_its_manifest_and_links_only() {
+    for name in ["build.rs", "extra.rs"] {
+        let farm = Farm::new("farm-real-file");
+        farm.write(
+            &format!("sim-private/.meta-workspace/packages/lib/{name}"),
+            "fn main() {}\n",
+        );
+        let err = farm.validate().unwrap_err();
+        assert!(
+            err.contains("has its own") && err.contains(name),
+            "{name}: {err}"
+        );
+    }
+    let farm = Farm::new("farm-real-dir");
     farm.write(
-        "sim-lib/crates/lib/src/generated.rs",
-        "second, and longer\n",
+        "sim-private/.meta-workspace/packages/lib/.cargo/config.toml",
+        "",
     );
-    assert_eq!(farm.validate().unwrap(), before);
-    // A file that is untracked and not ignored is still refused.
-    farm.write("sim-lib/crates/lib/src/stray.rs", "pub fn stray() {}\n");
+    assert!(farm.validate().unwrap_err().contains("has its own .cargo"));
+}
+
+#[test]
+fn a_package_with_no_links_into_the_repository_is_refused() {
+    let farm = Farm::new("farm-zero-links");
+    let package = farm.base.join("sim-private/.meta-workspace/packages/lib");
+    for name in ["src", "recipes", "README.md"] {
+        fs::remove_file(package.join(name)).unwrap();
+    }
+    // The manifest reaches the repository's source by a plain relative path.
+    fs::write(
+        package.join("Cargo.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [lib]\npath = \"../../../../sim-app/crates/lib/src/lib.rs\"\n",
+    )
+    .unwrap();
     let err = farm.validate().unwrap_err();
     assert!(
-        err.contains("stray.rs") && err.contains("untracked"),
+        err.contains("no links into the documented repository"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_resolver_that_selects_none_of_the_repository_is_refused() {
+    let farm = Farm::new("farm-none");
+    fs::write(
+        farm.base.join("sim-app/Cargo.toml"),
+        "[package]\nname = \"unrelated\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    assert!(farm.validate().unwrap_err().contains("no workspace member"));
+}
+
+#[test]
+fn every_ignored_or_untracked_entry_in_a_followed_tree_is_refused() {
+    // An ignored source the build can read (include_bytes, a build script) is
+    // as much an input as a tracked one, so it refuses the run.
+    for (label, ignore, path, contents) in [
+        (
+            "generated",
+            "/crates/lib/src/generated.rs\n",
+            "src/generated.rs",
+            "first\n",
+        ),
+        (
+            "blob",
+            "/crates/lib/src/blob.bin\n",
+            "src/blob.bin",
+            "bytes\n",
+        ),
+        (
+            "target-dir",
+            "/crates/lib/src/target/\n",
+            "src/target/debug/junk",
+            "junk\n",
+        ),
+        ("stray", "", "src/stray.rs", "pub fn stray() {}\n"),
+    ] {
+        let farm = Farm::new(&format!("farm-entry-{label}"));
+        farm.write("sim-app/.gitignore", ignore);
+        farm.write(&format!("sim-app/crates/lib/{path}"), contents);
+        let err = farm.validate().unwrap_err();
+        assert!(
+            err.contains(path.rsplit('/').next().unwrap()) && err.contains("refused"),
+            "{label}: {err}"
+        );
+    }
+    // Ignored links are refused too, not followed and not skipped.
+    let farm = Farm::new("farm-ignored-link");
+    farm.write("sim-app/.gitignore", "/crates/lib/src/alias.rs\n");
+    symlink(
+        farm.base.join("sim-app/Cargo.toml"),
+        farm.base.join("sim-app/crates/lib/src/alias.rs"),
+    )
+    .unwrap();
+    assert!(farm.validate().unwrap_err().contains("alias.rs"));
+}
+
+#[test]
+fn only_a_nested_crates_untracked_lockfile_is_exempt() {
+    let farm = Farm::new("farm-nested-lock");
+    // sim-app/crates/lib/src/focused/{Cargo.toml (tracked), Cargo.lock (ignored)}.
+    farm.write(
+        "sim-app/crates/lib/src/focused/Cargo.toml",
+        "[package]\nname = \"focused\"\n",
+    );
+    farm.git("sim-app", &["add", "-A"]);
+    farm.write("sim-app/.gitignore", "Cargo.lock\n");
+    farm.write("sim-app/crates/lib/src/focused/Cargo.lock", "# nested\n");
+    let before = farm.validate().unwrap();
+    // The exempt lock need not be tracked, but its bytes are bound.
+    farm.write(
+        "sim-app/crates/lib/src/focused/Cargo.lock",
+        "# changed, and longer\n",
+    );
+    assert_ne!(
+        farm.validate().unwrap().closure_sha256,
+        before.closure_sha256
+    );
+    // A lockfile with no tracked manifest beside it is an ordinary stray.
+    farm.write("sim-app/crates/lib/src/Cargo.lock", "# stray\n");
+    let err = farm.validate().unwrap_err();
+    assert!(
+        err.contains("Cargo.lock") && err.contains("refused"),
         "{err}"
     );
 }
@@ -183,7 +317,7 @@ fn an_ignored_file_in_a_linked_tree_is_neither_read_nor_bound() {
 #[test]
 fn a_link_to_an_untracked_file_is_refused() {
     let farm = Farm::new("farm-untracked");
-    farm.write("sim-lib/crates/lib/src/extra.rs", "pub fn stray() {}\n");
+    farm.write("sim-app/crates/lib/src/extra.rs", "pub fn stray() {}\n");
     let err = farm.validate().unwrap_err();
     assert!(
         err.contains("extra.rs") && err.contains("untracked"),
@@ -191,10 +325,10 @@ fn a_link_to_an_untracked_file_is_refused() {
     );
 
     let farm = Farm::new("farm-untracked-file-link");
-    fs::remove_file(farm.base.join("sim-lib/crates/lib/README.md")).unwrap();
-    farm.write("sim-lib/crates/lib/README.md", "# lib, rewritten\n");
+    fs::remove_file(farm.base.join("sim-app/crates/lib/README.md")).unwrap();
+    farm.write("sim-app/crates/lib/README.md", "# lib, rewritten\n");
     farm.git(
-        "sim-lib",
+        "sim-app",
         &["rm", "--cached", "--quiet", "crates/lib/README.md"],
     );
     let err = farm.validate().unwrap_err();
@@ -205,25 +339,62 @@ fn a_link_to_an_untracked_file_is_refused() {
 }
 
 #[test]
-fn a_link_outside_the_checkouts_or_into_a_plain_directory_is_refused() {
-    let farm = Farm::new("farm-outside");
+fn a_package_linking_both_into_and_out_of_the_repository_is_refused() {
+    let farm = Farm::new("farm-mixed");
     let outside = farm.base.parent().unwrap().join("elsewhere");
     fs::create_dir_all(&outside).unwrap();
-    fs::write(outside.join("stray.rs"), "").unwrap();
     let package = farm.base.join("sim-private/.meta-workspace/packages/lib");
     symlink(&outside, package.join("extra")).unwrap();
     let err = farm.validate().unwrap_err();
-    assert!(
-        err.contains("outside the constellation's checkouts"),
-        "{err}"
-    );
-    fs::remove_file(package.join("extra")).unwrap();
+    assert!(err.contains("both into and out of"), "{err}");
+}
 
-    let plain = farm.base.join("plain");
-    fs::create_dir_all(&plain).unwrap();
-    symlink(&plain, package.join("extra")).unwrap();
-    let err = farm.validate().unwrap_err();
-    assert!(err.contains("is not inside a Git checkout"), "{err}");
+#[test]
+fn a_dependency_may_link_only_into_git_checkouts_beside_the_repository() {
+    for (label, target, why) in [
+        (
+            "outside",
+            "../elsewhere",
+            "outside the constellation's checkouts",
+        ),
+        ("plain", "plain", "is not inside a Git checkout"),
+    ] {
+        let farm = Farm::new(&format!("farm-dependency-{label}"));
+        let target = farm.base.join(target);
+        fs::create_dir_all(target.join("src")).unwrap();
+        fs::write(target.join("src/lib.rs"), "").unwrap();
+        let workspace = farm.base.join("sim-private/.meta-workspace");
+        fs::write(
+            workspace.join("packages/lib/Cargo.toml"),
+            "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\ndep = { path = \"../dep\" }\n",
+        )
+        .unwrap();
+        farm.write(
+            "sim-private/.meta-workspace/packages/dep/Cargo.toml",
+            "[package]\nname = \"dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        symlink(
+            target.canonicalize().unwrap().join("src"),
+            workspace.join("packages/dep/src"),
+        )
+        .unwrap();
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = [\"packages/lib\", \"packages/xtask\"]\n",
+        )
+        .unwrap();
+        let status = std::process::Command::new(env!("CARGO"))
+            .args(["generate-lockfile", "--offline", "--manifest-path"])
+            .arg(farm.manifest())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let err = farm.validate().unwrap_err();
+        assert!(err.contains(why), "{label}: {err}");
+    }
 }
 
 #[test]
@@ -231,10 +402,10 @@ fn a_link_inside_a_followed_tree_is_refused() {
     let farm = Farm::new("farm-nested-link");
     symlink(
         farm.base.join("sim-app/Cargo.toml"),
-        farm.base.join("sim-lib/crates/lib/src/nested/alias.rs"),
+        farm.base.join("sim-app/crates/lib/src/nested/alias.rs"),
     )
     .unwrap();
-    farm.git("sim-lib", &["add", "-A"]);
+    farm.git("sim-app", &["add", "-A"]);
     let err = farm.validate().unwrap_err();
     assert!(err.contains("alias.rs is not an ordinary file"), "{err}");
 }

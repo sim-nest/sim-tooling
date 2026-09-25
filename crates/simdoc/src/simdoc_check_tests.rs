@@ -72,6 +72,35 @@ fn a_file_that_is_not_tracked_does_not_exist_for_generation() {
     scope.finish().unwrap();
 }
 
+/// Generation through the production entrypoint refuses a package whose
+/// (tracked, committed) description smuggles in a machine-local path.
+#[test]
+fn a_local_path_in_tracked_text_never_reaches_a_generated_file() {
+    for secret in [
+        "/tmp/customer-secret",
+        "/var/runner-4711/work",
+        "/etc/private-job.conf",
+    ] {
+        let repo = FixtureRepo::nested("publish-secret");
+        let manifest = repo
+            .read("Cargo.toml")
+            .replace("Fixture application.", &format!("Reads {secret} at start."));
+        repo.write("Cargo.toml", &manifest);
+        repo.commit();
+        let err = repo.run_simdoc(&[]).unwrap_err();
+        assert!(
+            err.contains("refused to publish") && err.contains(secret),
+            "{secret}: {err}"
+        );
+        assert!(
+            !repo
+                .path()
+                .join("docs/generated/repo-contract.json")
+                .exists()
+        );
+    }
+}
+
 #[test]
 fn check_never_trusts_the_local_cache_to_skip_a_lane() {
     let repo = FixtureRepo::nested("check-cache");
@@ -97,4 +126,51 @@ fn check_never_trusts_the_local_cache_to_skip_a_lane() {
     // poisoned cache can only ever make a check fail, never pass.
     repo.run_simdoc(&[]).unwrap();
     assert!(repo.run_simdoc(&["--check"]).is_err());
+}
+
+/// Cargo's writes must not follow a link: `cargo doc` writes into `target`.
+#[test]
+fn a_target_that_is_a_symlink_refuses_the_docs_build() {
+    let repo = FixtureRepo::nested("target-link");
+    let elsewhere = repo.path().parent().unwrap().join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, repo.path().join("target")).unwrap();
+    let err = repo.run_simdoc(&["--rustdoc", "force"]).unwrap_err();
+    assert!(
+        err.contains("is a symlink") && err.contains("cargo doc"),
+        "{err}"
+    );
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+}
+
+/// `cargo doc` builds into a private target directory and reads only a
+/// tracked lock: a `target` left in the tree is never reused or written, and
+/// an untracked `Cargo.lock` never decides which registry crates are built.
+#[test]
+fn the_docs_build_never_uses_the_trees_target_or_an_untracked_lock() {
+    let repo = FixtureRepo::nested("docs-private-target");
+    let status = std::process::Command::new(env!("CARGO"))
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(repo.path().join("Cargo.toml"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    repo.write("target/debug/planted", "attacker\n");
+    repo.commit();
+    repo.run_simdoc(&["--rustdoc", "force"]).unwrap();
+    assert!(
+        !repo.path().join("target/doc").exists(),
+        "cargo doc wrote into the tree's target"
+    );
+    assert_eq!(repo.read("target/debug/planted"), "attacker\n");
+
+    // Untrack the lock (leaving the file): it may not decide the build.
+    repo.git_untrack("Cargo.lock");
+    let err = repo.run_simdoc(&["--rustdoc", "force"]).unwrap_err();
+    assert!(
+        err.contains("does not own") && err.contains("Cargo.lock"),
+        "{err}"
+    );
 }

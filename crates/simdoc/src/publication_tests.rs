@@ -126,72 +126,98 @@ fn no_repository_content_can_approve_a_path_it_contains() {
     // A tracked file quoting a path outside the table is not enough either.
     crate::owned::read_to_string(repo.join("quote.md")).unwrap();
     assert!(guard(&repo, "README.md", "`/srv/quoted/place`").is_err());
-    // The reviewed table still admits a system path.
-    guard(&repo, "README.md", "`/tmp/sim-demo`").unwrap();
+    // Even a file's own quoted path stays refused; only the table admits.
+    assert!(guard(&repo, "README.md", "`/tmp/sim-demo`").is_err());
+    guard(&repo, "README.md", "`/scratch/tmp`").unwrap();
 
     assert!(scope.finish().is_err(), "the untracked read is refused");
     fs::remove_dir_all(repo.parent().unwrap()).unwrap();
 }
 
 #[test]
-fn only_reviewed_roots_and_literals_are_public() {
-    for path in [
-        "/proc/cpuinfo",
-        "/etc/os-release",
-        "/usr/bin/env",
-        "/dev/null",
-        "/tmp/sim-demo",
-        "/var/lib/sim/component",
-        "/v1/models",
-        "/api/chat",
-        "/target/x86_64-unknown-linux-gnu/debug/",
-        "/toolchain/bin/rustc",
-        "/scratch/tmp",
-        "/opt/viture/libviture_sdk.so",
-        "C:\\SIM\\Workspace",
-    ] {
-        assert!(is_public_path(path), "{path}");
-        guard(
-            Path::new("/work/constellation/sim-fixture"),
-            "README.md",
-            path,
-        )
-        .unwrap();
+fn only_exact_reviewed_literals_are_public() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    for literal in PUBLIC_LITERALS {
+        assert!(is_public_path(literal), "{literal}");
+        guard(repo, "README.md", &format!("see `{literal}` here")).unwrap();
+        // A literal is exact: never a prefix of something longer.
+        if literal.starts_with('/') {
+            assert!(!is_public_path(&format!("{literal}/x")), "{literal}");
+            assert!(!is_public_path(&format!("{literal}-secret")), "{literal}");
+        }
     }
+    // No root, prefix, or pattern is public: every one of these is a
+    // machine-local or free-form location.
     for path in [
+        "/tmp/customer-secret",
+        "/tmp/sim-demo",
+        "/var/lib/private-job",
+        "/var/runner-4711/work",
+        "/etc/passwd",
+        "/run/user/1000/bus",
+        "/usr/local/private/tool",
+        "/proc/self/environ",
+        "/dev/null",
+        "/v1/models",
         "/srv/private/customer",
         "/home/bo/x",
         "/Users/bo/x",
         "/opt/meta/Cargo.toml",
         "/opt/viture/other.so",
-        "/mnt/data/x",
         "/unreviewed/route",
+        "/scratch/tmp/../etc",
         "/tmp/../etc/passwd",
-        "/proc/../home/bo",
         "~/.cargo/registry",
+        "C:/Users/bo/x",
     ] {
         assert!(!is_public_path(path), "{path}");
+        assert!(
+            guard(repo, "README.md", &format!("`{path}`")).is_err(),
+            "{path}"
+        );
     }
-    for (root, _) in PUBLIC_ROOTS {
-        assert!(!NEVER_PUBLIC_ROOTS.contains(root), "{root} names a machine");
-    }
-    // A literal is an exact reviewed exception, never a prefix.
     for literal in PUBLIC_LITERALS {
-        assert!(literal.is_ascii() && is_public_path(literal), "{literal}");
-        assert!(!is_public_path(&format!("{literal}x")) || !literal.starts_with('/'));
+        let root = literal.trim_start_matches('/').split('/').next().unwrap();
+        assert!(
+            !NEVER_PUBLIC_ROOTS.contains(&root),
+            "{literal} names a machine"
+        );
     }
+}
+
+#[test]
+fn a_file_url_or_slash_drive_path_is_a_path_too() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    for content in [
+        "see file:///srv/private/x",
+        "at FILE:///tmp/customer-secret",
+        "open file:/etc/passwd",
+        "copied from C:/Users/bo/sim",
+        "d:/private/x",
+    ] {
+        assert!(guard(repo, "README.md", content).is_err(), "{content}");
+    }
+    guard(
+        repo,
+        "README.md",
+        "https://github.com/sim-nest/sim-tooling and a:b",
+    )
+    .unwrap();
 }
 
 #[test]
 fn json_string_values_follow_the_same_table() {
     let repo = Path::new("/work/constellation/sim-fixture");
-    guard(
-        repo,
-        "index.json",
-        r#"{"probe":"/proc/cpuinfo","route":"/v1/models"}"#,
-    )
-    .unwrap();
-    for value in ["/srv/private/x", "/single", "~/x", "../x", "a/../b"] {
+    guard(repo, "index.json", r#"{"probe":"/scratch/tmp"}"#).unwrap();
+    for value in [
+        "/srv/private/x",
+        "/tmp/customer-secret",
+        "/var/runner-1",
+        "/single",
+        "~/x",
+        "../x",
+        "a/../b",
+    ] {
         let content = format!(r#"{{"path":"{value}"}}"#);
         assert!(guard(repo, "index.json", &content).is_err(), "{value}");
     }

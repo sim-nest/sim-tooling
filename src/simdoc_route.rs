@@ -49,7 +49,7 @@ pub(crate) fn tooling_root() -> PathBuf {
 pub(crate) fn run_forwarded(subcommand: &str, args: &[String]) -> Result<(), String> {
     let caller = env::current_dir().map_err(|err| format!("current dir: {err}"))?;
     let args = anchored_args(&caller, args);
-    let status = engine_command(verified_engine()?, subcommand, &args)
+    let status = engine_command(verified_engine()?, subcommand, &args)?
         .status()
         .map_err(|err| format!("start simdoc {subcommand}: {err}"))?;
     if status.success() {
@@ -72,7 +72,7 @@ pub(crate) fn emitted_artifact(repo: &Path, name: &str) -> Result<String, String
             "--out-dir".to_owned(),
             path_arg(&scratch)?,
         ];
-        let status = engine_command(verified_engine()?, "repo-contract", &args)
+        let status = engine_command(verified_engine()?, "repo-contract", &args)?
             .stdout(Stdio::null())
             .status()
             .map_err(|err| format!("start simdoc repo-contract: {err}"))?;
@@ -97,7 +97,7 @@ pub(crate) fn verified_engine() -> Result<&'static Toolchain, String> {
             let pin = EncoderPin::from_manifest(&manifest)?;
             simdoc_pin::verify_source(&root, &pin)?;
             let toolchain = simdoc_pin::locate_toolchain(&pin, &simdoc_pin::candidate_roots(&pin))?;
-            let output = engine_command(&toolchain, "identity", &[])
+            let output = engine_command(&toolchain, "identity", &[])?
                 .stderr(Stdio::inherit())
                 .output()
                 .map_err(|err| format!("build the simdoc engine: {err}"))?;
@@ -121,17 +121,49 @@ pub(crate) fn verified_engine() -> Result<&'static Toolchain, String> {
 /// The engine invocation: the accepted toolchain's `cargo run --locked` on the
 /// simdoc manifest, from the sim-tooling root, compiling with that toolchain's
 /// `rustc` under a cleared environment and no compiler wrapper.
-pub(crate) fn engine_command(toolchain: &Toolchain, subcommand: &str, args: &[String]) -> Command {
+pub(crate) fn engine_command(
+    toolchain: &Toolchain,
+    subcommand: &str,
+    args: &[String],
+) -> Result<Command, String> {
     let root = tooling_root();
-    let mut command = toolchain.command(&toolchain.cargo);
+    let manifest = root.join("crates/simdoc/Cargo.toml");
+    let (home, target, real_home) = private_dirs(&root)?;
+    let mut command = toolchain.command_in(&toolchain.cargo, &root, &[manifest.as_path()])?;
     command
-        .current_dir(&root)
+        .env("CARGO_HOME", home)
+        .env("HOME", home)
+        .env("CARGO_TARGET_DIR", target)
+        .env("SIMDOC_REAL_CARGO_HOME", real_home)
         .args(["run", "--quiet", "--locked", "--manifest-path"])
-        .arg(root.join("crates/simdoc/Cargo.toml"))
+        .arg(&manifest)
         .arg("--")
         .arg(subcommand)
         .args(args);
-    command
+    Ok(command)
+}
+
+/// The private Cargo home (holding exactly the engine's locked, checksum-
+/// verified registry crates), the private target directory (so no built
+/// artifact or fingerprint of anyone else's is ever reused), and the real
+/// Cargo home the engine draws its own private homes from. Created once per
+/// process.
+fn private_dirs(root: &Path) -> Result<&'static (PathBuf, PathBuf, PathBuf), String> {
+    static DIRS: OnceLock<Result<(PathBuf, PathBuf, PathBuf), String>> = OnceLock::new();
+    DIRS.get_or_init(|| {
+        let real = crate::cargo_home::real_cargo_home(
+            None,
+            env::var_os("CARGO_HOME"),
+            env::var_os("HOME"),
+        )?;
+        let lock = fs::read_to_string(root.join("crates/simdoc/Cargo.lock"))
+            .map_err(|err| format!("read the engine's Cargo.lock: {err}"))?;
+        let home = crate::cargo_home::hermetic_home(&real, Some(&lock), "engine-home")?;
+        let target = crate::cargo_home::private_dir("engine-target")?;
+        Ok((home, target, real))
+    })
+    .as_ref()
+    .map_err(Clone::clone)
 }
 
 /// Resolves every path-valued flag against `caller`, and names `caller` as
@@ -206,7 +238,7 @@ mod tests {
             channel: "1.96.0".to_owned(),
             host: "x86_64-unknown-linux-gnu".to_owned(),
         };
-        let command = engine_command(&toolchain, "repo-contract", &["--check".to_owned()]);
+        let command = engine_command(&toolchain, "repo-contract", &["--check".to_owned()]).unwrap();
         assert_eq!(command.get_program(), "/toolchains/1.96.0/bin/cargo");
         assert_eq!(command.get_current_dir(), Some(tooling_root().as_path()));
         let args = command
@@ -245,6 +277,26 @@ mod tests {
                 "{name}"
             );
         }
+        // Every cargo run has a private home and target directory: fresh
+        // directories of this process, never the caller's or the tree's own
+        // `target`, whose artifacts and fingerprints anyone could have planted.
+        let value = |name: &str| {
+            envs.iter()
+                .find(|(key, _)| key == name)
+                .and_then(|(_, value)| value.clone())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| panic!("{name} is not set"))
+        };
+        let temp = env::temp_dir();
+        for name in ["CARGO_HOME", "CARGO_TARGET_DIR"] {
+            assert!(value(name).starts_with(&temp), "{name}");
+        }
+        assert_eq!(value("HOME"), value("CARGO_HOME"));
+        assert_ne!(
+            value("CARGO_TARGET_DIR"),
+            tooling_root().join("crates/simdoc/target")
+        );
+        assert!(value("SIMDOC_REAL_CARGO_HOME").is_absolute());
         assert!(
             envs.iter()
                 .all(|(name, _)| name != "CARGO" && name != "RUSTUP_TOOLCHAIN"),

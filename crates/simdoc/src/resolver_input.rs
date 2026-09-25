@@ -26,10 +26,9 @@
 //! target and accepted only when that target lies in a Git worktree that is a
 //! sibling checkout of the repository being documented, is an ordinary file
 //! (or a directory of ordinary files with no link inside), and every such file
-//! is tracked by that worktree (see [`crate::worktree`]) or ignored by its Git
-//! ignore rules (generated or local files, such as the `Cargo.lock` of a
-//! nested crate, which are no part of the package's source and are neither
-//! read nor bound). An untracked file that is not ignored refuses the input. What is digested is
+//! is tracked by that worktree (see [`crate::worktree`]). Every other entry,
+//! ignored or not, refuses the input (see `package_files`), except one typed
+//! exception for a nested crate's untracked `Cargo.lock`. What is digested is
 //! the canonical target's content, under the link's name inside the package,
 //! so the identity binds exactly what cargo reads and records no path.
 
@@ -163,7 +162,7 @@ pub(crate) fn validate(path: &Path, repo: &Path) -> Result<ResolverInput, String
             .filter(|package| members.contains(package))
             .collect()
     };
-    let (closure_sha256, closure_packages) = source_closure(&manifest, &selected, repo)?;
+    let (closure_sha256, closure_packages, selected) = source_closure(&manifest, &selected, repo)?;
     Ok(ResolverInput {
         manifest,
         manifest_sha256: content_digest(&manifest_bytes),
@@ -192,9 +191,12 @@ fn source_closure(
     manifest: &Path,
     selected: &[String],
     repo: &Path,
-) -> Result<(String, usize), String> {
+) -> Result<(String, usize, Vec<String>), String> {
     let mut boundary = Boundary::new(repo);
-    let mut command = crate::tools::tools()?.cargo();
+    let dir = manifest.parent().unwrap_or(manifest);
+    let lock = fs::read_to_string(manifest.with_file_name("Cargo.lock"))
+        .map_err(|err| format!("{RESOLVER_ENV} refused: Cargo.lock: {err}"))?;
+    let mut command = crate::tools::tools()?.cargo_in(dir, &[manifest], Some(&lock))?;
     command
         .args([
             "metadata",
@@ -231,17 +233,27 @@ fn source_closure(
         .flatten()
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
-    let mut pending = members
-        .iter()
-        .copied()
-        .filter(|id| {
-            selected.is_empty()
-                || packages
-                    .get(id)
-                    .and_then(|package| package["name"].as_str())
-                    .is_some_and(|name| selected.iter().any(|wanted| wanted == name))
-        })
-        .collect::<Vec<_>>();
+    // A workspace member is selected by name, but a namesake whose sources
+    // link outside the documented repository (another repository's `xtask`)
+    // is not this repository's package: it is neither documented nor bound.
+    let mut kept = Vec::new();
+    let mut pending = Vec::new();
+    for id in members.iter().copied() {
+        let Some(package) = packages.get(id) else {
+            continue;
+        };
+        let name = package["name"].as_str().unwrap_or_default();
+        if selected.iter().any(|wanted| wanted == name) && belongs_to_repo(package, repo)? {
+            kept.push(name.to_owned());
+            pending.push(id);
+        }
+    }
+    if pending.is_empty() {
+        return Err(format!(
+            "{RESOLVER_ENV} refused: no workspace member is a package of the documented \
+             repository"
+        ));
+    }
     let edges = metadata["resolve"]["nodes"]
         .as_array()
         .ok_or("shared resolver metadata has no resolve graph")?
@@ -313,7 +325,67 @@ fn source_closure(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    Ok((digest, path_packages))
+    Ok((digest, path_packages, kept))
+}
+
+/// Whether a resolver package is this repository's. A package of the
+/// repository is a generated `Cargo.toml` plus links whose every target is
+/// inside the repository: no other real file or directory (a `build.rs`, a
+/// `.cargo`, a `src` of its own) may sit beside them, or the farm, not the
+/// repository, would supply the package's source. A package whose links all
+/// lead elsewhere is another repository's namesake. One whose links lead both
+/// ways is refused, and so is one with no links at all.
+fn belongs_to_repo(package: &Value, repo: &Path) -> Result<bool, String> {
+    let manifest = package["manifest_path"]
+        .as_str()
+        .ok_or("shared resolver package has no manifest_path")?;
+    let dir = Path::new(manifest)
+        .parent()
+        .ok_or("shared resolver package manifest has no parent")?;
+    let repo = repo
+        .canonicalize()
+        .map_err(|err| format!("{}: {err}", repo.display()))?;
+    let (mut inside, mut outside) = (0, 0);
+    for entry in fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))? {
+        let entry = entry.map_err(|err| format!("{}: {err}", dir.display()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|err| format!("{}: {err}", entry.path().display()))?;
+        if !(kind.is_symlink() || kind.is_file() && entry.file_name() == "Cargo.toml") {
+            return Err(format!(
+                "{RESOLVER_ENV} refused: package {} has its own {} beside its links; a package \
+                 of the repository is its Cargo.toml and links into the repository only",
+                package["name"].as_str().unwrap_or("<unnamed>"),
+                entry.file_name().to_string_lossy()
+            ));
+        }
+        if kind.is_symlink() {
+            let target = entry
+                .path()
+                .canonicalize()
+                .map_err(|err| format!("{}: {err}", entry.path().display()))?;
+            if target.starts_with(&repo) {
+                inside += 1;
+            } else {
+                outside += 1;
+            }
+        }
+    }
+    if inside == 0 && outside == 0 {
+        return Err(format!(
+            "{RESOLVER_ENV} refused: package {} has no links into the documented repository; \
+             a package of the repository is its Cargo.toml and links into the repository",
+            package["name"].as_str().unwrap_or("<unnamed>")
+        ));
+    }
+    if inside > 0 && outside > 0 {
+        return Err(format!(
+            "{RESOLVER_ENV} refused: package {} links both into and out of the documented \
+             repository",
+            package["name"].as_str().unwrap_or("<unnamed>")
+        ));
+    }
+    Ok(outside == 0)
 }
 
 /// The canonical targets a resolver package's links may lead to: files of
@@ -359,8 +431,13 @@ impl Boundary {
 /// Every ordinary file a path package's cargo build can read, in path order,
 /// as `(name inside the package, file to read)`: the package's own files, and
 /// the canonical files behind each link (see the module documentation).
-/// Build output and VCS metadata directories are skipped. A link inside a
-/// followed tree, or a link to anything not owned, refuses the input.
+///
+/// Deny by default: every entry beneath the package, and beneath every
+/// followed link target, is either bound or refuses the input. That includes
+/// ignored files, untracked files, build-output directories, and links
+/// nested inside a followed tree; nothing is skipped, because Cargo, rustc,
+/// build scripts, and proc macros can read any of it. The one typed
+/// exception is [`is_nested_lockfile`]: bound, but not required to be tracked.
 fn package_files(root: &Path, boundary: &mut Boundary) -> Result<Vec<(String, PathBuf)>, String> {
     let mut files = Vec::new();
     let mut pending = vec![(root.to_path_buf(), String::new())];
@@ -389,11 +466,14 @@ fn package_files(root: &Path, boundary: &mut Boundary) -> Result<Vec<(String, Pa
                     files.push((relative, canonical));
                 }
             } else if kind.is_dir() {
-                if name != "target" && name != ".git" {
-                    pending.push((entry.path(), format!("{relative}/")));
-                }
+                pending.push((entry.path(), format!("{relative}/")));
             } else if kind.is_file() {
                 files.push((relative, entry.path()));
+            } else {
+                return Err(format!(
+                    "{RESOLVER_ENV} refused: {} is not an ordinary file",
+                    entry.path().display()
+                ));
             }
         }
     }
@@ -402,7 +482,8 @@ fn package_files(root: &Path, boundary: &mut Boundary) -> Result<Vec<(String, Pa
 }
 
 /// Every file beneath the canonical directory `dir`, each of which must be an
-/// ordinary file `worktree` tracks, reached through no further link.
+/// ordinary file `worktree` tracks, reached through no further link. Nothing
+/// else is skipped, ignored or not.
 fn owned_tree(
     worktree: &Worktree,
     dir: &Path,
@@ -416,22 +497,30 @@ fn owned_tree(
             .map_err(|err| format!("{}: {err}", entry.path().display()))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if kind.is_dir() {
-            if name != "target" && name != ".git" {
-                owned_tree(worktree, &entry.path(), &format!("{prefix}{name}/"), files)?;
-            }
+            owned_tree(worktree, &entry.path(), &format!("{prefix}{name}/"), files)?;
         } else if let Err(why) = worktree.owned_file(&entry.path(), "resolver source") {
-            // A file Git ignores (a nested crate's `Cargo.lock`, build
-            // output) is no part of the package's source and is skipped;
-            // any other file the worktree does not track refuses the input.
-            if worktree.is_ignored(&entry.path())? {
-                continue;
+            if !is_nested_lockfile(worktree, &entry.path()) {
+                return Err(format!("{RESOLVER_ENV} refused: {why}"));
             }
-            return Err(format!("{RESOLVER_ENV} refused: {why}"));
+            // The exempt lockfile need not be tracked, but its bytes are bound.
+            files.push((format!("{prefix}{name}"), entry.path()));
         } else {
             files.push((format!("{prefix}{name}"), entry.path()));
         }
     }
     Ok(())
+}
+
+/// The single typed exception to "every entry is bound": an untracked
+/// `Cargo.lock` directly beside a tracked `Cargo.toml` inside a followed
+/// tree. It is the resolver output of a nested crate (a focused-test crate
+/// that gitignores its own lock); the enclosing package's build neither reads
+/// it nor is built from it, so it need not be tracked (its bytes are bound).
+fn is_nested_lockfile(worktree: &Worktree, file: &Path) -> bool {
+    file.file_name().is_some_and(|name| name == "Cargo.lock")
+        && worktree
+            .owned_file(&file.with_file_name("Cargo.toml"), "nested manifest")
+            .is_ok()
 }
 
 #[cfg(test)]

@@ -13,10 +13,10 @@
 //!   parent, the home, working, temporary, Cargo, or rustup directory, or the
 //!   shared resolver's directory, anywhere;
 //! - an embedded absolute Unix path, Windows drive or UNC path, or
-//!   home-relative path, unless it is a reviewed public path: a literal in
-//!   [`PUBLIC_LITERALS`], or a path whose first segment is one of the typed
-//!   roots in [`PUBLIC_ROOTS`] (well-known system locations, HTTP routes, and
-//!   sandbox or test-filesystem namespaces). A path that only occurs in some file the run read is
+//!   home-relative path, unless the whole path is one of the exact reviewed
+//!   values in [`PUBLIC_LITERALS`]. There are no permitted prefixes, roots, or
+//!   patterns: `/tmp/anything`, `/var/anything`, `/etc/anything` are as
+//!   refused as `/srv/anything`. A path that occurs in a file the run read is
 //!   never permitted by that fact: permission comes from this table alone, so
 //!   no repository content, tracked or not, can approve a path;
 //! - a path with a `..` segment;
@@ -34,52 +34,41 @@ use std::{
 
 use serde_json::Value;
 
-/// Why a root is publishable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RootKind {
-    /// A well-known operating-system location: names no machine.
-    System,
-    /// The first segment of an HTTP route or served asset.
-    Route,
-    /// A path inside a sandbox or a test's virtual filesystem, never a
-    /// location on the machine that ran the generator.
-    Virtual,
-}
-
-/// Reviewed first segments an absolute path may start with. Adding an entry
-/// is a reviewed code change: refusing a new root is the safe default.
-pub(crate) const PUBLIC_ROOTS: &[(&str, RootKind)] = &[
-    ("bin", RootKind::System),
-    ("dev", RootKind::System),
-    ("etc", RootKind::System),
-    ("lib", RootKind::System),
-    ("lib64", RootKind::System),
-    ("proc", RootKind::System),
-    ("run", RootKind::System),
-    ("sbin", RootKind::System),
-    ("sys", RootKind::System),
-    ("tmp", RootKind::System),
-    ("usr", RootKind::System),
-    ("var", RootKind::System),
-    ("api", RootKind::Route),
-    ("v1", RootKind::Route),
-    ("target", RootKind::Virtual),
-    ("toolchain", RootKind::Virtual),
-    ("scratch", RootKind::Virtual),
-];
-
-/// Reviewed exact paths that no root covers: documented test values and a
-/// vendor library location quoted from committed source.
+/// Reviewed exact public paths: documented values that name no machine (a
+/// sandbox or test-filesystem location, a vendor library path, a documented
+/// Windows example). Adding an entry is a reviewed code change; a path that is
+/// not listed is refused, whatever its first segment.
 pub(crate) const PUBLIC_LITERALS: &[&str] = &[
+    "/bin/sh",
+    "/bin/sleep",
+    "/dev/urandom",
+    "/etc/os-release",
     "/opt/viture/libviture_sdk.so",
+    "/proc/cpuinfo",
+    "/proc/meminfo",
+    "/scratch/home",
+    "/scratch/target",
+    "/scratch/tmp",
+    "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
+    "/target/x86_64-unknown-linux-gnu/debug/",
+    "/toolchain/bin",
+    "/toolchain/bin/rustc",
+    "/toolchain/bin/rustdoc",
+    "/usr/bin/bwrap",
+    "/usr/bin/gcc",
+    "/usr/bin/prlimit",
+    "file:///source",
+    "file:///etc/passwd",
     "C:\\SIM\\Workspace",
     "D:\\escape",
 ];
 
 /// First segments that name a machine or a person, never publishable whatever
-/// the tables say (a test proves the tables never contain one).
+/// the table says (a test proves the table holds none).
+#[cfg(test)]
 pub(crate) const NEVER_PUBLIC_ROOTS: &[&str] = &[
-    "home", "Users", "root", "srv", "mnt", "media", "opt", "private", "Volumes", "snap", "nix",
+    "home", "Users", "root", "srv", "mnt", "media", "private", "Volumes", "snap", "nix", "tmp",
+    "var", "run",
 ];
 
 /// Refuses `content`, to be published as `name`, when it would record
@@ -93,6 +82,15 @@ pub(crate) fn guard(repo: &Path, name: &str, content: &str) -> Result<(), String
             ));
         }
     }
+    if let Some(url) = file_urls(content)
+        .into_iter()
+        .find(|url| !PUBLIC_LITERALS.contains(&url.as_str()))
+    {
+        return Err(format!(
+            "refused to publish {name}: it embeds the `file:` URL {url:?}, which names a \
+             location on some machine and is not a reviewed public literal"
+        ));
+    }
     if let Some(token) = path_tokens(content)
         .into_iter()
         .find(|token| !is_public_path(token))
@@ -100,7 +98,7 @@ pub(crate) fn guard(repo: &Path, name: &str, content: &str) -> Result<(), String
         return Err(format!(
             "refused to publish {name}: it embeds the path {token:?}, which is not a reviewed \
              public path; nothing outside the repository may be recorded by path (a reviewed \
-             public root or literal is added in simdoc's publication.rs)"
+             exact literal is added in simdoc's publication.rs)"
         ));
     }
     if name.ends_with(".json") {
@@ -115,24 +113,29 @@ pub(crate) fn guard(repo: &Path, name: &str, content: &str) -> Result<(), String
     Ok(())
 }
 
+/// Every `file:` URL in `text`, from the scheme to the next delimiter.
+fn file_urls(text: &str) -> Vec<String> {
+    let lower = text.to_ascii_lowercase();
+    let mut urls = Vec::new();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find("file:/") {
+        let start = from + found;
+        let end = text[start..]
+            .find(|ch: char| ch.is_whitespace() || "\"'`)|<>".contains(ch))
+            .map_or(text.len(), |offset| start + offset);
+        urls.push(text[start..end].to_owned());
+        from = end.max(start + 1);
+    }
+    urls
+}
+
 /// Whether `token`, an absolute or home-relative path found in text, may be
-/// published: it has no `..` segment and is a reviewed literal or starts with
-/// a reviewed root.
+/// published: it has no `..` segment and is exactly a reviewed literal.
 pub(crate) fn is_public_path(token: &str) -> bool {
     if token.split(['/', '\\']).any(|segment| segment == "..") {
         return false;
     }
-    if PUBLIC_LITERALS.contains(&token) {
-        return true;
-    }
-    let Some(rest) = token.strip_prefix('/') else {
-        return false;
-    };
-    let root = rest.split('/').next().unwrap_or_default();
-    if NEVER_PUBLIC_ROOTS.contains(&root) {
-        return false;
-    }
-    PUBLIC_ROOTS.iter().any(|(name, _)| *name == root)
+    PUBLIC_LITERALS.contains(&token)
 }
 
 /// Guards every artifact of a set.
@@ -260,7 +263,7 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
         } else if (rest.len() > 3
             && rest[0].is_ascii_alphabetic()
             && rest[1] == b':'
-            && rest[2] == b'\\'
+            && (rest[2] == b'\\' || rest[2] == b'/')
             && rest[3].is_ascii_alphanumeric())
             || (rest.starts_with(b"\\\\") && rest.get(2).is_some_and(u8::is_ascii_alphanumeric))
         {

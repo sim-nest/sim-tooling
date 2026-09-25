@@ -147,7 +147,8 @@ fn workspace_root(metadata: &Value) -> Result<PathBuf, String> {
 /// Reads one workspace's `cargo metadata --no-deps` and retains only its
 /// bounded projection, charging it against `retained`.
 fn workspace_metadata(manifest: &Path, retained: &mut usize) -> Result<Value, String> {
-    let mut command = crate::tools::tools()?.cargo();
+    let dir = manifest.parent().unwrap_or(manifest);
+    let mut command = crate::tools::tools()?.cargo_in(dir, &[manifest], None)?;
     command
         .args([
             "metadata",
@@ -228,7 +229,19 @@ pub(crate) fn project_metadata(document: &Value) -> Value {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|target| pick(target, &["name", "kind", "crate_types", "src_path"]))
+                    .map(|target| {
+                        pick(
+                            target,
+                            &[
+                                "name",
+                                "kind",
+                                "crate_types",
+                                "src_path",
+                                "test",
+                                "required-features",
+                            ],
+                        )
+                    })
                     .collect(),
             );
             projected["dependencies"] = Value::Array(

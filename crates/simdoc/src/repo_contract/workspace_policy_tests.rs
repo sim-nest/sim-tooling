@@ -190,7 +190,7 @@ fn every_owned_manifest_is_covered_or_excluded_and_projected() {
 
     repo.write(
         "tests/ui.rs",
-        "#[test]\nfn cases() { run(\"tests/ui\"); }\n",
+        "#[test]\nfn cases() { let d = consume_fixture(\"tests/ui\"); }\n",
     );
     repo.root_package(
         "app",
@@ -253,9 +253,12 @@ fn an_exclusion_class_needs_its_native_evidence() {
     repo.package("fixtures/ui/case", "case", "publish = false\n");
     repo.write(
         "tests/cases.rs",
-        "#[test]\nfn cases() { run(\"fixtures/ui\"); }\n",
+        "#[test]\nfn cases() { let d = consume_fixture(\"fixtures/ui\"); }\n",
     );
-    repo.write("recipes/book.toml", "fixtures = \"fixtures/ui\"\n");
+    repo.write(
+        "recipes/case/recipe.toml",
+        "title = \"Case\"\nfixtures = [\"fixtures/ui\"]\n",
+    );
     repo.root_package(
         "app",
         r#"contract-exclusions = [{ path = "fixtures", class = "test-fixture", consumer = "tests/cases.rs", reason = "cases" }]"#,
@@ -265,7 +268,7 @@ fn an_exclusion_class_needs_its_native_evidence() {
 
     repo.root_package(
         "app",
-        r#"contract-exclusions = [{ path = "fixtures", class = "recipe-fixture", consumer = "recipes/book.toml", reason = "cases" }]"#,
+        r#"contract-exclusions = [{ path = "fixtures", class = "recipe-fixture", consumer = "recipes/case/recipe.toml", reason = "cases" }]"#,
     );
     let err = cargo_metadata(&repo.root).unwrap_err();
     assert!(err.contains("has no `recipes` path component"), "{err}");
@@ -299,7 +302,10 @@ fn a_fixture_needs_a_native_consumer_that_references_it() {
     repo.package("tests/ui/case", "case", "publish = false\n");
     repo.write("src/helper.rs", "// tests/ui\n");
     repo.write("tests/unrelated.rs", "#[test]\nfn nothing() {}\n");
-    repo.write("tests/ui.rs", "#[test]\nfn ui() { run(\"tests/ui\"); }\n");
+    repo.write(
+        "tests/ui.rs",
+        "#[test]\nfn ui() { let d = consume_fixture(\"tests/ui\"); }\n",
+    );
     let declare = |consumer: &str| {
         repo.root_package(
             "app",
@@ -346,7 +352,7 @@ fn a_publishable_package_can_never_be_excluded() {
     repo.package("tests/real/real", "real", "");
     repo.write(
         "tests/real.rs",
-        "#[test]\nfn real() { load(\"tests/real\"); }\n",
+        "#[test]\nfn real() { let d = consume_fixture(\"tests/real\"); }\n",
     );
     repo.root_package(
         "app",
@@ -366,7 +372,7 @@ fn a_contract_package_may_not_depend_on_excluded_code() {
     repo.package("tests/helper", "helper", "publish = false\n");
     repo.write(
         "tests/uses_helper.rs",
-        "#[test]\nfn uses() { load(\"tests/helper\"); }\n",
+        "#[test]\nfn uses() { let d = consume_fixture(\"tests/helper\"); }\n",
     );
     repo.root_package_with(
         "app",

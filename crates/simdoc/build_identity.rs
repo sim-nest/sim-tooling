@@ -105,20 +105,28 @@ pub(crate) fn host_triple(verbose_version: &str) -> Option<String> {
 }
 
 /// The ordinary files that define a toolchain's identity: the `cargo`,
-/// `rustc`, and `rustdoc` executables and every file directly in `lib`
-/// (`librustc_driver` and LLVM, which is where the compiler actually lives).
-/// A symlink or any other kind of entry refuses the identity.
+/// `rustc`, and `rustdoc` executables and every file beneath `lib`,
+/// recursively: `librustc_driver`, LLVM, and the whole `rustlib` sysroot
+/// (standard-library rlibs, target tools, manifests), everything rustc and
+/// rustdoc read to compile. A symlink or any other kind of entry refuses the
+/// identity.
 pub(crate) fn toolchain_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     let mut files = ["cargo", "rustc", "rustdoc"]
         .iter()
         .map(|name| Path::new("bin").join(name))
         .collect::<Vec<_>>();
-    for entry in fs::read_dir(root.join("lib"))? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            continue;
+    let mut pending = vec![PathBuf::from("lib")];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(root.join(&dir))? {
+            let entry = entry?;
+            let relative = dir.join(entry.file_name());
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                pending.push(relative);
+            } else {
+                files.push(relative);
+            }
         }
-        files.push(Path::new("lib").join(entry.file_name()));
     }
     files.sort();
     for relative in &files {
@@ -262,12 +270,22 @@ mod tests {
         }
         fs::write(root.join("bin/cargo-fmt"), "not part of the identity").unwrap();
         fs::write(root.join("lib/librustc_driver-1.so"), "driver").unwrap();
+        fs::create_dir_all(root.join("lib/rustlib/x86_64-unknown-linux-gnu/lib")).unwrap();
+        fs::write(
+            root.join("lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-1.rlib"),
+            "std",
+        )
+        .unwrap();
 
         let first = toolchain_digest(&root).unwrap();
         assert_eq!(first, toolchain_digest(&root).unwrap());
         fs::write(root.join("bin/cargo-fmt"), "changed").unwrap();
         assert_eq!(first, toolchain_digest(&root).unwrap());
-        for changed in ["bin/rustc", "lib/librustc_driver-1.so"] {
+        for changed in [
+            "bin/rustc",
+            "lib/librustc_driver-1.so",
+            "lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-1.rlib",
+        ] {
             let original = fs::read(root.join(changed)).unwrap();
             fs::write(root.join(changed), "counterfeit").unwrap();
             assert_ne!(first, toolchain_digest(&root).unwrap(), "{changed}");
@@ -276,6 +294,15 @@ mod tests {
         fs::write(root.join("lib/libextra.so"), "extra").unwrap();
         assert_ne!(first, toolchain_digest(&root).unwrap());
         fs::remove_file(root.join("lib/libextra.so")).unwrap();
+        // A link or special file anywhere in the closure, however deep, refuses.
+        std::os::unix::fs::symlink(
+            root.join("bin/rustc"),
+            root.join("lib/rustlib/x86_64-unknown-linux-gnu/lib/libdeep.rlib"),
+        )
+        .unwrap();
+        assert!(toolchain_digest(&root).is_err());
+        fs::remove_file(root.join("lib/rustlib/x86_64-unknown-linux-gnu/lib/libdeep.rlib"))
+            .unwrap();
         std::os::unix::fs::symlink(root.join("bin/rustc"), root.join("lib/liblink.so")).unwrap();
         assert!(
             toolchain_digest(&root)

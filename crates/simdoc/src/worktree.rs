@@ -110,32 +110,6 @@ impl Worktree {
             .collect()
     }
 
-    /// Whether Git's ignore rules ignore `path` (an untracked, generated or
-    /// local file such as a nested crate's `Cargo.lock`). Asked of Git itself
-    /// so every ignore file and global rule applies; never true for a tracked
-    /// file.
-    pub(crate) fn is_ignored(&self, path: &Path) -> Result<bool, String> {
-        let relative = self
-            .lexical_relative(path)
-            .filter(|relative| !relative.is_empty())
-            .ok_or_else(|| format!("{} resolves outside the repository", path.display()))?;
-        let mut command = crate::tools::tools()?.git();
-        command
-            .arg("-C")
-            .arg(&self.root)
-            .args(["check-ignore", "-q", "--"])
-            .arg(&relative);
-        let captured = run_bounded(command, "git check-ignore", 1024, MAX_DIAGNOSTIC_BYTES)?;
-        match captured.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            _ => Err(format!(
-                "git check-ignore failed for {relative}: {}",
-                String::from_utf8_lossy(&captured.stderr).trim()
-            )),
-        }
-    }
-
     /// Requires `path` to be an ordinary file owned by this worktree, reached
     /// from the repository root without passing through any symlink, and
     /// returns its repository-relative path.
