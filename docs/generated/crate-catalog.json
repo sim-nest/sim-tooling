@@ -67,6 +67,7 @@
       "root": "crates/simdoc",
       "target_kinds": [
         "bin",
+        "custom-build",
         "lib"
       ]
     }

@@ -156,10 +156,14 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
     assert_eq!(provenance["schema"], "sim.provenance.v1");
     assert_eq!(provenance["repo"], "sim-tooling");
     assert_eq!(
-        provenance["generated_by"],
+        provenance["regeneration_command"],
         "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
     );
-    assert_eq!(provenance["encoder"], encoder_identity());
+    assert!(provenance.get("generated_by").is_none());
+    assert_eq!(provenance["execution"]["operation"], CONTRACT_OPERATION);
+    assert_eq!(provenance["execution"]["executable"], executable_identity());
+    assert_eq!(provenance["execution"]["toolchain"], toolchain_identity());
+    assert_eq!(repo_contract["contract_exclusions"], json!([]));
     let validation = provenance["validation_commands"].as_array().unwrap();
     assert_eq!(validation.len(), 12);
     assert!(validation.contains(&json!(
@@ -368,6 +372,57 @@ fn temp_root(name: &str) -> PathBuf {
     fs::create_dir_all(&root).unwrap();
     root
 }
+
+#[test]
+fn a_fixture_contract_is_generated_from_one_measured_snapshot() {
+    let repo = crate::test_fixture::FixtureRepo::nested("contract-snapshot");
+
+    let artifacts = contract_artifacts(repo.path()).unwrap();
+    assert_eq!(artifacts.package_count, 2);
+    let provenance = generated_json(&artifacts, "provenance.json");
+    assert_eq!(provenance["repo"], "sim-fixture");
+    assert_eq!(provenance["generation_timestamp"], "2026-09-01T12:00:00Z");
+    assert_eq!(provenance["execution"]["operation"], CONTRACT_OPERATION);
+
+    let contract = generated_json(&artifacts, "repo-contract.json");
+    assert_eq!(contract["contract_exclusions"], json!([]));
+
+    repo.write(
+        "Cargo.toml",
+        &repo.read("Cargo.toml").replace(
+            "contract-workspaces = [\"nested\"]\n",
+            "contract-workspaces = [\"nested\"]\ncontract-exclusions = [{ path = \"tests/ui\", class = \"test-fixture\", reason = \"compile-fail cases\" }]\n",
+        ),
+    );
+    repo.write(
+        "tests/ui/case/Cargo.toml",
+        "[package]\nname = \"case\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
+    );
+    repo.write("tests/ui/case/src/lib.rs", "");
+    repo.commit();
+    let artifacts = contract_artifacts(repo.path()).unwrap();
+    let contract = generated_json(&artifacts, "repo-contract.json");
+    assert_eq!(
+        contract["contract_exclusions"],
+        json!([{
+            "path": "tests/ui",
+            "class": "test-fixture",
+            "reason": "compile-fail cases",
+            "manifests": ["tests/ui/case/Cargo.toml"],
+        }])
+    );
+    assert!(artifacts.files["repo-contract.md"].contains("| `tests/ui` | `test-fixture` | 1 |"));
+
+    let err = contract_artifacts_observed(repo.path(), &|| {
+        repo.write(
+            "src/lib.rs",
+            "//! Fixture application.\n\npub fn changed() {}\n",
+        );
+    })
+    .err()
+    .unwrap();
+    assert!(err.contains("changed during generation"), "{err}");
+}
 ```
 
 Specimen `spec-test/sim-tooling/crates/simdoc/src/repo_contract_cli_tests` is checked by `cargo test`.
@@ -395,9 +450,8 @@ use super::*;
 
 #[test]
 fn emit_mode_is_exclusive_bounded_and_repeatable() {
-    let repo = crate::tooling_checkout_root()
-        .to_string_lossy()
-        .into_owned();
+    let fixture = crate::test_fixture::FixtureRepo::nested("repo-contract-options");
+    let repo = fixture.path().to_string_lossy().into_owned();
     let out = temp_root("repo-contract-options");
     let args = |tail: &[&str]| {
         let mut args = vec!["simdoc".to_owned(), "repo-contract".to_owned()];
@@ -457,7 +511,8 @@ fn emit_mode_is_exclusive_bounded_and_repeatable() {
 
 #[test]
 fn emit_uses_canonical_fragment_and_leaves_repository_untouched() {
-    let repo = crate::tooling_checkout_root();
+    let fixture = crate::test_fixture::FixtureRepo::nested("repo-contract-emit");
+    let repo = fixture.path().to_path_buf();
     let before = git_output(&repo, &["status", "--porcelain"]).unwrap();
     let expected = contract_artifacts(&repo).unwrap();
     let out = temp_root("repo-contract-emit");
