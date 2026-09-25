@@ -168,11 +168,14 @@ fn execution_records_identities_and_no_path_for_an_outside_resolver() {
 
     let root = temp_root("regeneration-resolver");
     let meta = root.join("sim-private/.meta-workspace");
-    fs::create_dir_all(&meta).unwrap();
-    fs::write(meta.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-    fs::write(meta.join("Cargo.lock"), "version = 4\n").unwrap();
-    let resolver = crate::resolver_input::validate(&meta.join("Cargo.toml")).unwrap();
-
+    let resolver = crate::resolver_input::ResolverInput {
+        manifest: meta.join("Cargo.toml"),
+        manifest_sha256: "a".repeat(64),
+        lock_sha256: "b".repeat(64),
+        selected: vec!["app".to_owned()],
+        closure_sha256: "c".repeat(64),
+        closure_packages: 2,
+    };
     let recorded = execution_with(Some(&resolver));
     assert_eq!(recorded["resolver"]["kind"], "shared-resolver");
     let text = recorded.to_string();
@@ -198,4 +201,31 @@ fn temp_root(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     root
+}
+
+#[test]
+fn identity_lines_carry_the_embedded_identity() {
+    let lines = identity_lines();
+    let identity = executable_identity();
+    let toolchain = toolchain_identity();
+    for expected in [
+        format!(
+            "source_sha256={}",
+            identity["source_sha256"].as_str().unwrap()
+        ),
+        format!("lock_sha256={}", identity["lock_sha256"].as_str().unwrap()),
+        format!(
+            "rustc_release={}",
+            toolchain["rustc"]["release"].as_str().unwrap()
+        ),
+        format!(
+            "cargo_release={}",
+            toolchain["cargo"]["release"].as_str().unwrap()
+        ),
+    ] {
+        assert!(
+            lines.lines().any(|line| line == expected),
+            "{expected}\n{lines}"
+        );
+    }
 }

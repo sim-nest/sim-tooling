@@ -1,6 +1,11 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Source-backed checking for authored reuse and composition relations.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 use quote::ToTokens;
 use sim_index_core::{IndexDoc, SubjectId};
@@ -193,7 +198,7 @@ fn source_use_facts(repo: &Path, package: &PackageContract, dependency: &str) ->
         if is_test_source(&relative) {
             continue;
         }
-        let Ok(source) = fs::read_to_string(&path) else {
+        let Ok(source) = crate::owned::read_to_string(&path) else {
             continue;
         };
         let Ok(file) = syn::parse_file(&source) else {

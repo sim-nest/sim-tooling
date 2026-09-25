@@ -36,7 +36,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::worktree::Worktree;
+use crate::worktree::Worktree;
 
 const CONTRACT_WORKSPACES_KEY: &str = "contract-workspaces";
 const CONTRACT_EXCLUSIONS_KEY: &str = "contract-exclusions";
@@ -84,6 +84,9 @@ impl ExclusionClass {
 pub(crate) struct ContractExclusion {
     pub(crate) path: String,
     pub(crate) class: ExclusionClass,
+    /// The covered file that consumes the fixture: a test target source for
+    /// `test-fixture`, a recipe or book manifest for `recipe-fixture`.
+    pub(crate) consumer: Option<String>,
     pub(crate) reason: String,
 }
 
@@ -100,6 +103,7 @@ impl ExcludedManifests {
         json!({
             "path": self.exclusion.path,
             "class": self.exclusion.class.as_str(),
+            "consumer": self.exclusion.consumer,
             "reason": self.exclusion.reason,
             "manifests": self.manifests,
         })
@@ -155,7 +159,7 @@ pub(crate) fn contract_exclusions(metadata: &Value) -> Result<Vec<ContractExclus
             .ok_or_else(|| format!("every {CONTRACT_EXCLUSIONS_KEY} entry must be a table"))?;
         if let Some(key) = table
             .keys()
-            .find(|key| !matches!(key.as_str(), "path" | "class" | "reason"))
+            .find(|key| !matches!(key.as_str(), "path" | "class" | "consumer" | "reason"))
         {
             return Err(format!("contract exclusion has unexpected key `{key}`"));
         }
@@ -184,12 +188,31 @@ pub(crate) fn contract_exclusions(metadata: &Value) -> Result<Vec<ContractExclus
                 "contract exclusion {path:?} needs a non-empty reason"
             ));
         }
+        let consumer = match (class, entry.get("consumer")) {
+            (ExclusionClass::FocusedTestHarness, None) => None,
+            (ExclusionClass::FocusedTestHarness, Some(_)) => {
+                return Err(format!(
+                    "focused-test-harness exclusion {path:?} takes no consumer; its path \
+                     dependency on a contract package is its witness"
+                ));
+            }
+            (_, Some(Value::String(consumer))) if is_plain_relative(consumer) => {
+                Some(consumer.clone())
+            }
+            (_, _) => {
+                return Err(format!(
+                    "contract exclusion {path:?} needs a `consumer`: the repository-relative \
+                     covered file that consumes the fixture"
+                ));
+            }
+        };
         if !seen.insert(path.to_owned()) {
             return Err(format!("contract exclusion {path:?} is declared twice"));
         }
         exclusions.push(ContractExclusion {
             path: path.to_owned(),
             class,
+            consumer,
             reason: reason.to_owned(),
         });
     }
@@ -306,6 +329,10 @@ pub(crate) fn classify_manifests(
                 entry.exclusion.path
             ));
         }
+        for manifest in &entry.manifests {
+            worktree.owned_file(&worktree.root().join(manifest), "excluded manifest")?;
+        }
+        prove_consumer(worktree, metadata, &entry.exclusion)?;
         prove_exclusion(worktree.root(), entry, &package_roots)?;
     }
     reject_first_party_dependencies(worktree.root(), metadata, &excluded)?;
@@ -359,6 +386,90 @@ fn prove_exclusion(
                 "focused-test-harness package {manifest} has no path dependency on a contract package"
             ));
         }
+    }
+    Ok(())
+}
+
+/// Proves the declared consumer of a `test-fixture` or `recipe-fixture`: an
+/// owned file of a covered package, of the class's native kind, that names
+/// the fixture path (relative to its package or to itself).
+fn prove_consumer(
+    worktree: &Worktree,
+    metadata: &Value,
+    exclusion: &ContractExclusion,
+) -> Result<(), String> {
+    let Some(consumer) = &exclusion.consumer else {
+        return Ok(());
+    };
+    let repo = worktree.root();
+    let consumer_path = repo.join(consumer);
+    worktree.owned_file(&consumer_path, "exclusion consumer")?;
+    let mut owner = None;
+    for package in member_packages(metadata)? {
+        let manifest = package["manifest_path"].as_str().unwrap_or_default();
+        let Some(root) = Path::new(manifest).parent() else {
+            continue;
+        };
+        let native = match exclusion.class {
+            ExclusionClass::TestFixture => package["targets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|target| {
+                    target["kind"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|kind| kind == "test"))
+                })
+                .any(|target| target["src_path"].as_str() == consumer_path.to_str()),
+            ExclusionClass::RecipeFixture => {
+                consumer_path.starts_with(root)
+                    && consumer_path
+                        .file_name()
+                        .is_some_and(|name| name == "recipe.toml" || name == "book.toml")
+                    && consumer_path.strip_prefix(root).is_ok_and(|rest| {
+                        rest.components().any(|part| part.as_os_str() == "recipes")
+                    })
+            }
+            ExclusionClass::FocusedTestHarness => false,
+        };
+        if native {
+            owner = Some(root.to_path_buf());
+            break;
+        }
+    }
+    let Some(owner) = owner else {
+        return Err(format!(
+            "{} exclusion {} names consumer {consumer}, which is not a {} of a contract package",
+            exclusion.class.as_str(),
+            exclusion.path,
+            match exclusion.class {
+                ExclusionClass::TestFixture => "test target",
+                _ => "recipe or book manifest under `recipes/`",
+            }
+        ));
+    };
+    let fixture = repo.join(&exclusion.path);
+    let mut names = Vec::new();
+    for base in [owner.as_path(), consumer_path.parent().unwrap_or(repo)] {
+        if let Ok(relative) = fixture.strip_prefix(base) {
+            names.push(
+                relative
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/"),
+            );
+        }
+    }
+    let text = crate::owned::read_to_string(&consumer_path)
+        .map_err(|err| format!("exclusion consumer {consumer}: {err}"))?;
+    if !names
+        .iter()
+        .any(|name| !name.is_empty() && text.contains(name.as_str()))
+    {
+        return Err(format!(
+            "{} exclusion {} is not referenced by its consumer {consumer}",
+            exclusion.class.as_str(),
+            exclusion.path
+        ));
     }
     Ok(())
 }
@@ -419,7 +530,7 @@ fn read_manifest(path: &Path) -> Result<toml::Table, String> {
             path.display()
         ));
     }
-    fs::read_to_string(path)
+    crate::owned::read_to_string(path)
         .map_err(|err| format!("{}: {err}", path.display()))?
         .parse::<toml::Table>()
         .map_err(|err| format!("{}: {err}", path.display()))

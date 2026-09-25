@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Package grouping for repo-contract generators.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -21,7 +25,7 @@ pub(crate) fn load_or_derive_split_cut(
 ) -> Result<SplitCut, String> {
     let path = repo.join(CONTRACT_CUT_PATH);
     if path.is_file() {
-        return parse_split_cut(&fs::read_to_string(path).map_err(display_io)?);
+        return parse_split_cut(&crate::owned::read_to_string(path).map_err(display_io)?);
     }
     derive_split_cut(package_names)
 }

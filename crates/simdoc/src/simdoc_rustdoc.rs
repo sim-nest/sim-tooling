@@ -8,8 +8,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), String> {
-    let fingerprint = docbuild_fingerprint(root);
+pub(crate) fn run_api_docs(
+    root: &Path,
+    force_docbuild: bool,
+    resolver: Option<&crate::resolver_input::ResolverInput>,
+) -> Result<(), String> {
+    let fingerprint = docbuild_fingerprint(root, resolver);
     let cache = root.join("target").join(".simdoc-docbuild-fingerprint");
     let force = force_docbuild || env::var("SIMDOC_FORCE_DOCS").is_ok();
     if !force
@@ -26,29 +30,15 @@ pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), Stri
     // shared constellation resolver may make newer packages visible than the
     // standalone lock selected by the owning repository.
     command.args(["doc", "--locked", "--offline"]);
-    // The shared resolver route is taken only for a validated, locked
-    // workspace manifest; provenance records the same validated input.
-    match crate::resolver_input::resolver_input()? {
+    // The shared resolver route runs on the one validated identity: its
+    // retained manifest path and its retained package selection.
+    match resolver {
         Some(input) => {
-            let manifest_path = input
-                .manifest
-                .to_str()
-                .ok_or("shared resolver manifest path is not UTF-8")?
-                .to_owned();
-            command.args(["--manifest-path", &manifest_path]);
-            let allowed = meta_member_names(&manifest_path);
-            let packages: Vec<String> = if allowed.is_empty() {
-                Vec::new()
-            } else {
-                repo_packages(root)?
-                    .into_iter()
-                    .filter(|package| allowed.contains(package))
-                    .collect()
-            };
-            if packages.is_empty() {
+            command.arg("--manifest-path").arg(&input.manifest);
+            if input.selected.is_empty() {
                 command.arg("--workspace");
             } else {
-                for package in &packages {
+                for package in &input.selected {
                     command.args(["-p", package]);
                 }
             }
@@ -63,6 +53,9 @@ pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), Stri
         .status()
         .map_err(|err| format!("cargo doc: {err}"))?;
     if status.success() {
+        if let Some(input) = resolver {
+            input.remeasure(root)?;
+        }
         if let Some(current) = &fingerprint {
             let _ = fs::create_dir_all(cache.parent().unwrap_or(root));
             let _ = fs::write(&cache, current);
@@ -73,7 +66,10 @@ pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), Stri
     }
 }
 
-fn docbuild_fingerprint(root: &Path) -> Option<String> {
+fn docbuild_fingerprint(
+    root: &Path,
+    resolver: Option<&crate::resolver_input::ResolverInput>,
+) -> Option<String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -83,42 +79,50 @@ fn docbuild_fingerprint(root: &Path) -> Option<String> {
 
     let mut hasher = DefaultHasher::new();
     rustc_version().hash(&mut hasher);
-    crate::resolver_input::resolver_input()
-        .ok()
-        .flatten()
-        .map(|input| (input.manifest, input.lock_sha256))
+    resolver
+        .map(|input| (input.manifest.clone(), input.cache_key()))
         .hash(&mut hasher);
     for rel in &inputs {
         rel.hash(&mut hasher);
-        fs::read(root.join(rel)).ok()?.hash(&mut hasher);
+        crate::owned::read(root.join(rel)).ok()?.hash(&mut hasher);
     }
     Some(format!("{:016x}", hasher.finish()))
 }
 
+const SKIPPED_DIRECTORIES: [&str; 6] = [
+    ".git",
+    ".meta-workspace",
+    ".sim",
+    "target",
+    "generated-reports",
+    "split-reports",
+];
+
+/// Owned files beneath `dir` outside the skipped directories.
+fn owned_files_outside_skipped(dir: &Path) -> Vec<PathBuf> {
+    crate::owned::files_under(dir)
+        .into_iter()
+        .filter(|path| {
+            path.strip_prefix(dir).is_ok_and(|relative| {
+                relative.parent().is_none_or(|parent| {
+                    parent.components().all(|component| {
+                        !SKIPPED_DIRECTORIES
+                            .iter()
+                            .any(|skipped| component.as_os_str() == *skipped)
+                    })
+                })
+            })
+        })
+        .collect()
+}
+
 fn collect_doc_inputs(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), String> {
-    for entry in fs::read_dir(dir).map_err(|err| format!("read {}: {err}", dir.display()))? {
-        let entry = entry.map_err(|err| format!("read {}: {err}", dir.display()))?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if entry
-            .file_type()
-            .map_err(|err| format!("stat {}: {err}", path.display()))?
-            .is_dir()
-        {
-            if matches!(
-                name.as_ref(),
-                ".git"
-                    | ".meta-workspace"
-                    | ".sim"
-                    | "target"
-                    | "generated-reports"
-                    | "split-reports"
-            ) {
-                continue;
-            }
-            collect_doc_inputs(root, &path, files)?;
-        } else if name.ends_with(".rs") || name == "Cargo.toml" || name == "Cargo.lock" {
+    for path in owned_files_outside_skipped(dir) {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.ends_with(".rs") || name == "Cargo.toml" || name == "Cargo.lock" {
             files.push(relative_slash(root, &path)?);
         }
     }
@@ -134,9 +138,9 @@ fn rustc_version() -> String {
         .unwrap_or_default()
 }
 
-fn repo_packages(root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn repo_packages(root: &Path) -> Result<Vec<String>, String> {
     let manifest = root.join("Cargo.toml");
-    let text = fs::read_to_string(&manifest)
+    let text = crate::owned::read_to_string(&manifest)
         .map_err(|err| format!("read {}: {err}", manifest.display()))?;
     let mut names = Vec::new();
     if let Some(name) = package_name(&text) {
@@ -144,7 +148,7 @@ fn repo_packages(root: &Path) -> Result<Vec<String>, String> {
     }
     for member in workspace_members(&text) {
         for dir in expand_member(root, &member) {
-            if let Ok(member_text) = fs::read_to_string(dir.join("Cargo.toml"))
+            if let Ok(member_text) = crate::owned::read_to_string(dir.join("Cargo.toml"))
                 && let Some(name) = package_name(&member_text)
                 && !names.contains(&name)
             {
@@ -153,16 +157,6 @@ fn repo_packages(root: &Path) -> Result<Vec<String>, String> {
         }
     }
     Ok(names)
-}
-
-fn meta_member_names(manifest_path: &str) -> Vec<String> {
-    let Ok(text) = fs::read_to_string(manifest_path) else {
-        return Vec::new();
-    };
-    workspace_members(&text)
-        .into_iter()
-        .filter_map(|member| member.rsplit('/').next().map(str::to_owned))
-        .collect()
 }
 
 fn package_name(manifest: &str) -> Option<String> {
@@ -204,14 +198,20 @@ fn workspace_members(manifest: &str) -> Vec<String> {
 fn expand_member(root: &Path, member: &str) -> Vec<PathBuf> {
     match member.strip_suffix("/*") {
         Some(prefix) => {
-            let mut dirs = Vec::new();
-            if let Ok(entries) = fs::read_dir(root.join(prefix)) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        dirs.push(entry.path());
-                    }
-                }
-            }
+            let base = root.join(prefix);
+            let mut dirs = crate::owned::files_under(&base)
+                .into_iter()
+                .filter(|path| {
+                    path.strip_prefix(&base).is_ok_and(|relative| {
+                        relative.components().count() == 2
+                            && relative
+                                .file_name()
+                                .is_some_and(|name| name == "Cargo.toml")
+                    })
+                })
+                .filter_map(|path| path.parent().map(Path::to_path_buf))
+                .collect::<Vec<_>>();
+            dirs.sort();
             dirs
         }
         None => vec![root.join(member)],
@@ -231,7 +231,7 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{meta_member_names, package_name, workspace_members};
+    use super::{package_name, workspace_members};
 
     #[test]
     fn package_name_reads_package_section_only() {
@@ -266,10 +266,5 @@ mod tests {
     fn workspace_members_empty_when_absent_or_empty() {
         assert!(workspace_members("[package]\nname = \"x\"\n").is_empty());
         assert!(workspace_members("[workspace]\nmembers = [\n]\n").is_empty());
-    }
-
-    #[test]
-    fn meta_member_names_missing_manifest_is_empty() {
-        assert!(meta_member_names("/no/such/Cargo.toml").is_empty());
     }
 }

@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Discovery of addressable surfaces for SIM Index fragments.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -271,7 +275,7 @@ fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(text) = crate::owned::read_to_string(path) else {
             continue;
         };
         let text = non_test_source_text(&text);
@@ -297,7 +301,7 @@ fn surface_presets(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(text) = crate::owned::read_to_string(path) else {
             continue;
         };
         let text = non_test_source_text(&text);
@@ -337,7 +341,7 @@ fn package_sources_contain(repo: &Path, package: &PackageContract, needle: &str)
         if is_test_source(&rel) {
             return false;
         }
-        fs::read_to_string(path)
+        crate::owned::read_to_string(path)
             .map(|text| non_test_source_text(&text).contains(needle))
             .unwrap_or(false)
     })

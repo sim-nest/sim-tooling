@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Discovery of source anchors for SIM Index fragments.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -149,7 +153,7 @@ fn insert_export_anchors(
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(text) = crate::owned::read_to_string(path) else {
             continue;
         };
         let text = non_test_source_text(&text);
@@ -183,7 +187,7 @@ fn insert_rustdoc_anchors(
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(text) = crate::owned::read_to_string(&path) else {
             continue;
         };
         let scan = declaration::declaration_facts_in_module(
@@ -229,7 +233,7 @@ fn cli_verbs(repo: &Path, package: &PackageContract) -> BTreeSet<String> {
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(text) = crate::owned::read_to_string(path) else {
             continue;
         };
         let text = non_test_source_text(&text);
@@ -255,7 +259,7 @@ fn runtime_lib_names(repo: &Path, package: &PackageContract) -> Vec<String> {
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(text) = crate::owned::read_to_string(path) else {
             continue;
         };
         let text = non_test_source_text(&text);

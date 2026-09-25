@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Generated human-doc projection from a repo's SIM Index fragment.
 
 use std::{
     collections::BTreeMap,
-    fs,
     path::{Component, Path},
 };
 
@@ -140,7 +144,7 @@ fn render_specimen_source(
 ) -> Result<(), String> {
     reject_unsafe_relative_path(&specimen.path)?;
     let path = root.join(&specimen.path);
-    let text = fs::read_to_string(&path).map_err(|err| {
+    let text = crate::owned::read_to_string(&path).map_err(|err| {
         format!(
             "read worked example {} for feature {}: {err}",
             path.display(),

@@ -7,13 +7,17 @@
 //! describe, which encoder produced them, and which declared commands
 //! regenerate and validate them.
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
 use super::*;
 
-pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String> {
+pub(super) fn provenance(
+    repo: &Path,
+    metadata: &Value,
+    resolver: Option<&crate::resolver_input::ResolverInput>,
+) -> Result<Value, String> {
     let preserved = preserved_provenance(repo);
     let (input_paths, workspace_hash) = measure_inputs(repo)?;
     let source_commit = preserved_source_commit(&preserved, &workspace_hash)
@@ -28,7 +32,7 @@ pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String>
         "repo": repo_name(repo),
         "source_commit": source_commit,
         "source_remote": source_remote,
-        "execution": execution()?,
+        "execution": execution_with(resolver),
         "regeneration_command": regeneration.regeneration_command,
         "api_docs": "target/doc/",
         "generator": GENERATOR,
@@ -50,7 +54,7 @@ pub(super) fn measure_inputs(repo: &Path) -> Result<(Vec<String>, String), Strin
         .iter()
         .map(|path| rel_path(repo, path))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok((paths, stable_hash(repo, &inputs)))
+    Ok((paths, stable_hash(repo, &inputs)?))
 }
 
 pub(super) fn preserved_source_commit(preserved: &Value, workspace_hash: &str) -> Option<String> {
@@ -141,7 +145,7 @@ pub(super) fn sanitize_origin_url(origin: &str) -> Result<String, String> {
 
 fn preserved_provenance(repo: &Path) -> Value {
     let path = repo.join("docs/generated/provenance.json");
-    fs::read_to_string(path)
+    crate::owned::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| json!({}))

@@ -7,14 +7,13 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs, io,
+    io,
     path::{Path, PathBuf},
     process::Command,
 };
 
 use serde_json::{Value, json};
 use sim_codec_index::{IndexCodec, IndexForm};
-use sim_cookbook::fnv1a64_hex;
 use sim_index_vault_core::VaultProjection;
 
 use crate::{
@@ -34,16 +33,15 @@ use package_projection::*;
 // simdoc is the one contract engine: xtask's repo-contract, index-check,
 // crate-catalog, and validation-matrix routes run this locked executable
 // instead of compiling any of it.
-#[path = "repo_contract/path_guard.rs"]
-mod path_guard;
 #[path = "repo_contract/workspace_policy.rs"]
 mod workspace_policy;
 #[path = "repo_contract/workspaces.rs"]
 mod workspaces;
-#[path = "repo_contract/worktree.rs"]
-mod worktree;
+pub(crate) use regeneration::identity_lines;
 #[cfg(test)]
 pub(crate) use workspaces::SourceDependency;
+#[cfg(test)]
+pub(crate) use workspaces::project_metadata;
 use workspaces::*;
 pub(crate) use workspaces::{
     ContractPackages, PackageContract, cargo_metadata, contract_packages, workspace_package_names,
@@ -84,12 +82,10 @@ pub(crate) fn repo_contract_for_repo(
     repo: &Path,
 ) -> Result<RepoContractReport, String> {
     let repo = repo.canonicalize().map_err(display_io)?;
+    let scope = crate::owned::enter(&repo)?;
     let artifacts = contract_artifacts(&repo)?;
     let package_count = artifacts.package_count;
     let generated_dir = repo.join("docs/generated");
-    if !check {
-        fs::create_dir_all(&generated_dir).map_err(display_io)?;
-    }
 
     let mut report = RepoContractReport {
         packages: package_count,
@@ -99,8 +95,15 @@ pub(crate) fn repo_contract_for_repo(
         if name == "sim-index-fragment.claims.sx" {
             continue;
         }
-        write_or_check(&generated_dir.join(name), &content, check, &mut report)?;
+        write_or_check(
+            &repo,
+            &generated_dir.join(name),
+            &content,
+            check,
+            &mut report,
+        )?;
     }
+    scope.finish()?;
     Ok(report)
 }
 
@@ -109,8 +112,20 @@ pub(crate) struct ContractArtifacts {
     pub(crate) files: BTreeMap<&'static str, String>,
 }
 
+/// Builds the contract artifacts, reading the shared resolver input from the
+/// environment exactly once.
 pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, String> {
-    contract_artifacts_observed(repo, &|| {})
+    let resolver = crate::resolver_input::resolver_input(repo)?;
+    contract_artifacts_with(repo, resolver.as_ref())
+}
+
+/// Builds the contract artifacts with an already validated resolver input,
+/// the same retained identity the caller used for everything else.
+pub(crate) fn contract_artifacts_with(
+    repo: &Path,
+    resolver: Option<&crate::resolver_input::ResolverInput>,
+) -> Result<ContractArtifacts, String> {
+    contract_artifacts_observed(repo, resolver, &|| {})
 }
 
 /// Builds every contract artifact from one measured snapshot: the inputs the
@@ -118,10 +133,12 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
 /// them (`after_projections` runs in between), and any change refuses the run.
 fn contract_artifacts_observed(
     repo: &Path,
+    resolver: Option<&crate::resolver_input::ResolverInput>,
     after_projections: &dyn Fn(),
 ) -> Result<ContractArtifacts, String> {
     let repo = repo.canonicalize().map_err(display_io)?;
     let repo = repo.as_path();
+    let scope = crate::owned::enter(repo)?;
     let contract = contract_packages(repo)?;
     let metadata = &contract.metadata;
     let workspace_names = workspace_package_names(metadata)?;
@@ -137,7 +154,7 @@ fn contract_artifacts_observed(
     let exemptions = non_citizen_exemptions(repo);
     let recipes = recipe_books(repo, &package_groups);
     let cards = card_index(repo, &package_groups);
-    let provenance = provenance(repo, metadata)?;
+    let provenance = provenance(repo, metadata, resolver)?;
     let index_fragment = index_fragment::artifact(repo, &packages, &cards)?;
     let mut files = artifacts(ArtifactInputs {
         packages: &packages,
@@ -160,7 +177,11 @@ fn contract_artifacts_observed(
     );
     after_projections();
     ensure_inputs_unchanged(repo, &provenance)?;
-    path_guard::ensure_repository_local(repo, &files)?;
+    if let Some(resolver) = resolver {
+        resolver.remeasure(repo)?;
+    }
+    crate::publication::guard_all(repo, &files)?;
+    scope.finish()?;
 
     Ok(ContractArtifacts {
         package_count: packages.len(),
@@ -215,12 +236,14 @@ fn fragment_certificate_artifact(fragment: &str) -> Result<String, String> {
 }
 
 fn write_or_check(
+    repo: &Path,
     path: &Path,
     expected: &str,
     check: bool,
     report: &mut RepoContractReport,
 ) -> Result<(), String> {
-    let current = fs::read_to_string(path).unwrap_or_default();
+    crate::publication::ensure_ordinary_target(repo, path)?;
+    let current = crate::owned::read_to_string(path).unwrap_or_default();
     if current == expected {
         return Ok(());
     }
@@ -230,7 +253,7 @@ fn write_or_check(
             path.display()
         ));
     }
-    fs::write(path, expected).map_err(display_io)?;
+    crate::publication::write(repo, path, expected)?;
     report.artifacts_changed += 1;
     Ok(())
 }

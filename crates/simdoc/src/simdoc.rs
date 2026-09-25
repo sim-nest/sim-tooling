@@ -1,13 +1,18 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! The simdoc task: build or check the documentation lanes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cardspine_state::{CardSpineState, file_lane_digest, lane_digest, lanes_to_reencode};
-use crate::repo_contract::contract_artifacts;
+use crate::repo_contract::contract_artifacts_with;
+use crate::resolver_input::{ResolverInput, resolver_input};
 use crate::simdoc_rustdoc::run_api_docs;
 use crate::{CardSpine, DocEncoder, DocPosition};
 
@@ -17,14 +22,32 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
 }
 
 fn simdoc(root: &Path, check: bool, rustdoc: RustdocMode) -> Result<(), String> {
+    let root = &root
+        .canonicalize()
+        .map_err(|err| format!("{}: {err}", root.display()))?;
+    let scope = crate::owned::enter(root)?;
+    simdoc_lanes(root, check, rustdoc)?;
+    scope.finish()
+}
+
+fn simdoc_lanes(root: &Path, check: bool, rustdoc: RustdocMode) -> Result<(), String> {
+    // The shared resolver input is read and validated exactly once; the same
+    // retained identity drives cargo doc, keys its cache, and is recorded in
+    // provenance, and it is measured again once everything is produced.
+    let resolver = resolver_input(root)?;
     if rustdoc == RustdocMode::Skip {
         println!("simdoc: rustdoc skipped");
     } else {
-        run_api_docs(root, rustdoc == RustdocMode::Force)?;
+        run_api_docs(root, rustdoc == RustdocMode::Force, resolver.as_ref())?;
     }
     run_recipe_gate(root)?;
 
-    let expected = expected_files(root)?;
+    // The catalog runs first: it may add package metadata to manifests, which
+    // the contract's workspace hash binds. Its package set must then equal
+    // the contract's, so the two published views can never disagree.
+    let catalog = crate::crate_catalog::crate_catalog(check, Some(root.to_path_buf()))?;
+    let expected = expected_files(root, resolver.as_ref())?;
+    ensure_catalog_matches_contract(&catalog.package_names, &expected.files)?;
     let card_lanes_encoded = expected.card_lanes_encoded();
     if check {
         check_files(root, &expected.files)?;
@@ -40,6 +63,9 @@ fn simdoc(root: &Path, check: bool, rustdoc: RustdocMode) -> Result<(), String> 
             println!("simdoc: card content ids unchanged; reused card-backed lanes");
         }
         println!("simdoc: generated documentation lanes refreshed");
+    }
+    if let Some(input) = &resolver {
+        input.remeasure(root)?;
     }
     Ok(())
 }
@@ -136,9 +162,9 @@ fn run_recipe_gate(root: &Path) -> Result<(), String> {
     }
 }
 
-fn expected_files(root: &Path) -> Result<ExpectedFiles, String> {
+fn expected_files(root: &Path, resolver: Option<&ResolverInput>) -> Result<ExpectedFiles, String> {
     let repo = repo_name(root);
-    let contract_files = contract_artifacts(root)?.files;
+    let contract_files = contract_artifacts_with(root, resolver)?.files;
     let index_fragment_source = contract_files
         .get("sim-index-fragment.sx")
         .ok_or("repo-contract generator did not produce sim-index-fragment.sx")?;
@@ -270,30 +296,36 @@ pub(crate) fn collect_recipe_files(root: &Path) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
+const SKIPPED_DIRECTORIES: [&str; 6] = [
+    ".git",
+    ".meta-workspace",
+    ".sim",
+    "target",
+    "generated-reports",
+    "split-reports",
+];
+
+/// Owned files beneath `dir` outside the skipped directories.
+fn owned_files_outside_skipped(dir: &Path) -> Vec<PathBuf> {
+    crate::owned::files_under(dir)
+        .into_iter()
+        .filter(|path| {
+            path.strip_prefix(dir).is_ok_and(|relative| {
+                relative.parent().is_none_or(|parent| {
+                    parent.components().all(|component| {
+                        !SKIPPED_DIRECTORIES
+                            .iter()
+                            .any(|skipped| component.as_os_str() == *skipped)
+                    })
+                })
+            })
+        })
+        .collect()
+}
+
 fn visit_for_recipes(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), String> {
-    for entry in fs::read_dir(dir).map_err(|err| format!("read {}: {err}", dir.display()))? {
-        let entry = entry.map_err(|err| format!("read {}: {err}", dir.display()))?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if entry
-            .file_type()
-            .map_err(|err| format!("stat {}: {err}", path.display()))?
-            .is_dir()
-        {
-            if matches!(
-                name.as_ref(),
-                ".git"
-                    | ".meta-workspace"
-                    | ".sim"
-                    | "target"
-                    | "generated-reports"
-                    | "split-reports"
-            ) {
-                continue;
-            }
-            visit_for_recipes(root, &path, files)?;
-        } else if is_recipe_path(&path) {
+    for path in owned_files_outside_skipped(dir) {
+        if is_recipe_path(&path) {
             files.push(relative_slash(root, &path)?);
         }
     }
@@ -310,17 +342,42 @@ fn is_recipe_path(path: &Path) -> bool {
     })
 }
 
+/// Refuses a catalog whose package set differs from the contract's.
+fn ensure_catalog_matches_contract(
+    catalog: &[String],
+    files: &[GeneratedFile],
+) -> Result<(), String> {
+    let contract = files
+        .iter()
+        .find(|file| file.path == "docs/generated/repo-contract.json")
+        .and_then(|file| file.contents.as_deref())
+        .ok_or("simdoc produced no repo-contract.json")?;
+    let contract: serde_json::Value = serde_json::from_str(contract)
+        .map_err(|err| format!("parse generated repo-contract.json: {err}"))?;
+    let contract = contract["packages"]
+        .as_array()
+        .ok_or("generated repo-contract.json has no packages")?
+        .iter()
+        .filter_map(|package| package["name"].as_str().map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let catalog = catalog.iter().cloned().collect::<BTreeSet<_>>();
+    if contract != catalog {
+        return Err(format!(
+            "crate catalog and repo contract disagree on the package set: only in the \
+             contract {:?}; only in the catalog {:?}",
+            contract.difference(&catalog).collect::<Vec<_>>(),
+            catalog.difference(&contract).collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
 fn write_files(root: &Path, files: &[GeneratedFile]) -> Result<(), String> {
     for file in files {
         let Some(contents) = &file.contents else {
             continue;
         };
-        let path = root.join(&file.path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|err| format!("create {}: {err}", parent.display()))?;
-        }
-        fs::write(&path, contents).map_err(|err| format!("write {}: {err}", path.display()))?;
+        crate::publication::write(root, &root.join(&file.path), contents)?;
     }
     Ok(())
 }
@@ -331,8 +388,10 @@ fn check_files(root: &Path, files: &[GeneratedFile]) -> Result<(), String> {
         let Some(contents) = &file.contents else {
             continue;
         };
+        crate::publication::guard(root, &file.path, contents)?;
         let path = root.join(&file.path);
-        match fs::read_to_string(&path) {
+        crate::publication::ensure_ordinary_target(root, &path)?;
+        match crate::owned::read_to_string(&path) {
             Ok(current) if current == *contents => {}
             Ok(_) => stale.push(file.path.clone()),
             Err(_) => stale.push(file.path.clone()),
@@ -427,12 +486,27 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{RustdocMode, SimdocOptions, collect_recipe_files, expected_files};
+    #[test]
+    fn the_catalog_and_contract_must_name_the_same_packages() {
+        let contract = GeneratedFile::new(
+            "docs/generated/repo-contract.json",
+            r#"{"packages":[{"name":"app"},{"name":"tool"}]}"#,
+        );
+        let files = [contract];
+        ensure_catalog_matches_contract(&["tool".to_owned(), "app".to_owned()], &files).unwrap();
+        let err = ensure_catalog_matches_contract(&["app".to_owned()], &files).unwrap_err();
+        assert!(err.contains("only in the contract [\"tool\"]"), "{err}");
+    }
+
+    use super::{
+        GeneratedFile, RustdocMode, SimdocOptions, collect_recipe_files,
+        ensure_catalog_matches_contract, expected_files,
+    };
 
     #[test]
     fn simdoc_carries_every_repo_contract_projection() {
         let root = crate::tooling_checkout_root();
-        let paths = expected_files(&root)
+        let paths = expected_files(&root, None)
             .unwrap()
             .files
             .into_iter()

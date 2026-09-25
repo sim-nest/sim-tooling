@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use super::*;
 
 pub(super) fn targets(repo: &Path, package: &Value) -> Result<Vec<Value>, String> {
@@ -103,7 +108,7 @@ pub(super) fn docs_summary(package: &Value) -> Option<String> {
             .iter()
             .any(|kind| kind == "lib" || kind == "bin")
     })?;
-    let text = fs::read_to_string(target["src_path"].as_str()?).ok()?;
+    let text = crate::owned::read_to_string(target["src_path"].as_str()?).ok()?;
     let docs = crate_docs(&text);
     let summary = clean_summary(docs.split("\n\n").find(|part| !part.trim().is_empty())?);
     (!summary.is_empty()).then_some(summary)
@@ -198,16 +203,68 @@ pub(super) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-pub(super) fn stable_hash(repo: &Path, paths: &[PathBuf]) -> String {
-    let mut bytes = Vec::new();
-    for path in paths {
-        let rel = rel_path(repo, path).unwrap_or_else(|_| path.to_string_lossy().into_owned());
-        bytes.extend_from_slice(rel.as_bytes());
-        bytes.push(0);
-        if let Ok(file_bytes) = fs::read(path) {
-            bytes.extend_from_slice(&file_bytes);
-        }
-        bytes.push(0);
+/// Ceiling for the number of files the workspace hash binds.
+pub(super) const MAX_HASH_FILES: usize = 200_000;
+/// Ceiling for the total bytes the workspace hash binds.
+pub(super) const MAX_HASH_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// FNV-1a over `path NUL bytes NUL` for every input, streamed one file at a
+/// time (byte-identical to hashing the concatenation). Every read is
+/// mandatory: an unreadable input refuses the hash instead of being skipped.
+pub(super) fn stable_hash(repo: &Path, paths: &[PathBuf]) -> Result<String, String> {
+    stable_hash_bounded(repo, paths, MAX_HASH_FILES, MAX_HASH_BYTES)
+}
+
+pub(super) fn stable_hash_bounded(
+    repo: &Path,
+    paths: &[PathBuf],
+    max_files: usize,
+    max_bytes: u64,
+) -> Result<String, String> {
+    if paths.len() > max_files {
+        return Err(format!(
+            "the workspace hash would bind more than {max_files} files; refusing an unbounded contract"
+        ));
     }
-    fnv1a64_hex(&bytes)
+    let mut hash = StreamingFnv::new();
+    let mut total = 0_u64;
+    for path in paths {
+        let rel = rel_path(repo, path)?;
+        let bytes =
+            crate::owned::read(path).map_err(|err| format!("workspace hash input {rel}: {err}"))?;
+        total += bytes.len() as u64;
+        if total > max_bytes {
+            return Err(format!(
+                "the workspace hash would bind more than {max_bytes} bytes; refusing an unbounded contract"
+            ));
+        }
+        hash.update(rel.as_bytes());
+        hash.update(&[0]);
+        hash.update(&bytes);
+        hash.update(&[0]);
+    }
+    Ok(hash.hex())
+}
+
+/// Incremental FNV-1a (64-bit), identical to `sim_cookbook::fnv1a64_hex`
+/// over the concatenated input.
+pub(super) struct StreamingFnv(u64);
+
+impl StreamingFnv {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    pub(super) fn new() -> Self {
+        Self(Self::OFFSET)
+    }
+
+    pub(super) fn update(&mut self, bytes: &[u8]) {
+        self.0 = bytes.iter().fold(self.0, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(Self::PRIME)
+        });
+    }
+
+    pub(super) fn hex(&self) -> String {
+        format!("{:016x}", self.0)
+    }
 }

@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Package and browse-card scanning for the repo-contract task.
 
 use std::{
     collections::BTreeMap,
-    fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde_json::{Value, json};
@@ -61,7 +64,7 @@ pub(crate) fn card_index(repo: &Path, package_groups: &BTreeMap<String, String>)
 
 pub(crate) fn citizen_classes(repo: &Path) -> Vec<Value> {
     let path = repo.join("docs/generated/citizens.md");
-    let Ok(text) = fs::read_to_string(path) else {
+    let Ok(text) = crate::owned::read_to_string(path) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -89,7 +92,7 @@ pub(crate) fn non_citizen_exemptions(repo: &Path) -> Vec<Value> {
     files.sort();
     let mut out = Vec::new();
     for path in files {
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(text) = crate::owned::read_to_string(&path) else {
             continue;
         };
         let rel = rel_path(repo, &path);
@@ -164,7 +167,7 @@ fn recipe_book_entry(
     package: &str,
     package_groups: &BTreeMap<String, String>,
 ) -> Option<Value> {
-    let text = fs::read_to_string(path).ok()?;
+    let text = crate::owned::read_to_string(path).ok()?;
     let book = toml_string_value(&text, "book").unwrap_or_else(|| package.to_owned());
     let title = toml_string_value(&text, "title").unwrap_or_else(|| book.clone());
     let summary = toml_string_value(&text, "summary").unwrap_or_default();
@@ -182,61 +185,16 @@ fn recipe_book_entry(
     }))
 }
 
+/// The inputs the provenance workspace hash binds: every owned contract
+/// input of the worktree (see [`crate::owned`]).
 pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
-    if let Some(files) = git_visible_input_files(repo) {
-        return files;
-    }
-
-    let mut files = Vec::new();
-    for path in [
-        "Cargo.toml",
-        CONTRACT_CUT_PATH,
-        "features.toml",
-        "docs/generated/citizens.md",
-    ] {
-        let path = repo.join(path);
-        if path.is_file() {
-            files.push(path);
-        }
-    }
-    collect_named_files(repo, "Cargo.toml", &mut files);
-    collect_named_files(repo, "book.toml", &mut files);
-    collect_named_files(repo, "recipe.toml", &mut files);
-    files.extend(rust_files(repo));
-    files.sort();
-    files.dedup();
-    files
-}
-
-fn git_visible_input_files(repo: &Path) -> Option<Vec<PathBuf>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args([
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let paths = String::from_utf8(output.stdout).ok()?;
-    let mut files = paths
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(Path::new)
-        .filter(|path| is_contract_input(path))
-        .map(|path| repo.join(path))
-        .filter(|path| path.is_file())
+    let mut files = crate::owned::files_under(repo)
+        .into_iter()
+        .filter(|path| path.strip_prefix(repo).is_ok_and(is_contract_input))
         .collect::<Vec<_>>();
     files.sort();
     files.dedup();
-    Some(files)
+    files
 }
 
 fn is_contract_input(path: &Path) -> bool {
@@ -275,7 +233,7 @@ fn is_contract_input(path: &Path) -> bool {
 
 fn scan_reflection_cards(repo: &Path, cards: &mut BTreeMap<String, Value>) {
     let path = repo.join("src/runtime/browse/reflection.rs");
-    let Ok(text) = fs::read_to_string(path) else {
+    let Ok(text) = crate::owned::read_to_string(path) else {
         return;
     };
     let mut namespace: Option<String> = None;
@@ -307,7 +265,7 @@ fn scan_reflection_cards(repo: &Path, cards: &mut BTreeMap<String, Value>) {
 
 fn scan_surface_cards(repo: &Path, cards: &mut BTreeMap<String, Value>) {
     let path = repo.join("src/runtime/browse/surface_cards.rs");
-    let Ok(text) = fs::read_to_string(path) else {
+    let Ok(text) = crate::owned::read_to_string(path) else {
         return;
     };
     for line in text.lines() {
@@ -329,7 +287,7 @@ fn scan_static_card_keys(
     collect_named_files(&repo.join("crates"), "cards.rs", &mut paths);
     paths.sort();
     for path in paths {
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(text) = crate::owned::read_to_string(&path) else {
             continue;
         };
         let package = crate_for_path(&path, &root_package);
@@ -360,7 +318,7 @@ fn recipe_entries(repo: &Path, root: &Path, book: &str, package: &str) -> Vec<Va
     paths.sort();
     let mut out = Vec::new();
     for path in paths {
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(text) = crate::owned::read_to_string(&path) else {
             continue;
         };
         let id = toml_string_value(&text, "id").unwrap_or_else(|| {
@@ -414,35 +372,32 @@ fn rust_files(repo: &Path) -> Vec<PathBuf> {
 }
 
 fn collect_named_files(dir: &Path, name: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if should_descend(&path) {
-                collect_named_files(&path, name, out);
-            }
-        } else if path.file_name().and_then(|file| file.to_str()) == Some(name) {
-            out.push(path);
-        }
-    }
+    out.extend(
+        crate::owned::files_under(dir)
+            .into_iter()
+            .filter(|path| descends(dir, path))
+            .filter(|path| path.file_name().and_then(|file| file.to_str()) == Some(name)),
+    );
 }
 
 fn collect_ext_files(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    out.extend(
+        crate::owned::files_under(dir)
+            .into_iter()
+            .filter(|path| descends(dir, path))
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(extension)),
+    );
+}
+
+/// Whether every directory between `dir` and `path` is one a walk descends.
+fn descends(dir: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(dir) else {
+        return false;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if should_descend(&path) {
-                collect_ext_files(&path, extension, out);
-            }
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
-            out.push(path);
-        }
-    }
+    let parent = relative.parent().unwrap_or(Path::new(""));
+    parent
+        .components()
+        .all(|component| should_descend(Path::new(component.as_os_str())))
 }
 
 fn attr_value(attr: &str, key: &str) -> Option<String> {
@@ -502,7 +457,7 @@ fn crate_for_path(path: &Path, root_package: &str) -> String {
 }
 
 fn root_package_name(repo: &Path) -> String {
-    fs::read_to_string(repo.join("Cargo.toml"))
+    crate::owned::read_to_string(repo.join("Cargo.toml"))
         .ok()
         .and_then(|text| toml_string_value(&text, "name"))
         .unwrap_or_else(|| {
@@ -532,6 +487,7 @@ mod tests {
     use std::{
         collections::BTreeMap,
         env, fs,
+        process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -578,7 +534,8 @@ mod tests {
                 .success()
         );
 
-        let paths = input_files(&root)
+        let scope = crate::owned::enter(&root).unwrap();
+        let paths = input_files(&root.canonicalize().unwrap())
             .into_iter()
             .map(|path| {
                 path.strip_prefix(&root)
@@ -599,6 +556,7 @@ mod tests {
         assert!(!paths.contains(&"sim-tooling/Cargo.toml".to_owned()));
         assert!(!paths.contains(&"sim-tooling/src/lib.rs".to_owned()));
         assert!(!paths.contains(&"ignored-helper/Cargo.toml".to_owned()));
+        scope.finish().unwrap();
 
         fs::remove_dir_all(root).unwrap();
     }

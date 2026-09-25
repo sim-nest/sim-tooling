@@ -1,6 +1,11 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Prose-only feature overlay loading for SIM Index fragments.
 
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, path::Path};
 
 #[cfg(test)]
 use sim_index_core::check_index_doc;
@@ -170,8 +175,8 @@ fn remove_covered_drafts(doc: &mut IndexDoc) {
 }
 
 fn parse_file(path: &Path) -> Result<AuthoredOverlay, String> {
-    let source =
-        fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let source = crate::owned::read_to_string(path)
+        .map_err(|err| format!("read {}: {err}", path.display()))?;
     parse_overlay(&source).map_err(|err| format!("parse {}: {err}", path.display()))
 }
 

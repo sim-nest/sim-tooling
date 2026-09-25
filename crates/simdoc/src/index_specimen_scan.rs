@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Discovery of runnable recipe and conformance specimens for SIM Index fragments.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -64,7 +68,7 @@ pub(crate) fn discovered(repo: &Path, packages: &[PackageContract]) -> Vec<Disco
         if checked_recipe_paths.contains(&rel) {
             continue;
         }
-        let language = fs::read_to_string(&path)
+        let language = crate::owned::read_to_string(&path)
             .ok()
             .and_then(|text| toml_string_value(&text, "codec"))
             .and_then(|value| language_value(&value));
@@ -86,7 +90,7 @@ pub(crate) fn discovered(repo: &Path, packages: &[PackageContract]) -> Vec<Disco
 
     for path in conformance_rust_files(repo) {
         let rel = rel_path(repo, &path);
-        let text = fs::read_to_string(&path).unwrap_or_default();
+        let text = crate::owned::read_to_string(&path).unwrap_or_default();
         let language = conformance_language(&rel, &text);
         insert_specimen(
             &mut specimens,
@@ -185,7 +189,7 @@ fn conformance_rust_files(repo: &Path) -> Vec<PathBuf> {
     collect_ext_files(&repo.join("crates"), "rs", &mut files);
     files.retain(|path| {
         let rel = rel_path(repo, path);
-        fs::read_to_string(path)
+        crate::owned::read_to_string(path)
             .map(|text| is_conformance_source(&rel, &text))
             .unwrap_or(false)
     });
@@ -222,7 +226,7 @@ fn language_value(value: &str) -> Option<String> {
 }
 
 fn recipe_harness(repo: &Path) -> Option<String> {
-    if fs::read_to_string(repo.join("xtask/src/main.rs"))
+    if crate::owned::read_to_string(repo.join("xtask/src/main.rs"))
         .map(|text| text.contains("\"check-recipes\""))
         .unwrap_or(false)
     {
@@ -273,35 +277,32 @@ fn without_quoted_strings(text: &str) -> String {
 }
 
 fn collect_named_files(dir: &Path, name: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if should_descend(&path) {
-                collect_named_files(&path, name, out);
-            }
-        } else if path.file_name().and_then(|file| file.to_str()) == Some(name) {
-            out.push(path);
-        }
-    }
+    out.extend(
+        crate::owned::files_under(dir)
+            .into_iter()
+            .filter(|path| descends(dir, path))
+            .filter(|path| path.file_name().and_then(|file| file.to_str()) == Some(name)),
+    );
 }
 
 fn collect_ext_files(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    out.extend(
+        crate::owned::files_under(dir)
+            .into_iter()
+            .filter(|path| descends(dir, path))
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(extension)),
+    );
+}
+
+/// Whether every directory between `dir` and `path` is one a walk descends.
+fn descends(dir: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(dir) else {
+        return false;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if should_descend(&path) {
-                collect_ext_files(&path, extension, out);
-            }
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
-            out.push(path);
-        }
-    }
+    let parent = relative.parent().unwrap_or(Path::new(""));
+    parent
+        .components()
+        .all(|component| should_descend(Path::new(component.as_os_str())))
 }
 
 fn should_descend(path: &Path) -> bool {

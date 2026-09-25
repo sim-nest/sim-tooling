@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
@@ -28,7 +33,8 @@ impl CardSpineState {
 
     pub(crate) fn read(root: &Path) -> Result<Option<Self>, String> {
         let path = state_path(root);
-        let text = match fs::read_to_string(&path) {
+        // A local cache under the gitignored `.sim/`, never published.
+        let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(format!("read {}: {err}", path.display())),
@@ -78,7 +84,7 @@ pub(crate) fn lane_digest(contents: &str) -> String {
 }
 
 pub(crate) fn file_lane_digest(root: &Path, lane: &str) -> Option<String> {
-    fs::read(root.join(lane))
+    crate::owned::read(root.join(lane))
         .ok()
         .map(|bytes| format!("sha256:{}", content_digest(&bytes)))
 }

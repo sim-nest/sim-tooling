@@ -85,7 +85,8 @@ impl Worktree {
         &self.root
     }
 
-    /// Repository-relative paths of every visible `Cargo.toml`.
+    /// Repository-relative paths of every listed `Cargo.toml` that exists;
+    /// each still has to pass [`Worktree::owned_file`] before it is used.
     pub(crate) fn manifests(&self) -> BTreeSet<String> {
         self.visible
             .iter()
@@ -94,28 +95,55 @@ impl Worktree {
                     .file_name()
                     .is_some_and(|name| name == "Cargo.toml")
             })
-            .filter(|path| self.root.join(path.as_str()).is_file())
+            .filter(|path| fs::symlink_metadata(self.root.join(path.as_str())).is_ok())
             .cloned()
             .collect()
     }
 
-    /// Requires `path` to be an ordinary file owned by this worktree and
+    /// Every listed ordinary file beneath `dir`, in path order. Symlinks,
+    /// gitlinks, nested repositories, and ignored files are never listed, so
+    /// nothing is reached through them.
+    pub(crate) fn files_under(&self, dir: &Path) -> Vec<PathBuf> {
+        let Some(prefix) = self.lexical_relative(dir) else {
+            return Vec::new();
+        };
+        self.visible
+            .iter()
+            .filter(|path| {
+                prefix.is_empty()
+                    || path
+                        .strip_prefix(prefix.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .map(|path| self.root.join(path))
+            .filter(|path| self.owned_file(path, "file").is_ok())
+            .collect()
+    }
+
+    /// Requires `path` to be an ordinary file owned by this worktree, reached
+    /// from the repository root without passing through any symlink, and
     /// returns its repository-relative path.
     pub(crate) fn owned_file(&self, path: &Path, role: &str) -> Result<String, String> {
-        let metadata = fs::symlink_metadata(path)
-            .map_err(|err| format!("{role} {}: {err}", path.display()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(format!("{role} {} is not an ordinary file", path.display()));
+        let relative = self
+            .lexical_relative(path)
+            .filter(|relative| !relative.is_empty())
+            .ok_or_else(|| format!("{role} {} resolves outside the repository", path.display()))?;
+        let mut current = self.root.clone();
+        let components = Path::new(&relative).components().collect::<Vec<_>>();
+        for (index, component) in components.iter().enumerate() {
+            current.push(component);
+            let metadata = fs::symlink_metadata(&current)
+                .map_err(|err| format!("{role} {relative}: {err}"))?;
+            let last = index + 1 == components.len();
+            if last && (metadata.file_type().is_symlink() || !metadata.is_file()) {
+                return Err(format!("{role} {relative} is not an ordinary file"));
+            }
+            if !last && metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "{role} {relative} is reached through a symlink and resolves outside the repository's own files"
+                ));
+            }
         }
-        let canonical = path
-            .canonicalize()
-            .map_err(|err| format!("{role} {}: {err}", path.display()))?;
-        let relative = canonical
-            .strip_prefix(&self.root)
-            .map_err(|_| format!("{role} {} resolves outside the repository", path.display()))?
-            .to_str()
-            .ok_or_else(|| format!("{role} {} is not UTF-8", path.display()))?
-            .replace(std::path::MAIN_SEPARATOR, "/");
         if !self.visible.contains(&relative) {
             return Err(format!(
                 "{role} {relative} is not a file of this Git worktree \
@@ -123,6 +151,21 @@ impl Worktree {
             ));
         }
         Ok(relative)
+    }
+}
+
+impl Worktree {
+    /// `path` relative to the root without following anything: `None` when it
+    /// is not lexically beneath the root or contains `..`.
+    fn lexical_relative(&self, path: &Path) -> Option<String> {
+        let relative = path.strip_prefix(&self.root).ok()?;
+        if !relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        Some(relative.to_str()?.replace(std::path::MAIN_SEPARATOR, "/"))
     }
 }
 

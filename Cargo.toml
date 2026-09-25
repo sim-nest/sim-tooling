@@ -78,3 +78,8 @@ toml = "0.8"
 
 [lints]
 workspace = true
+
+[workspace.metadata.sim.encoder]
+source_sha256 = "f41198c08ada115be277d5b936236671b8fd15380d52c5b74f853457f74d6a54"
+lock_sha256 = "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678"
+toolchain = "1.96.0"

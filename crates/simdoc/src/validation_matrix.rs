@@ -9,7 +9,7 @@
 //! inside the locked contract engine; xtask's `validation-matrix` route runs
 //! this executable.
 
-use std::{collections::BTreeSet, fs, io, path::Path};
+use std::{collections::BTreeSet, io, path::Path};
 
 use serde_json::Value;
 
@@ -67,6 +67,8 @@ pub(crate) fn validation_matrix_for_repo(
     check: bool,
     repo: &Path,
 ) -> Result<ValidationMatrixReport, String> {
+    let repo = &repo.canonicalize().map_err(display_io)?;
+    let scope = crate::owned::enter(repo)?;
     let contract = contract_packages(repo)?;
     let cut = load_or_derive_split_cut(repo, &workspace_package_names(&contract.metadata)?)?;
     let rows = matrix_rows(repo, &contract, &cut)?;
@@ -77,10 +79,10 @@ pub(crate) fn validation_matrix_for_repo(
         artifacts_changed: 0,
     };
     let path = repo.join(OUTPUT);
-    if !check && let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(display_io)?;
-    }
-    write_or_check(&path, &content, check, &mut report)?;
+    crate::publication::guard(repo, OUTPUT, &content)?;
+    crate::publication::ensure_ordinary_target(repo, &path)?;
+    write_or_check(repo, &path, &content, check, &mut report)?;
+    scope.finish()?;
     Ok(report)
 }
 
@@ -297,19 +299,20 @@ fn package_features(package: &Value) -> BTreeSet<String> {
 }
 
 fn write_or_check(
+    repo: &Path,
     path: &Path,
     content: &str,
     check: bool,
     report: &mut ValidationMatrixReport,
 ) -> Result<(), String> {
-    match fs::read_to_string(path) {
+    match crate::owned::read_to_string(path) {
         Ok(existing) if existing == content => Ok(()),
         Ok(_) | Err(_) if check => Err(format!(
             "{} is stale; run cargo run -p xtask -- validation-matrix",
             path.display()
         )),
         Ok(_) | Err(_) => {
-            fs::write(path, content).map_err(display_io)?;
+            crate::publication::write(repo, path, content)?;
             report.artifacts_changed += 1;
             Ok(())
         }

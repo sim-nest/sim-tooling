@@ -88,6 +88,7 @@ mod json_render;
 mod platform_inventory;
 mod recipe_discovery;
 mod sealed_resources;
+mod simdoc_pin;
 mod simdoc_route;
 
 #[cfg(test)]

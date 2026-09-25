@@ -6,7 +6,7 @@
 use crate::{
     atelier, bench, build_inputs, citizenize, file_size_gate, index_check, index_doctor,
     index_find, index_fixpoint, index_merge, index_overlap, index_render, index_route, index_seed,
-    index_snapshot, index_vault, platform_inventory, sealed_resources, simdoc_route,
+    index_snapshot, index_vault, platform_inventory, sealed_resources, simdoc_pin, simdoc_route,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -117,6 +117,10 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
         [_, command, rest @ ..] if command == "validation-matrix" || command == "crate-catalog" => {
             simdoc_route::run_forwarded(command, rest)
         }
+        // The explicit, reviewed update of the committed engine identity.
+        [_, command, rest @ ..] if command == "simdoc-pin" => {
+            simdoc_pin::run(&simdoc_route::tooling_root(), rest)
+        }
         [_, command, ..] if command == "citizenize" => citizenize::run(args),
         [program, ..] => Err(format!("usage: {program} <{USAGE_COMMANDS}>")),
         [] => Err(format!("usage: xtask <{USAGE_COMMANDS}>")),
@@ -127,6 +131,7 @@ const USAGE_COMMANDS: &str = concat!(
     "repo-contract [--check] [--repo <path>]",
     "|validation-matrix [--check] [--repo <path>]",
     "|crate-catalog [--check] [--repo <path>]",
+    "|simdoc-pin [--check]",
     "|citizenize [--local-paths] <crate-name-or-path>",
     "|check-pack (moved to sim-check-pack-xtask)",
     "|build-inputs <select|derive|materialize|finalize> ...",

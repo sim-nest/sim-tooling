@@ -14,8 +14,31 @@ use serde_json::{Value, json};
 use sim_codec_index::{IndexCodec, IndexForm};
 
 use super::*;
+use sim_cookbook::fnv1a64_hex;
 
 // conformance: generated repository contracts are canonical, bounded, and side-effect free.
+
+#[test]
+fn streamed_hash_is_the_concatenated_fnv_and_reads_are_mandatory() {
+    let root = temp_root("sim-tooling-hash-stream");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/a.rs"), "alpha").unwrap();
+    fs::write(root.join("src/b.rs"), "beta").unwrap();
+    let paths = [root.join("src/a.rs"), root.join("src/b.rs")];
+
+    assert_eq!(
+        stable_hash(&root, &paths).unwrap(),
+        fnv1a64_hex(b"src/a.rs\0alpha\0src/b.rs\0beta\0")
+    );
+    let err = stable_hash(&root, &[root.join("src/missing.rs")]).unwrap_err();
+    assert!(err.contains("workspace hash input src/missing.rs"), "{err}");
+    let err = stable_hash_bounded(&root, &paths, 1, u64::MAX).unwrap_err();
+    assert!(err.contains("more than 1 files"), "{err}");
+    let err = stable_hash_bounded(&root, &paths, 10, 6).unwrap_err();
+    assert!(err.contains("more than 6 bytes"), "{err}");
+
+    fs::remove_dir_all(root).unwrap();
+}
 
 #[test]
 fn stable_hash_uses_repo_relative_paths() {
@@ -26,8 +49,8 @@ fn stable_hash_uses_repo_relative_paths() {
     fs::write(left.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
     fs::write(right.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
 
-    let left_hash = stable_hash(&left, &[left.join("src/lib.rs")]);
-    let right_hash = stable_hash(&right, &[right.join("src/lib.rs")]);
+    let left_hash = stable_hash(&left, &[left.join("src/lib.rs")]).unwrap();
+    let right_hash = stable_hash(&right, &[right.join("src/lib.rs")]).unwrap();
 
     assert_eq!(left_hash, right_hash);
 
@@ -314,7 +337,7 @@ fn a_fixture_contract_is_generated_from_one_measured_snapshot() {
         "Cargo.toml",
         &repo.read("Cargo.toml").replace(
             "contract-workspaces = [\"nested\"]\n",
-            "contract-workspaces = [\"nested\"]\ncontract-exclusions = [{ path = \"tests/ui\", class = \"test-fixture\", reason = \"compile-fail cases\" }]\n",
+            "contract-workspaces = [\"nested\"]\ncontract-exclusions = [{ path = \"tests/ui\", class = \"test-fixture\", consumer = \"tests/ui.rs\", reason = \"compile-fail cases\" }]\n",
         ),
     );
     repo.write(
@@ -322,6 +345,7 @@ fn a_fixture_contract_is_generated_from_one_measured_snapshot() {
         "[package]\nname = \"case\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
     );
     repo.write("tests/ui/case/src/lib.rs", "");
+    repo.write("tests/ui.rs", "// runs tests/ui\n");
     repo.commit();
     let artifacts = contract_artifacts(repo.path()).unwrap();
     let contract = generated_json(&artifacts, "repo-contract.json");
@@ -330,13 +354,14 @@ fn a_fixture_contract_is_generated_from_one_measured_snapshot() {
         json!([{
             "path": "tests/ui",
             "class": "test-fixture",
+            "consumer": "tests/ui.rs",
             "reason": "compile-fail cases",
             "manifests": ["tests/ui/case/Cargo.toml"],
         }])
     );
     assert!(artifacts.files["repo-contract.md"].contains("| `tests/ui` | `test-fixture` | 1 |"));
 
-    let err = contract_artifacts_observed(repo.path(), &|| {
+    let err = contract_artifacts_observed(repo.path(), None, &|| {
         repo.write(
             "src/lib.rs",
             "//! Fixture application.\n\npub fn changed() {}\n",

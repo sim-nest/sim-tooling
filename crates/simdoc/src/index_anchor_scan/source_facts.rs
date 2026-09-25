@@ -1,6 +1,10 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -40,7 +44,7 @@ pub(crate) fn source_facts(
             if is_test_source(&rel) {
                 continue;
             }
-            let text = fs::read_to_string(path)
+            let text = crate::owned::read_to_string(path)
                 .map_err(|error| format!("read reachable Rust source {rel}: {error}"))?;
             let scan = declaration_facts_in_module(
                 &rel,
@@ -175,7 +179,7 @@ fn walk_modules(
     found
         .entry(source.clone())
         .or_insert_with(|| prefix.to_owned());
-    let text = fs::read_to_string(&source)
+    let text = crate::owned::read_to_string(&source)
         .map_err(|error| format!("read reachable Rust module {}: {error}", source.display()))?;
     let parsed = syn::parse_file(&text)
         .map_err(|error| format!("parse reachable Rust module {}: {error}", source.display()))?;
@@ -427,6 +431,7 @@ fn protocol_relation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn fixture_root(name: &str) -> PathBuf {

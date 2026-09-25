@@ -20,12 +20,14 @@ use super::workspace_policy::{
     ExcludedManifests, MAX_CONTRACT_PACKAGES, classify_manifests, contract_exclusions,
     declared_contract_workspaces, reject_symlinked_path,
 };
-use super::worktree::Worktree;
 use super::*;
 use crate::bounded_process::run_bounded;
+use crate::worktree::Worktree;
 
-/// Ceiling for one `cargo metadata --no-deps` document.
+/// Ceiling for one `cargo metadata --no-deps` document as read.
 const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
+/// Ceiling for the projected metadata retained across every workspace.
+const MAX_RETAINED_METADATA_BYTES: usize = 64 * 1024 * 1024;
 /// Ceiling for Cargo diagnostics.
 const MAX_DIAGNOSTIC_BYTES: usize = 1024 * 1024;
 
@@ -93,7 +95,8 @@ pub(crate) struct SourceDependency {
 pub(crate) fn contract_packages(repo: &Path) -> Result<ContractPackages, String> {
     let worktree = Worktree::open(repo)?;
     let repo = worktree.root().to_path_buf();
-    let mut merged = workspace_metadata(&repo.join("Cargo.toml"))?;
+    let mut retained = 0;
+    let mut merged = workspace_metadata(&repo.join("Cargo.toml"), &mut retained)?;
     if workspace_root(&merged)? != repo {
         return Err(format!(
             "{} is not the root of its Cargo workspace",
@@ -106,7 +109,7 @@ pub(crate) fn contract_packages(repo: &Path) -> Result<ContractPackages, String>
         reject_symlinked_path(&repo, relative)?;
         let root = repo.join(relative);
         worktree.owned_file(&root.join("Cargo.toml"), "contract workspace manifest")?;
-        let nested = workspace_metadata(&root.join("Cargo.toml"))?;
+        let nested = workspace_metadata(&root.join("Cargo.toml"), &mut retained)?;
         if workspace_root(&nested)? != root {
             return Err(format!(
                 "contract workspace {relative} is not a Cargo workspace root"
@@ -142,7 +145,9 @@ fn workspace_root(metadata: &Value) -> Result<PathBuf, String> {
         .map_err(|err| format!("workspace root {root}: {err}"))
 }
 
-fn workspace_metadata(manifest: &Path) -> Result<Value, String> {
+/// Reads one workspace's `cargo metadata --no-deps` and retains only its
+/// bounded projection, charging it against `retained`.
+fn workspace_metadata(manifest: &Path, retained: &mut usize) -> Result<Value, String> {
     let mut command = Command::new("cargo");
     command
         .args([
@@ -169,7 +174,88 @@ fn workspace_metadata(manifest: &Path) -> Result<Value, String> {
             String::from_utf8_lossy(&captured.stderr)
         ));
     }
-    serde_json::from_slice(&captured.stdout).map_err(|err| format!("parse cargo metadata: {err}"))
+    let document: Value = serde_json::from_slice(&captured.stdout)
+        .map_err(|err| format!("parse cargo metadata: {err}"))?;
+    drop(captured);
+    let projected = project_metadata(&document);
+    *retained += serde_json::to_vec(&projected)
+        .map_err(|err| format!("measure cargo metadata: {err}"))?
+        .len();
+    if *retained > MAX_RETAINED_METADATA_BYTES {
+        return Err(format!(
+            "projected cargo metadata exceeds {MAX_RETAINED_METADATA_BYTES} bytes across the \
+             contract workspaces; refusing an unbounded contract"
+        ));
+    }
+    Ok(projected)
+}
+
+/// The fields of `cargo metadata` the contract engine reads, and nothing
+/// else: the workspace root and members, the `sim` workspace metadata, and
+/// per package its identity, manifest, description, publish setting,
+/// features, targets, and dependencies.
+pub(crate) fn project_metadata(document: &Value) -> Value {
+    let pick = |value: &Value, keys: &[&str]| {
+        Value::Object(
+            keys.iter()
+                .filter_map(|key| {
+                    value
+                        .get(*key)
+                        .map(|field| ((*key).to_owned(), field.clone()))
+                })
+                .collect(),
+        )
+    };
+    let packages = document["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|package| {
+            let mut projected = pick(
+                package,
+                &[
+                    "id",
+                    "name",
+                    "version",
+                    "source",
+                    "manifest_path",
+                    "description",
+                    "publish",
+                    "features",
+                ],
+            );
+            projected["targets"] = Value::Array(
+                package["targets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|target| pick(target, &["name", "kind", "crate_types", "src_path"]))
+                    .collect(),
+            );
+            projected["dependencies"] = Value::Array(
+                package["dependencies"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|dependency| {
+                        pick(
+                            dependency,
+                            &[
+                                "name", "source", "kind", "optional", "rename", "target", "path",
+                            ],
+                        )
+                    })
+                    .collect(),
+            );
+            projected
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "packages": packages,
+        "workspace_members": document["workspace_members"],
+        "workspace_root": document["workspace_root"],
+        "metadata": {"sim": document["metadata"]["sim"]},
+    })
 }
 
 fn append_workspace(merged: &mut Value, nested: Value) -> Result<(), String> {

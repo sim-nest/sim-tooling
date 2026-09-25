@@ -35,10 +35,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::{
-    content_digest::content_digest,
-    resolver_input::{ResolverInput, resolver_input},
-};
+use crate::{content_digest::content_digest, resolver_input::ResolverInput};
 
 const DOCS_COMMAND_KEY: &str = "docs-command";
 const VALIDATION_COMMANDS_KEY: &str = "validation-commands";
@@ -84,10 +81,21 @@ pub(crate) fn toolchain_identity() -> Value {
     })
 }
 
-/// What produced the artifacts, with the environment's validated shared
-/// resolver input if one is set.
-pub(crate) fn execution() -> Result<Value, String> {
-    Ok(execution_with(resolver_input()?.as_ref()))
+/// The build-time identity as `key=value` lines, the format launchers parse
+/// without any dependency to decide whether to trust this executable.
+pub(crate) fn identity_lines() -> String {
+    format!(
+        "package={}\nversion={}\nsource_sha256={}\nlock_sha256={}\n\
+         rustc_release={}\nrustc_commit={}\ncargo_release={}\ncargo_commit={}\n",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        env!("SIMDOC_SOURCE_SHA256"),
+        content_digest(ENCODER_LOCK),
+        env!("SIMDOC_RUSTC_RELEASE"),
+        env!("SIMDOC_RUSTC_COMMIT"),
+        env!("SIMDOC_CARGO_RELEASE"),
+        env!("SIMDOC_CARGO_COMMIT"),
+    )
 }
 
 /// What produced the artifacts. Every field is a version or a content digest:

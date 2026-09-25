@@ -56,17 +56,18 @@ fn contract_workspaces_refuse_invalid_declarations() {
 #[test]
 fn contract_exclusions_are_typed_and_reasoned() {
     let metadata = json!({"metadata": {"sim": {"contract-exclusions": [
-        {"path": "tests/ui", "class": "test-fixture", "reason": "compile-fail fixtures"}
+        {"path": "tests/ui", "class": "test-fixture", "consumer": "tests/ui.rs", "reason": "compile-fail fixtures"}
     ]}}});
     assert_eq!(
         contract_exclusions(&metadata).unwrap(),
         [ContractExclusion {
             path: "tests/ui".to_owned(),
             class: ExclusionClass::TestFixture,
+            consumer: Some("tests/ui.rs".to_owned()),
             reason: "compile-fail fixtures".to_owned(),
         }]
     );
-    let entry = |path: &str, class: &str, reason: &str| json!({"path": path, "class": class, "reason": reason});
+    let entry = |path: &str, class: &str, reason: &str| json!({"path": path, "class": class, "consumer": "tests/ui.rs", "reason": reason});
     for (declared, expected) in [
         (json!({"path": "tests"}), "must be an array"),
         (json!(["tests"]), "must be a table"),
@@ -77,6 +78,14 @@ fn contract_exclusions_are_typed_and_reasoned() {
         (
             json!([{"class": "test-fixture", "reason": "r"}]),
             "needs a string `path`",
+        ),
+        (
+            json!([{"path": "tests", "class": "test-fixture", "reason": "r"}]),
+            "needs a `consumer`",
+        ),
+        (
+            json!([{"path": "t", "class": "focused-test-harness", "consumer": "c.rs", "reason": "r"}]),
+            "takes no consumer",
         ),
         (
             json!([entry("../x", "test-fixture", "r")]),
@@ -127,6 +136,26 @@ fn declared_nested_workspace_joins_the_contract() {
 }
 
 #[test]
+fn discovery_retains_only_the_projected_metadata() {
+    let repo = Repo::new("policy-projection");
+    repo.root_package("app", r#"contract-workspaces = ["nested"]"#);
+    repo.nested_workspace("nested", &["tool"]);
+    repo.package("nested/tool", "tool", "");
+
+    let metadata = cargo_metadata(&repo.root).unwrap();
+    let text = metadata.to_string();
+    for dropped in [
+        "\"target_directory\"",
+        "\"resolve\"",
+        "\"authors\"",
+        "\"edition\"",
+    ] {
+        assert!(!text.contains(dropped), "{dropped} retained");
+    }
+    assert_eq!(metadata["packages"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn contract_workspaces_refuse_a_package_in_two_workspaces() {
     let repo = Repo::new("policy-duplicate");
     repo.root_package("dup", r#"contract-workspaces = ["nested"]"#);
@@ -161,9 +190,13 @@ fn every_owned_manifest_is_covered_or_excluded_and_projected() {
         "{err}"
     );
 
+    repo.write(
+        "tests/ui.rs",
+        "#[test]\nfn cases() { run(\"tests/ui\"); }\n",
+    );
     repo.root_package(
         "app",
-        r#"contract-exclusions = [{ path = "tests/ui", class = "test-fixture", reason = "compile-fail cases" }]"#,
+        r#"contract-exclusions = [{ path = "tests/ui", class = "test-fixture", consumer = "tests/ui.rs", reason = "compile-fail cases" }]"#,
     );
     let contract = contract_packages(&repo.root).unwrap();
     let names = workspace_package_names(&contract.metadata).unwrap();
@@ -177,6 +210,7 @@ fn every_owned_manifest_is_covered_or_excluded_and_projected() {
         [json!({
             "path": "tests/ui",
             "class": "test-fixture",
+            "consumer": "tests/ui.rs",
             "reason": "compile-fail cases",
             "manifests": ["tests/ui/Cargo.toml", "tests/ui/case/Cargo.toml"],
         })]
@@ -185,8 +219,8 @@ fn every_owned_manifest_is_covered_or_excluded_and_projected() {
     repo.root_package(
         "app",
         r#"contract-exclusions = [
-    { path = "tests/ui", class = "test-fixture", reason = "compile-fail cases" },
-    { path = "tests/gone", class = "test-fixture", reason = "stale" },
+    { path = "tests/ui", class = "test-fixture", consumer = "tests/ui.rs", reason = "compile-fail cases" },
+    { path = "tests/gone", class = "test-fixture", consumer = "tests/ui.rs", reason = "stale" },
 ]"#,
     );
     let err = cargo_metadata(&repo.root).unwrap_err();
@@ -219,16 +253,18 @@ fn an_exclusion_class_needs_its_native_evidence() {
     let repo = Repo::new("policy-class-evidence");
     repo.nested_workspace("fixtures/ui", &["case"]);
     repo.package("fixtures/ui/case", "case", "publish = false\n");
+    repo.write("tests/cases.rs", "// drives fixtures/ui\n");
+    repo.write("recipes/book.toml", "fixtures = \"fixtures/ui\"\n");
     repo.root_package(
         "app",
-        r#"contract-exclusions = [{ path = "fixtures", class = "test-fixture", reason = "cases" }]"#,
+        r#"contract-exclusions = [{ path = "fixtures", class = "test-fixture", consumer = "tests/cases.rs", reason = "cases" }]"#,
     );
     let err = cargo_metadata(&repo.root).unwrap_err();
     assert!(err.contains("has no `tests` path component"), "{err}");
 
     repo.root_package(
         "app",
-        r#"contract-exclusions = [{ path = "fixtures", class = "recipe-fixture", reason = "cases" }]"#,
+        r#"contract-exclusions = [{ path = "fixtures", class = "recipe-fixture", consumer = "recipes/book.toml", reason = "cases" }]"#,
     );
     let err = cargo_metadata(&repo.root).unwrap_err();
     assert!(err.contains("has no `recipes` path component"), "{err}");
@@ -256,13 +292,61 @@ fn an_exclusion_class_needs_its_native_evidence() {
 }
 
 #[test]
+fn a_fixture_needs_a_native_consumer_that_references_it() {
+    let repo = Repo::new("policy-consumer");
+    repo.nested_workspace("tests/ui", &["case"]);
+    repo.package("tests/ui/case", "case", "publish = false\n");
+    repo.write("src/helper.rs", "// tests/ui\n");
+    repo.write("tests/unrelated.rs", "#[test]\nfn nothing() {}\n");
+    repo.write("tests/ui.rs", "// runs tests/ui\n");
+    let declare = |consumer: &str| {
+        repo.root_package(
+            "app",
+            &format!(
+                r#"contract-exclusions = [{{ path = "tests/ui", class = "test-fixture", consumer = "{consumer}", reason = "cases" }}]"#
+            ),
+        );
+    };
+
+    declare("src/helper.rs");
+    let err = cargo_metadata(&repo.root).unwrap_err();
+    assert!(
+        err.contains("which is not a test target of a contract package"),
+        "{err}"
+    );
+
+    declare("tests/unrelated.rs");
+    let err = cargo_metadata(&repo.root).unwrap_err();
+    assert!(
+        err.contains("is not referenced by its consumer tests/unrelated.rs"),
+        "{err}"
+    );
+
+    declare("tests/ui.rs");
+    assert!(contract_packages(&repo.root).is_ok());
+
+    fs::remove_file(repo.root.join("tests/ui/case/Cargo.toml")).unwrap();
+    symlink(
+        repo.root.join("tests/ui/Cargo.toml"),
+        repo.root.join("tests/ui/case/Cargo.toml"),
+    )
+    .unwrap();
+    let err = cargo_metadata(&repo.root).unwrap_err();
+    assert!(
+        err.contains("excluded manifest tests/ui/case/Cargo.toml is not an ordinary file"),
+        "{err}"
+    );
+}
+
+#[test]
 fn a_publishable_package_can_never_be_excluded() {
     let repo = Repo::new("policy-publishable");
     repo.nested_workspace("tests/real", &["real"]);
     repo.package("tests/real/real", "real", "");
+    repo.write("tests/real.rs", "// loads tests/real\n");
     repo.root_package(
         "app",
-        r#"contract-exclusions = [{ path = "tests/real", class = "test-fixture", reason = "fixture" }]"#,
+        r#"contract-exclusions = [{ path = "tests/real", class = "test-fixture", consumer = "tests/real.rs", reason = "fixture" }]"#,
     );
 
     let err = cargo_metadata(&repo.root).unwrap_err();
@@ -276,9 +360,10 @@ fn a_publishable_package_can_never_be_excluded() {
 fn a_contract_package_may_not_depend_on_excluded_code() {
     let repo = Repo::new("policy-first-party");
     repo.package("tests/helper", "helper", "publish = false\n");
+    repo.write("tests/uses_helper.rs", "// tests/helper\n");
     repo.root_package_with(
         "app",
-        r#"contract-exclusions = [{ path = "tests/helper", class = "test-fixture", reason = "helper" }]"#,
+        r#"contract-exclusions = [{ path = "tests/helper", class = "test-fixture", consumer = "tests/uses_helper.rs", reason = "helper" }]"#,
         "[dependencies]\nhelper = { path = \"tests/helper\" }\n",
     );
 
@@ -534,4 +619,50 @@ fn temp_root(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     root
+}
+
+#[test]
+fn metadata_is_projected_to_the_fields_the_engine_reads() {
+    let document = json!({
+        "packages": [{
+            "id": "app 0.1.0", "name": "app", "version": "0.1.0", "source": null,
+            "manifest_path": "/r/Cargo.toml", "description": "d", "publish": null,
+            "features": {}, "authors": ["someone"], "readme": "README.md",
+            "targets": [{"name": "app", "kind": ["lib"], "crate_types": ["lib"],
+                         "src_path": "/r/src/lib.rs", "edition": "2024", "doctest": true}],
+            "dependencies": [{"name": "x", "source": null, "kind": null, "optional": false,
+                              "rename": null, "target": null, "path": "/r/x", "req": "*"}]
+        }],
+        "workspace_members": ["app 0.1.0"],
+        "workspace_root": "/r",
+        "resolve": {"nodes": []},
+        "target_directory": "/r/target",
+        "metadata": {"sim": {"contract-workspaces": []}, "other": 1}
+    });
+    let projected = crate::repo_contract::project_metadata(&document);
+    let text = projected.to_string();
+    for dropped in [
+        "authors",
+        "readme",
+        "edition",
+        "doctest",
+        "req",
+        "resolve",
+        "target_directory",
+        "other",
+    ] {
+        assert!(
+            !text.contains(&format!("\"{dropped}\"")),
+            "{dropped} retained: {text}"
+        );
+    }
+    assert_eq!(
+        projected["packages"][0]["targets"][0]["src_path"],
+        "/r/src/lib.rs"
+    );
+    assert_eq!(projected["packages"][0]["dependencies"][0]["path"], "/r/x");
+    assert_eq!(
+        projected["metadata"]["sim"],
+        json!({"contract-workspaces": []})
+    );
 }

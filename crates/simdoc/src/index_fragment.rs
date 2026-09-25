@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! SIM Index fragment generation from repo-contract scan facts.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -198,7 +202,7 @@ fn runtime_libs(repo: &Path, package: &PackageContract) -> Vec<String> {
         if is_test_source(&rel) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(text) = crate::owned::read_to_string(path) else {
             continue;
         };
         libs.extend(runtime_lib_impls(&text));
@@ -279,19 +283,23 @@ pub(crate) fn package_rust_files(repo: &Path, package: &PackageContract) -> Vec<
 }
 
 fn collect_ext_files(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    out.extend(
+        crate::owned::files_under(dir)
+            .into_iter()
+            .filter(|path| descends(dir, path))
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(extension)),
+    );
+}
+
+/// Whether every directory between `dir` and `path` is one a walk descends.
+fn descends(dir: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(dir) else {
+        return false;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if should_descend(&path) {
-                collect_ext_files(&path, extension, out);
-            }
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
-            out.push(path);
-        }
-    }
+    let parent = relative.parent().unwrap_or(Path::new(""));
+    parent
+        .components()
+        .all(|component| should_descend(Path::new(component.as_os_str())))
 }
 
 fn should_descend(path: &Path) -> bool {
