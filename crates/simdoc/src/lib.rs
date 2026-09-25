@@ -21,6 +21,7 @@ mod index_specimen_scan;
 mod index_surface_scan;
 mod json_render;
 mod repo_contract;
+mod repo_contract_cli;
 mod repo_contract_cut;
 mod repo_contract_render;
 mod repo_contract_scan;
@@ -47,7 +48,13 @@ pub(crate) fn tooling_checkout_root() -> std::path::PathBuf {
     root
 }
 
-/// Runs the standalone SIM generated-document encoder.
+/// Runs one simdoc command: `simdoc` (the documentation lanes),
+/// `repo-contract` (write, check, or emit the repo contract artifacts), or
+/// `repo-packages` (the contract's package set and grouping cut as JSON).
 pub fn run(args: Vec<String>) -> Result<(), String> {
-    simdoc::run(args)
+    match args.get(1).map(String::as_str) {
+        Some("repo-contract") => repo_contract_cli::run_repo_contract(&args),
+        Some("repo-packages") => repo_contract_cli::run_repo_packages(&args),
+        _ => simdoc::run(args),
+    }
 }

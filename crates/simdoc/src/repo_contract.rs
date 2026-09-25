@@ -31,19 +31,25 @@ use crate::{
 mod package_projection;
 use package_projection::*;
 
-// The workspace and provenance rules are shared verbatim with the xtask
-// repo-contract emitter, which includes these files by path; keep them free of
-// simdoc-only items.
+// simdoc is the one contract engine: xtask's repo-contract, index-check,
+// crate-catalog, and validation-matrix routes run this locked executable
+// instead of compiling any of it.
+#[path = "repo_contract/workspace_policy.rs"]
+mod workspace_policy;
 #[path = "repo_contract/workspaces.rs"]
 mod workspaces;
-pub(crate) use workspaces::PackageContract;
 #[cfg(test)]
 pub(crate) use workspaces::SourceDependency;
 use workspaces::*;
+pub(crate) use workspaces::{PackageContract, cargo_metadata, workspace_package_names};
 
 #[path = "repo_contract/provenance.rs"]
 mod provenance;
 use provenance::*;
+
+#[path = "repo_contract/regeneration.rs"]
+mod regeneration;
+use regeneration::*;
 
 // These identifiers are retained for byte-stable generated artifacts during the
 // resolver-root migration; they are compatibility labels, not launch guidance.
@@ -114,7 +120,7 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
     let exemptions = non_citizen_exemptions(repo);
     let recipes = recipe_books(repo, &package_groups);
     let cards = card_index(repo, &package_groups);
-    let provenance = provenance(repo)?;
+    let provenance = provenance(repo, &metadata)?;
     let index_fragment = index_fragment::artifact(repo, &packages, &cards)?;
     let mut files = artifacts(ArtifactInputs {
         packages: &packages,

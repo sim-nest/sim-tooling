@@ -4,7 +4,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! Provenance for repo contracts: which source state the generated artifacts
-//! describe, and which command regenerates them.
+//! describe, which encoder produced them, and which declared commands
+//! regenerate and validate them.
 
 use std::{fs, path::Path};
 
@@ -12,11 +13,7 @@ use serde_json::{Value, json};
 
 use super::*;
 
-const ISOLATED_SIMDOC_COMMAND: &str =
-    "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc";
-const REPO_XTASK_SIMDOC_COMMAND: &str = "cargo run -p xtask -- simdoc";
-
-pub(super) fn provenance(repo: &Path) -> Result<Value, String> {
+pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String> {
     let preserved = preserved_provenance(repo);
     let inputs = input_files(repo);
     let input_paths = inputs
@@ -30,13 +27,14 @@ pub(super) fn provenance(repo: &Path) -> Result<Value, String> {
     let generation_timestamp =
         generation_timestamp(repo, &preserved, &workspace_hash, &source_commit)?;
     let source_remote = public_origin(repo)?;
-    let simdoc_command = simdoc_command(repo);
+    let regeneration = regeneration(repo, metadata)?;
     Ok(json!({
         "schema": "sim.provenance.v1",
         "repo": repo_name(repo),
         "source_commit": source_commit,
         "source_remote": source_remote,
-        "generated_by": simdoc_command,
+        "generated_by": regeneration.docs_command,
+        "encoder": encoder_identity(),
         "api_docs": "target/doc/",
         "generator": GENERATOR,
         "generation_timestamp": generation_timestamp,
@@ -45,26 +43,8 @@ pub(super) fn provenance(repo: &Path) -> Result<Value, String> {
         "workspace_hash_algorithm": "fnv1a64",
         "workspace_hash_input_count": input_paths.len(),
         "workspace_hash_inputs": input_paths,
-        "validation_commands": [
-            "cargo fmt --all --check",
-            "cargo test",
-            "cargo clippy --all-targets -- -D warnings",
-            "cargo doc --no-deps",
-            format!("{simdoc_command} --check"),
-            "cargo run -p xtask -- check-file-sizes",
-            "cargo run -p xtask -- repo-contract --check --repo .",
-            "cargo run -p xtask -- validation-matrix --check --repo .",
-            "cargo run -p xtask -- crate-catalog --check --repo ."
-        ],
+        "validation_commands": regeneration.validation_commands,
     }))
-}
-
-fn simdoc_command(repo: &Path) -> &'static str {
-    if repo.join("crates/simdoc/Cargo.toml").is_file() {
-        ISOLATED_SIMDOC_COMMAND
-    } else {
-        REPO_XTASK_SIMDOC_COMMAND
-    }
 }
 
 pub(super) fn preserved_source_commit(preserved: &Value, workspace_hash: &str) -> Option<String> {

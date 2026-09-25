@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Source lookup for generated SIM Index specimen examples.
 
 use std::{
@@ -10,7 +15,7 @@ use serde_json::Value as JsonValue;
 use sim_index_core::DiscoveredSpecimen;
 use toml::Value;
 
-use crate::index_fragment::slug_ident;
+use crate::index_ids::slug_ident;
 
 /// Resolved source text for a specimen row.
 #[derive(Clone, Debug, Eq, PartialEq)]

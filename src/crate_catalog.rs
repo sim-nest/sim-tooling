@@ -57,9 +57,9 @@ pub fn crate_catalog(
         Some(path) => path.canonicalize().map_err(display_io)?,
         None => find_repo_root(&std::env::current_dir().map_err(display_io)?)?,
     };
-    // The catalog covers the same packages as the repo contract: the root
-    // workspace plus every declared contract workspace.
-    let metadata = crate::repo_contract::cargo_metadata(&repo)?;
+    // The catalog covers exactly the repo contract's packages, as discovered
+    // and classified by the locked contract engine.
+    let metadata = crate::simdoc_route::repo_packages(&repo)?["metadata"].take();
     let mut entries = workspace_packages(&repo, &metadata)?;
     let mut report = CrateCatalogReport {
         packages: entries.len(),

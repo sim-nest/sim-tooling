@@ -16,7 +16,7 @@
 //!   cards, human docs, diagrams, and split contract files under `docs/`.
 //! - `repo-contract` -- generate or check the per-repo contract files, or emit
 //!   selected current artifacts to a preopened output directory without
-//!   mutating the inspected repository.
+//!   mutating the inspected repository; served by the locked simdoc engine.
 //! - `validation-matrix` -- generate or check the validation matrix.
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
 //!   crate catalog.
@@ -43,7 +43,7 @@
 //!
 //! [`run`] dispatches an argument vector to the matching task. The library also
 //! exposes each task's entry point and report type, including
-//! [`repo_contract`], [`validation_matrix`], [`crate_catalog`],
+//! [`validation_matrix`], [`crate_catalog`],
 //! [`citizenize_arg`], [`atelier_site`], and [`atelier_tools`].
 
 #![deny(unsafe_code)]
@@ -64,14 +64,12 @@ mod file_size_gate;
 mod generated_artifact;
 mod generated_namespace;
 mod generator_options;
-mod index_anchor_scan;
 mod index_author;
 mod index_check;
-mod index_composition;
 mod index_doctor;
 mod index_find;
 mod index_fixpoint;
-mod index_fragment;
+mod index_ids;
 #[cfg(test)]
 mod index_landed_contract_tests;
 mod index_merge;
@@ -87,21 +85,13 @@ mod index_rules;
 mod index_seed;
 mod index_snapshot;
 mod index_source;
-mod index_specimen_scan;
-mod index_surface_scan;
 mod index_vault;
 mod index_vault_manifest;
 mod json_render;
 mod platform_inventory;
 mod recipe_discovery;
-mod repo_contract;
-#[path = "../crates/simdoc/src/repo_contract_cut.rs"]
-mod repo_contract_cut;
-#[path = "../crates/simdoc/src/repo_contract_render.rs"]
-mod repo_contract_render;
-#[path = "../crates/simdoc/src/repo_contract_scan.rs"]
-mod repo_contract_scan;
 mod sealed_resources;
+mod simdoc_route;
 mod validation_matrix;
 
 #[cfg(test)]
@@ -119,7 +109,6 @@ pub use cardspine::{CARD_CONTENT_ID_ALGORITHM, Card, CardSpine, card_content_id}
 pub use citizenize::{CitizenizeReport, citizenize_arg, citizenize_path};
 pub use crate_catalog::{CrateCatalogReport, crate_catalog};
 pub use docencoder::{DocEncoder, DocPosition};
-pub use repo_contract::{RepoContractReport, repo_contract};
 pub use validation_matrix::{ValidationMatrixReport, validation_matrix};
 
 /// Dispatches an xtask command-line argument vector to the matching task.

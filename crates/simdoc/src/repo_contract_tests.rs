@@ -40,7 +40,7 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
     let root = crate::tooling_checkout_root();
     let artifacts = contract_artifacts(&root).unwrap();
 
-    assert_eq!(artifacts.package_count, 4);
+    assert_eq!(artifacts.package_count, 5);
 
     let feature_map = generated_json(&artifacts, "feature-map.json");
     let provenance = generated_json(&artifacts, "provenance.json");
@@ -65,6 +65,7 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
             "sim-check-pack",
             "sim-check-pack-ubuntu-pc",
             "sim-check-pack-xtask",
+            "simdoc",
             "xtask"
         ]
     );
@@ -81,6 +82,12 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
         provenance["generated_by"],
         "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
     );
+    assert_eq!(provenance["encoder"], encoder_identity());
+    let validation = provenance["validation_commands"].as_array().unwrap();
+    assert_eq!(validation.len(), 12);
+    assert!(validation.contains(&json!(
+        "cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check"
+    )));
     assert_eq!(provenance["api_docs"], "target/doc/");
     assert!(provenance["source_commit"].as_str().is_some());
     assert!(
@@ -182,89 +189,6 @@ fn preserved_source_commit_ignores_changed_workspace_hash() {
     });
 
     assert!(preserved_source_commit(&preserved, "new-hash").is_none());
-}
-
-#[test]
-fn contract_workspaces_default_to_the_root_workspace() {
-    assert!(declared_contract_workspaces(&json!({})).unwrap().is_empty());
-    assert!(
-        declared_contract_workspaces(&json!({"metadata": {"sim": {}}}))
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        declared_contract_workspaces(&json!({
-            "metadata": {"sim": {"contract-workspaces": ["crates", "tools/pack"]}}
-        }))
-        .unwrap(),
-        ["crates", "tools/pack"]
-    );
-}
-
-#[test]
-fn contract_workspaces_refuse_invalid_declarations() {
-    for (declared, expected) in [
-        (json!("crates"), "must be an array"),
-        (json!([1]), "entries must be strings"),
-        (json!([""]), "plain repository-relative"),
-        (json!(["../other"]), "plain repository-relative"),
-        (json!(["/abs"]), "plain repository-relative"),
-        (json!(["./crates"]), "plain repository-relative"),
-        (json!(["crates", "crates"]), "declared twice"),
-    ] {
-        let metadata = json!({"metadata": {"sim": {"contract-workspaces": declared}}});
-        let err = declared_contract_workspaces(&metadata).unwrap_err();
-        assert!(err.contains(expected), "{declared}: {err}");
-    }
-}
-
-#[test]
-fn contract_workspaces_refuse_a_package_in_two_workspaces() {
-    let root = temp_root("sim-tooling-contract-workspaces");
-    fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src/lib.rs"), "").unwrap();
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"dup\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
-         [workspace]\nexclude = [\"nested\"]\n\n\
-         [workspace.metadata.sim]\ncontract-workspaces = [\"nested\"]\n",
-    )
-    .unwrap();
-    fs::create_dir_all(root.join("nested/dup/src")).unwrap();
-    fs::write(root.join("nested/dup/src/lib.rs"), "").unwrap();
-    fs::write(
-        root.join("nested/Cargo.toml"),
-        "[workspace]\nmembers = [\"dup\"]\n",
-    )
-    .unwrap();
-    fs::write(
-        root.join("nested/dup/Cargo.toml"),
-        "[package]\nname = \"dup\"\nversion = \"0.2.0\"\nedition = \"2024\"\n",
-    )
-    .unwrap();
-
-    let err = cargo_metadata(&root).unwrap_err();
-    assert!(err.contains("more than one contract workspace"), "{err}");
-
-    fs::write(
-        root.join("nested/dup/Cargo.toml"),
-        "[package]\nname = \"other\"\nversion = \"0.2.0\"\nedition = \"2024\"\n",
-    )
-    .unwrap();
-    let names = workspace_package_names(&cargo_metadata(&root).unwrap()).unwrap();
-    assert_eq!(names.into_iter().collect::<Vec<_>>(), ["dup", "other"]);
-
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"dup\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
-         [workspace]\nexclude = [\"nested\"]\n\n\
-         [workspace.metadata.sim]\ncontract-workspaces = [\"nested/dup\"]\n",
-    )
-    .unwrap();
-    let err = cargo_metadata(&root).unwrap_err();
-    assert!(err.contains("is not a Cargo workspace root"), "{err}");
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

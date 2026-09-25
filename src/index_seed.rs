@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Private migration seed extraction for SIM Index authoring.
 
 use std::{
@@ -5,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::index_fragment::slug_path;
+use crate::index_ids::slug_path;
 
 pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let options = SeedOptions::parse(&args)?;

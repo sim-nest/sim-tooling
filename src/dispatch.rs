@@ -7,7 +7,7 @@ use crate::{
     atelier, bench, build_inputs, citizenize, crate_catalog, file_size_gate, generator_options,
     index_check, index_doctor, index_find, index_fixpoint, index_merge, index_overlap,
     index_render, index_route, index_seed, index_snapshot, index_vault, platform_inventory,
-    repo_contract, sealed_resources, validation_matrix,
+    sealed_resources, simdoc_route, validation_matrix,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -107,30 +107,11 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
 
     match args.as_slice() {
-        [_, command, ..] if command == "repo-contract" => {
-            let options = repo_contract::parse_options(&args)?;
-            if let Some(emission) = options.emission {
-                let report = repo_contract::emit_contract_artifacts(
-                    &options.repo,
-                    &emission.names,
-                    &emission.out_dir,
-                )?;
-                println!(
-                    "repo-contract: {} package(s), {} artifact(s) emitted",
-                    report.packages, report.artifacts_changed
-                );
-                return Ok(());
-            }
-            let report = repo_contract::repo_contract_for_repo(options.check, &options.repo)?;
-            if options.check {
-                println!("repo-contract: generated contract files are current");
-                return Ok(());
-            }
-            println!(
-                "repo-contract: {} package(s), {} artifact(s) changed",
-                report.packages, report.artifacts_changed
-            );
-            Ok(())
+        // The `xtask-repo-contract-v1` interface (write, `--check`, and
+        // `--emit ... --out-dir`) is served by the locked simdoc engine with
+        // the arguments passed through unchanged.
+        [_, command, rest @ ..] if command == "repo-contract" => {
+            simdoc_route::run_forwarded("repo-contract", rest)
         }
         [_, command, ..] if command == "validation-matrix" => {
             let options = generator_options::parse_repo_tool_args(&args, command)?;

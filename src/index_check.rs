@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Per-repository SIM Index freshness and coverage gate.
 
 use std::{
@@ -129,12 +134,8 @@ fn decode_fragment(repo: &Path, source: &str) -> Result<IndexDoc, String> {
 }
 
 fn assert_fragment_fresh(repo: &Path, current: &str) -> Result<(), String> {
-    let artifacts = crate::repo_contract::contract_artifacts(repo)?;
-    let expected = artifacts
-        .files
-        .get("sim-index-fragment.sx")
-        .ok_or("repo-contract did not produce sim-index-fragment.sx")?;
-    assert_fragment_fresh_from_sources(current, expected)
+    let expected = crate::simdoc_route::emitted_artifact(repo, "sim-index-fragment.sx")?;
+    assert_fragment_fresh_from_sources(current, &expected)
 }
 
 fn assert_fragment_fresh_from_sources(current: &str, expected: &str) -> Result<(), String> {

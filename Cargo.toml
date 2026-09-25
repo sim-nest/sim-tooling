@@ -23,10 +23,30 @@ exclude = [
     "crates/sim-check-pack-xtask",
 ]
 
-# The check-pack crates keep their own resolver root under crates/; they are
-# still packages of this repository and belong in its generated contract.
+# Every Cargo manifest in this repository belongs to its generated contract.
+# The check-pack crates (crates/) and the simdoc contract engine
+# (crates/simdoc) keep their own resolver roots; declaring them here makes
+# their packages part of the one repo contract.
 [workspace.metadata.sim]
-contract-workspaces = ["crates"]
+contract-workspaces = ["crates", "crates/simdoc"]
+# Recorded verbatim in docs/generated/provenance.json: the command that
+# regenerates this repository's documentation and the gate that validates it
+# (the same commands .github/workflows/ci.yml runs).
+docs-command = "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
+validation-commands = [
+    "cargo fmt --all --check",
+    "cargo test",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo doc --no-deps",
+    "cargo fmt --manifest-path crates/simdoc/Cargo.toml --check",
+    "cargo test --locked --manifest-path crates/simdoc/Cargo.toml",
+    "cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings",
+    "cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check",
+    "cargo run -p xtask -- check-file-sizes",
+    "cargo run -p xtask -- repo-contract --check --repo .",
+    "cargo run -p xtask -- validation-matrix --check --repo .",
+    "cargo run -p xtask -- crate-catalog --check --repo .",
+]
 
 [workspace.package]
 edition = "2024"

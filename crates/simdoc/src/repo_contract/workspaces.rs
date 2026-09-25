@@ -4,31 +4,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! Package discovery for repo contracts: the root Cargo workspace plus every
-//! nested workspace the root manifest declares as part of the repository.
-//!
-//! A repository may keep packages under a separate resolver root, for example
-//! to isolate their dependency graph from the repository tooling. Such a root
-//! joins the contract only when the root manifest names it:
-//!
-//! ```toml
-//! [workspace.metadata.sim]
-//! contract-workspaces = ["crates"]
-//! ```
-//!
-//! Undeclared nested workspaces (test fixtures, focused-test harnesses,
-//! standalone tools) stay out of the contract.
+//! nested workspace the root manifest declares as part of the repository,
+//! checked against the classification and containment rules in
+//! `workspace_policy`.
 
 use std::{
     collections::BTreeSet,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Command,
 };
 
 use serde_json::Value;
 
+use super::workspace_policy::{
+    contract_exclusions, declared_contract_workspaces, ensure_manifests_classified,
+    ensure_packages_within, ensure_within, reject_symlinked_path,
+};
 use super::*;
-
-const CONTRACT_WORKSPACES_KEY: &str = "contract-workspaces";
 
 #[derive(Debug, Clone)]
 pub(crate) struct PackageContract {
@@ -55,25 +47,44 @@ pub(crate) struct SourceDependency {
 }
 
 /// Reads `cargo metadata` for the root workspace and appends the members of
-/// every declared contract workspace, failing on an invalid declaration or a
-/// package name claimed by two workspaces.
+/// every declared contract workspace. Fails on an invalid declaration, a
+/// package name claimed by two workspaces, a workspace, manifest, or target
+/// source outside the repository, or a git-visible Cargo manifest that is
+/// neither covered nor excluded with a reason.
 pub(crate) fn cargo_metadata(repo: &Path) -> Result<Value, String> {
+    let repo = repo.canonicalize().map_err(display_io)?;
     let mut merged = workspace_metadata(&repo.join("Cargo.toml"))?;
-    for declared in declared_contract_workspaces(&merged)? {
-        let root = repo.join(&declared);
+    if workspace_root(&merged)? != repo {
+        return Err(format!(
+            "{} is not the root of its Cargo workspace",
+            repo.display()
+        ));
+    }
+    let declared = declared_contract_workspaces(&merged)?;
+    let exclusions = contract_exclusions(&merged)?;
+    for relative in &declared {
+        reject_symlinked_path(&repo, relative)?;
+        let root = ensure_within(&repo, &repo.join(relative), "contract workspace")?;
         let nested = workspace_metadata(&root.join("Cargo.toml"))?;
-        let nested_root = nested["workspace_root"]
-            .as_str()
-            .map(PathBuf::from)
-            .ok_or_else(|| format!("cargo metadata for {declared} missing workspace_root"))?;
-        if nested_root.canonicalize().ok() != root.canonicalize().ok() {
+        if workspace_root(&nested)? != root {
             return Err(format!(
-                "contract workspace {declared} is not a Cargo workspace root"
+                "contract workspace {relative} is not a Cargo workspace root"
             ));
         }
         append_workspace(&mut merged, nested)?;
     }
+    ensure_packages_within(&repo, &merged)?;
+    ensure_manifests_classified(&repo, &merged, &declared, &exclusions)?;
     Ok(merged)
+}
+
+fn workspace_root(metadata: &Value) -> Result<PathBuf, String> {
+    let root = metadata["workspace_root"]
+        .as_str()
+        .ok_or("cargo metadata missing workspace_root")?;
+    Path::new(root)
+        .canonicalize()
+        .map_err(|err| format!("workspace root {root}: {err}"))
 }
 
 fn workspace_metadata(manifest: &Path) -> Result<Value, String> {
@@ -99,39 +110,6 @@ fn workspace_metadata(manifest: &Path) -> Result<Value, String> {
         ));
     }
     serde_json::from_slice(&output.stdout).map_err(|err| format!("parse cargo metadata: {err}"))
-}
-
-/// Returns the repository-relative nested workspace roots declared under
-/// `[workspace.metadata.sim] contract-workspaces` in the root manifest.
-pub(super) fn declared_contract_workspaces(metadata: &Value) -> Result<Vec<String>, String> {
-    let Some(declared) = metadata["metadata"]["sim"].get(CONTRACT_WORKSPACES_KEY) else {
-        return Ok(Vec::new());
-    };
-    let entries = declared.as_array().ok_or_else(|| {
-        format!("workspace.metadata.sim.{CONTRACT_WORKSPACES_KEY} must be an array of paths")
-    })?;
-    let mut seen = BTreeSet::new();
-    let mut roots = Vec::new();
-    for entry in entries {
-        let path = entry.as_str().ok_or_else(|| {
-            format!("workspace.metadata.sim.{CONTRACT_WORKSPACES_KEY} entries must be strings")
-        })?;
-        let relative = Path::new(path);
-        if path.is_empty()
-            || !relative
-                .components()
-                .all(|component| matches!(component, Component::Normal(_)))
-        {
-            return Err(format!(
-                "contract workspace {path:?} must be a plain repository-relative directory"
-            ));
-        }
-        if !seen.insert(path.to_owned()) {
-            return Err(format!("contract workspace {path:?} is declared twice"));
-        }
-        roots.push(path.to_owned());
-    }
-    Ok(roots)
 }
 
 fn append_workspace(merged: &mut Value, nested: Value) -> Result<(), String> {
@@ -253,7 +231,7 @@ pub(super) fn source_dependencies(package: &Value) -> Vec<SourceDependency> {
     dependencies
 }
 
-pub(super) fn workspace_package_names(metadata: &Value) -> Result<BTreeSet<String>, String> {
+pub(crate) fn workspace_package_names(metadata: &Value) -> Result<BTreeSet<String>, String> {
     let member_ids = metadata["workspace_members"]
         .as_array()
         .ok_or("cargo metadata missing workspace_members")?

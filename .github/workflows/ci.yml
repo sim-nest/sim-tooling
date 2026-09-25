@@ -46,13 +46,27 @@ jobs:
     needs: scope
     if: ${{ needs.scope.outputs.run-heavy == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      # Must equal the channel pinned in rust-toolchain.toml; the assertion
+      # step below fails the job if either side drifts.
+      RUST_TOOLCHAIN: "1.96.0"
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
+      - name: Assert the pinned toolchain
+        run: |
+          pinned="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test "$pinned" = "$RUST_TOOLCHAIN"
+          for dir in . crates/simdoc; do
+            (cd "$dir" && rustc --version --verbose && cargo --version --verbose)
+            (cd "$dir" && rustc --version --verbose | grep -qx "release: $pinned")
+            (cd "$dir" && cargo --version --verbose | grep -qx "release: $pinned")
+          done
       - run: cargo fmt --all --check
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
