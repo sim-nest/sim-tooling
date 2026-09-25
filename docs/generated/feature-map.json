@@ -19,6 +19,11 @@
     {
       "features": [],
       "group": "workspace",
+      "package": "simdoc"
+    },
+    {
+      "features": [],
+      "group": "workspace",
       "package": "xtask"
     }
   ]

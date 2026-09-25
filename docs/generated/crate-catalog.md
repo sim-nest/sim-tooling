@@ -10,3 +10,4 @@ Generated from Cargo metadata by `xtask crate-catalog v1`.
 | `sim-check-pack-ubuntu-pc` | `true` | `custom-build, example, lib` | Opaque Ubuntu native-evidence composition for SIM conformance packs. |
 | `sim-check-pack-xtask` | `false` | `bin, lib` | In-process command boundary for SIM conformance-pack checks. |
 | `sim-check-pack` | `true` | `custom-build, lib` | Exact native invocation adapter for SIM conformance packs. |
+| `simdoc` | `false` | `bin, lib` | Standalone SIM generated-document encoder. |

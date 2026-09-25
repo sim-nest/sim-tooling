@@ -17,7 +17,7 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 
 | Feature | Subject | Specimens | Summary |
 | --- | --- | ---: | --- |
-| `feature/sim-tooling/generated-docs` | `crate/xtask` | 2 | Generate repo contracts, feature maps, card indexes, index fragments and claim certificates, and managed vault note namespaces through xtask; selected repo-contract artifacts can also be emitted without mutating source. |
+| `feature/sim-tooling/generated-docs` | `crate/xtask` | 3 | Generate repo contracts, feature maps, card indexes, index fragments and claim certificates through the locked simdoc contract engine, which every xtask contract route runs, and managed vault note namespaces through xtask; selected repo-contract artifacts can also be emitted without mutating source. |
 | `feature/sim-tooling/conformance-pack-invocation` | `crate/sim-check-pack` | 1 | Prepare one statically bound public conformance pack over bounded canonical evidence without authority, then bind the same checked result to an exact SDK-owner-issued currentness selection and receipt-specific fresh observation. |
 | `feature/sim-tooling/ubuntu-operation-local-corpus` | `crate/sim-check-pack-ubuntu-pc` | 1 | Derive the complete operation/local checker evidence and support only from an exact platform-owner-verified native corpus, refusing atomically while any typed witness role is absent. |
 | `feature/sim-index/core` | `crate/xtask` | 1 | Generate, query, route, prove, and check duplicate implementation overlap, benchmark ownership, and source-backed authored composition claims in the SIM Index graph as a checked constellation surface. |
@@ -34,23 +34,24 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 | Surface | Kind | Subject |
 | --- | --- | --- |
 | `cli/sim-check-pack-xtask` | `cli` | `crate/sim-check-pack-xtask` |
+| `cli/simdoc` | `cli` | `crate/simdoc` |
 | `cli/xtask` | `cli` | `crate/xtask` |
 | `docs/sim-tooling/generated` | `docs` | `doc-set/sim-tooling/generated` |
-| `site-device/desktop` | `site-device` | `crate/xtask` |
-| `site-device/glasses` | `site-device` | `crate/xtask` |
-| `site-device/glasses-3dof` | `site-device` | `crate/xtask` |
-| `site-device/glasses-hud` | `site-device` | `crate/xtask` |
-| `site-device/glasses-hud-camera` | `site-device` | `crate/xtask` |
-| `site-device/glasses-luma-ultra` | `site-device` | `crate/xtask` |
-| `site-device/glasses-stereo` | `site-device` | `crate/xtask` |
-| `site-device/phone` | `site-device` | `crate/xtask` |
-| `site-device/watch` | `site-device` | `crate/xtask` |
-| `site-device/watch-glance-large` | `site-device` | `crate/xtask` |
-| `site-device/watch-sleep` | `site-device` | `crate/xtask` |
-| `site-device/watch-sport` | `site-device` | `crate/xtask` |
-| `site/xtask` | `site` | `crate/xtask` |
-| `view-edit/xtask` | `view-edit` | `crate/xtask` |
-| `view/xtask` | `view` | `crate/xtask` |
+| `site-device/desktop` | `site-device` | `crate/simdoc` |
+| `site-device/glasses` | `site-device` | `crate/simdoc` |
+| `site-device/glasses-3dof` | `site-device` | `crate/simdoc` |
+| `site-device/glasses-hud` | `site-device` | `crate/simdoc` |
+| `site-device/glasses-hud-camera` | `site-device` | `crate/simdoc` |
+| `site-device/glasses-luma-ultra` | `site-device` | `crate/simdoc` |
+| `site-device/glasses-stereo` | `site-device` | `crate/simdoc` |
+| `site-device/phone` | `site-device` | `crate/simdoc` |
+| `site-device/watch` | `site-device` | `crate/simdoc` |
+| `site-device/watch-glance-large` | `site-device` | `crate/simdoc` |
+| `site-device/watch-sleep` | `site-device` | `crate/simdoc` |
+| `site-device/watch-sport` | `site-device` | `crate/simdoc` |
+| `site/simdoc` | `site` | `crate/simdoc` |
+| `view-edit/simdoc` | `view-edit` | `crate/simdoc` |
+| `view/simdoc` | `view` | `crate/simdoc` |
 
 ## Recipes
 
@@ -69,9 +70,9 @@ This generated lane consumes `docs/generated/sim-index-fragment.sx`. Global inde
 
 ### `feature/sim-tooling/generated-docs`
 
-Specimen `spec-test/sim-tooling/src/repo_contract_tests` is checked by `cargo test`.
+Specimen `spec-test/sim-tooling/crates/simdoc/src/repo_contract_tests` is checked by `cargo test`.
 
-Source `src/repo_contract_tests.rs`:
+Source `crates/simdoc/src/repo_contract_tests.rs`:
 
 ```rust
 // SPDX-License-Identifier: MPL-2.0
@@ -82,6 +83,7 @@ Source `src/repo_contract_tests.rs`:
 use std::{
     env, fs,
     path::PathBuf,
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -111,11 +113,11 @@ fn stable_hash_uses_repo_relative_paths() {
 }
 
 #[test]
-fn simdoc_generated_contracts_list_root_package() {
-    let root = source_checkout_root();
+fn simdoc_generated_contracts_list_controlled_tooling_target() {
+    let root = crate::tooling_checkout_root();
     let artifacts = contract_artifacts(&root).unwrap();
 
-    assert_eq!(artifacts.package_count, 4);
+    assert_eq!(artifacts.package_count, 5);
 
     let feature_map = generated_json(&artifacts, "feature-map.json");
     let provenance = generated_json(&artifacts, "provenance.json");
@@ -140,15 +142,29 @@ fn simdoc_generated_contracts_list_root_package() {
             "sim-check-pack",
             "sim-check-pack-ubuntu-pc",
             "sim-check-pack-xtask",
+            "simdoc",
             "xtask"
         ]
     );
+    let check_pack = repo_contract["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"] == "sim-check-pack")
+        .unwrap();
+    assert_eq!(check_pack["manifest"], "crates/sim-check-pack/Cargo.toml");
     assert_eq!(provenance["schema"], "sim.provenance.v1");
     assert_eq!(provenance["repo"], "sim-tooling");
     assert_eq!(
         provenance["generated_by"],
         "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
     );
+    assert_eq!(provenance["encoder"], encoder_identity());
+    let validation = provenance["validation_commands"].as_array().unwrap();
+    assert_eq!(validation.len(), 12);
+    assert!(validation.contains(&json!(
+        "cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check"
+    )));
     assert_eq!(provenance["api_docs"], "target/doc/");
     assert!(provenance["source_commit"].as_str().is_some());
     assert!(
@@ -188,6 +204,12 @@ fn simdoc_generated_contracts_list_root_package() {
         index_fragment
             .subjects
             .iter()
+            .any(|subject| subject.id.as_str() == "crate/sim-check-pack")
+    );
+    assert!(
+        index_fragment
+            .subjects
+            .iter()
             .any(|subject| subject.id.as_str() == "doc-set/sim-tooling/generated")
     );
     assert!(index_fragment.edges.iter().any(|edge| {
@@ -196,11 +218,189 @@ fn simdoc_generated_contracts_list_root_package() {
 }
 
 #[test]
+fn origin_sanitizer_emits_public_github_url() {
+    let ssh_github_origin = concat!("git", "@", "github.com:sim-nest/sim-tooling.git");
+    assert_eq!(
+        sanitize_origin_url(ssh_github_origin).unwrap(),
+        "https://github.com/sim-nest/sim-tooling"
+    );
+    assert_eq!(
+        sanitize_origin_url("https://github.com/sim-nest/sim-tooling.git").unwrap(),
+        "https://github.com/sim-nest/sim-tooling"
+    );
+    assert!(sanitize_origin_url("/tmp/sim-tooling").is_err());
+}
+
+#[test]
+fn preserved_source_commit_survives_generated_doc_commit() {
+    let preserved = json!({
+        "workspace_hash": "same-hash",
+        "source_commit": "source-commit",
+        "git_commit": "legacy-commit"
+    });
+
+    assert_eq!(
+        preserved_source_commit(&preserved, "same-hash").as_deref(),
+        Some("source-commit")
+    );
+}
+
+#[test]
+fn preserved_source_commit_accepts_legacy_git_commit() {
+    let preserved = json!({
+        "workspace_hash": "same-hash",
+        "git_commit": "legacy-commit"
+    });
+
+    assert_eq!(
+        preserved_source_commit(&preserved, "same-hash").as_deref(),
+        Some("legacy-commit")
+    );
+}
+
+#[test]
+fn preserved_source_commit_ignores_changed_workspace_hash() {
+    let preserved = json!({
+        "workspace_hash": "old-hash",
+        "source_commit": "source-commit"
+    });
+
+    assert!(preserved_source_commit(&preserved, "new-hash").is_none());
+}
+
+#[test]
+fn generation_timestamp_survives_unchanged_workspace_hash() {
+    let preserved = json!({
+        "workspace_hash": "same-hash",
+        "generation_timestamp": "2026-08-21T10:00:00+02:00"
+    });
+    let no_git = temp_root("sim-tooling-timestamp-preserved");
+
+    assert_eq!(
+        generation_timestamp(&no_git, &preserved, "same-hash", "not-read").unwrap(),
+        "2026-08-21T10:00:00+02:00"
+    );
+
+    fs::remove_dir_all(no_git).unwrap();
+}
+
+#[test]
+fn generation_timestamp_takes_commit_date_after_workspace_change() {
+    let (repo, commit) =
+        committed_repo("sim-tooling-timestamp-changed", "2026-09-20T08:30:00+02:00");
+    let preserved = json!({
+        "workspace_hash": "old-hash",
+        "generation_timestamp": "2026-08-21T10:00:00+02:00"
+    });
+
+    assert_eq!(
+        generation_timestamp(&repo, &preserved, "new-hash", &commit).unwrap(),
+        "2026-09-20T08:30:00+02:00"
+    );
+    assert_eq!(
+        generation_timestamp(&repo, &json!({}), "new-hash", &commit).unwrap(),
+        "2026-09-20T08:30:00+02:00"
+    );
+
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn generation_timestamp_refuses_unreadable_commit_date() {
+    let (repo, _) = committed_repo("sim-tooling-timestamp-missing", "2026-09-20T08:30:00+02:00");
+    let missing = "0".repeat(40);
+
+    let err = generation_timestamp(&repo, &json!({}), "new-hash", &missing).unwrap_err();
+    assert!(err.contains("did not return a committer date"), "{err}");
+    let err = generation_timestamp(&repo, &json!({}), "new-hash", "--output=x").unwrap_err();
+    assert!(err.contains("not a hexadecimal commit id"), "{err}");
+    let legacy = json!({"workspace_hash": "same-hash", "generation_timestamp": "unknown"});
+    assert!(generation_timestamp(&repo, &legacy, "same-hash", &missing).is_err());
+
+    fs::remove_dir_all(repo).unwrap();
+}
+
+fn committed_repo(name: &str, committer_date: &str) -> (PathBuf, String) {
+    let repo = temp_root(name);
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "user.name=simdoc",
+                "-c",
+                "user.email=simdoc@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_DATE", committer_date)
+            .env("GIT_COMMITTER_DATE", committer_date)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?} failed: {output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "commit",
+        "--quiet",
+        "--no-verify",
+        "--allow-empty",
+        "-m",
+        "fixture",
+    ]);
+    let commit = git(&["rev-parse", "HEAD"]);
+    (repo, commit)
+}
+
+fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {
+    serde_json::from_str(artifacts.files.get(name).unwrap()).unwrap()
+}
+
+fn temp_root(name: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    root
+}
+```
+
+Specimen `spec-test/sim-tooling/crates/simdoc/src/repo_contract_cli_tests` is checked by `cargo test`.
+
+Source `crates/simdoc/src/repo_contract_cli_tests.rs`:
+
+```rust
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use sim_codec_index::{IndexCodec, IndexForm};
+
+use super::*;
+
+// conformance: the emission interface is exclusive, bounded, atomic, and side-effect free.
+
+#[test]
 fn emit_mode_is_exclusive_bounded_and_repeatable() {
-    let repo = source_checkout_root().to_string_lossy().into_owned();
+    let repo = crate::tooling_checkout_root()
+        .to_string_lossy()
+        .into_owned();
     let out = temp_root("repo-contract-options");
     let args = |tail: &[&str]| {
-        let mut args = vec!["xtask".to_owned(), "repo-contract".to_owned()];
+        let mut args = vec!["simdoc".to_owned(), "repo-contract".to_owned()];
         args.extend(tail.iter().map(|arg| (*arg).to_owned()));
         args.extend(["--repo".to_owned(), repo.clone()]);
         args
@@ -257,7 +457,7 @@ fn emit_mode_is_exclusive_bounded_and_repeatable() {
 
 #[test]
 fn emit_uses_canonical_fragment_and_leaves_repository_untouched() {
-    let repo = source_checkout_root();
+    let repo = crate::tooling_checkout_root();
     let before = git_output(&repo, &["status", "--porcelain"]).unwrap();
     let expected = contract_artifacts(&repo).unwrap();
     let out = temp_root("repo-contract-emit");
@@ -310,75 +510,16 @@ fn emit_rejects_output_symlink_escapes_and_interrupted_stage() {
     assert_eq!(fs::read_to_string(real.join(name)).unwrap(), "old");
 }
 
-#[test]
-fn origin_sanitizer_emits_public_github_url() {
-    let ssh_github_origin = concat!("git", "@", "github.com:sim-nest/sim-tooling.git");
-    assert_eq!(
-        sanitize_origin_url(ssh_github_origin).unwrap(),
-        "https://github.com/sim-nest/sim-tooling"
-    );
-    assert_eq!(
-        sanitize_origin_url("https://github.com/sim-nest/sim-tooling.git").unwrap(),
-        "https://github.com/sim-nest/sim-tooling"
-    );
-    assert!(sanitize_origin_url("/tmp/sim-tooling").is_err());
-}
-
-#[test]
-fn preserved_source_commit_survives_generated_doc_commit() {
-    let preserved = json!({
-        "workspace_hash": "same-hash",
-        "source_commit": "source-commit",
-        "git_commit": "legacy-commit"
-    });
-
-    assert_eq!(
-        preserved_source_commit(&preserved, "same-hash").as_deref(),
-        Some("source-commit")
-    );
-}
-
-#[test]
-fn preserved_source_commit_accepts_legacy_git_commit() {
-    let preserved = json!({
-        "workspace_hash": "same-hash",
-        "git_commit": "legacy-commit"
-    });
-
-    assert_eq!(
-        preserved_source_commit(&preserved, "same-hash").as_deref(),
-        Some("legacy-commit")
-    );
-}
-
-#[test]
-fn preserved_source_commit_ignores_changed_workspace_hash() {
-    let preserved = json!({
-        "workspace_hash": "old-hash",
-        "source_commit": "source-commit"
-    });
-
-    assert!(preserved_source_commit(&preserved, "new-hash").is_none());
-}
-
-fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {
-    serde_json::from_str(artifacts.files.get(name).unwrap()).unwrap()
-}
-
-fn source_checkout_root() -> PathBuf {
-    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = manifest_root.join("src");
-    if let Ok(target) = fs::read_link(&src) {
-        let target = if target.is_absolute() {
-            target
-        } else {
-            manifest_root.join(target)
-        };
-        if let Some(root) = target.parent() {
-            return root.to_path_buf();
-        }
-    }
-    manifest_root
+fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn temp_root(name: &str) -> PathBuf {

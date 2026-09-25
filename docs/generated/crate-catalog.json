@@ -1,6 +1,6 @@
 {
   "generator": "xtask crate-catalog v1",
-  "package_count": 4,
+  "package_count": 5,
   "packages": [
     {
       "description": "Repository maintenance tasks.",
@@ -54,6 +54,19 @@
       "root": "crates/sim-check-pack",
       "target_kinds": [
         "custom-build",
+        "lib"
+      ]
+    },
+    {
+      "description": "Standalone SIM generated-document encoder.",
+      "generated_readme": true,
+      "manifest": "crates/simdoc/Cargo.toml",
+      "name": "simdoc",
+      "publish": "false",
+      "readme": "crates/simdoc/README.md",
+      "root": "crates/simdoc",
+      "target_kinds": [
+        "bin",
         "lib"
       ]
     }

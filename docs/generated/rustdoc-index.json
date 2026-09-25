@@ -23,6 +23,13 @@
       "summary": "Isolated checker command and in-process qualification adapter."
     },
     {
+      "crate_name": "simdoc",
+      "group": "workspace",
+      "manifest": "crates/simdoc/Cargo.toml",
+      "package": "simdoc",
+      "summary": "Standalone source and resolver boundary for SIM generated documentation."
+    },
+    {
       "crate_name": "xtask",
       "group": "workspace",
       "manifest": "Cargo.toml",
