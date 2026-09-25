@@ -153,8 +153,10 @@ fn run(invocation: &Invocation) -> Result<()> {
         OperationLocalPostGateDefinition::from_verified(&post_gate.iter().collect::<Vec<_>>())?;
     corpus.admit_post_gate_specimens(&post_gate_definition, post_gate)?;
 
-    let corpus_identity = content_text(corpus.identity());
-    require_pin(&corpus_identity, invocation.expect_corpus.as_deref())?;
+    let corpus_identity = pinned(
+        content_text(corpus.identity()),
+        invocation.expect_corpus.as_deref(),
+    )?;
     let witness = corpus
         .post_gate_witness()
         .ok_or("post-gate witness absent after admission")?;
@@ -180,14 +182,14 @@ fn run(invocation: &Invocation) -> Result<()> {
     Ok(())
 }
 
-/// Requires the derived corpus identity to be exactly the reviewed pin, when
-/// one is given, before anything is printed.
-fn require_pin(corpus: &str, expected: Option<&str>) -> Result<()> {
+/// The derived corpus identity, only once it is exactly the reviewed pin
+/// when one is given: nothing is printed from an unpinned value.
+fn pinned(corpus: String, expected: Option<&str>) -> Result<String> {
     match expected {
         Some(expected) if corpus != expected => {
             Err(format!("corpus {corpus} differs from expected {expected}").into())
         }
-        _ => Ok(()),
+        _ => Ok(corpus),
     }
 }
 
@@ -205,8 +207,10 @@ struct CorpusRecord<'a> {
 /// The v2 corpus record: the three-site post-gate witness always names its
 /// pending projection member, and both authority flags stay false.
 fn corpus_record(record: &CorpusRecord<'_>) -> Result<String> {
-    if record.pending.is_empty() || record.pending.iter().any(|site| site.is_empty()) {
-        return Err("the NV12.05 post-gate witness always names its pending site".into());
+    if record.pending != ["projection-final-image"] {
+        return Err(
+            "the NV12.05 post-gate witness names exactly its pending projection site".into(),
+        );
     }
     Ok(format!(
         "SIM_NATIVE_CORPUS schema=v2 corpus={} definition={} post-gate={} post-gate-pending={} support={} subject={} input-closure={} native-authority=false m5-qualified=false",
@@ -244,22 +248,28 @@ mod tests {
             corpus_record(&record(&["projection-final-image"])).unwrap(),
             "SIM_NATIVE_CORPUS schema=v2 corpus=c definition=d post-gate=p post-gate-pending=projection-final-image support=s subject=j input-closure=i native-authority=false m5-qualified=false"
         );
-        assert!(corpus_record(&record(&[])).is_err());
-        assert!(corpus_record(&record(&[""])).is_err());
+        for refused in [
+            &[][..],
+            &[""][..],
+            &["gate-release"][..],
+            &["projection-final-image", "capture-start"][..],
+        ] {
+            assert!(corpus_record(&record(refused)).is_err(), "{refused:?}");
+        }
     }
 
     #[test]
     fn only_the_exact_pinned_corpus_is_accepted() {
         let corpus = "core/sha256:ab01";
-        require_pin(corpus, None).unwrap();
-        require_pin(corpus, Some(corpus)).unwrap();
+        assert_eq!(pinned(corpus.into(), None).unwrap(), corpus);
+        assert_eq!(pinned(corpus.into(), Some(corpus)).unwrap(), corpus);
         for other in [
             "core/sha256:ab02",
             "core/sha256:ab0",
             "core/sha256:AB01",
             "",
         ] {
-            let error = require_pin(corpus, Some(other)).unwrap_err().to_string();
+            let error = pinned(corpus.into(), Some(other)).unwrap_err().to_string();
             assert_eq!(
                 error,
                 format!("corpus {corpus} differs from expected {other}")

@@ -18,7 +18,9 @@ deliberate divergence, before-CAS incompletion and before-acknowledgement
 incompletion) and then extensions: bounded stops (timeout and cancellation),
 the formatter mutation, the owner validation/docs command pair, the owner
 refusal of an interpolated command, and the post-gate witness (three native
-sites plus a typed pending projection member). Together these carry typed
-native witnesses for all 22 facts. Until the authoritative native batch is
-produced and reviewed, those witnesses exist only in source and rehearsal:
-no receipt from this crate is evidence of a native run by itself.
+sites plus a typed pending projection member). Together these are the typed
+witness shapes the 22 facts require; the projection-final-image site stays a
+pending member, never satisfied here, until the projection-boundary packet
+completes it. Until the authoritative native batch is produced and reviewed,
+those witnesses exist only in source and rehearsal: no receipt from this
+crate is evidence of a native run by itself.
