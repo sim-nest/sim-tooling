@@ -59,7 +59,12 @@ jobs:
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-      - run: cargo run -p xtask -- simdoc --check
+      # simdoc is its own resolver root (crates/simdoc/Cargo.lock), outside
+      # the root workspace, so the root gates above never build or test it.
+      - run: cargo fmt --manifest-path crates/simdoc/Cargo.toml --check
+      - run: cargo test --locked --manifest-path crates/simdoc/Cargo.toml
+      - run: cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings
+      - run: cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check
       - run: cargo run -p xtask -- check-file-sizes
 
   check:

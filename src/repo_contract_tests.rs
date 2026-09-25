@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::{
     env, fs,
     path::PathBuf,
@@ -34,7 +39,7 @@ fn simdoc_generated_contracts_list_root_package() {
     let root = source_checkout_root();
     let artifacts = contract_artifacts(&root).unwrap();
 
-    assert_eq!(artifacts.package_count, 3);
+    assert_eq!(artifacts.package_count, 4);
 
     let feature_map = generated_json(&artifacts, "feature-map.json");
     let provenance = generated_json(&artifacts, "provenance.json");
@@ -55,11 +60,19 @@ fn simdoc_generated_contracts_list_root_package() {
         .collect::<Vec<_>>();
     assert_eq!(
         package_names,
-        ["sim-check-pack", "sim-check-pack-ubuntu-pc", "xtask"]
+        [
+            "sim-check-pack",
+            "sim-check-pack-ubuntu-pc",
+            "sim-check-pack-xtask",
+            "xtask"
+        ]
     );
     assert_eq!(provenance["schema"], "sim.provenance.v1");
     assert_eq!(provenance["repo"], "sim-tooling");
-    assert_eq!(provenance["generated_by"], "cargo run -p xtask -- simdoc");
+    assert_eq!(
+        provenance["generated_by"],
+        "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
+    );
     assert_eq!(provenance["api_docs"], "target/doc/");
     assert!(provenance["source_commit"].as_str().is_some());
     assert!(

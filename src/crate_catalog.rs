@@ -1,10 +1,14 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! The crate-catalog task: generate or check crate metadata, READMEs, and the crate catalog.
 
 use std::{
     collections::BTreeSet,
     fs, io,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde_json::{Value, json};
@@ -53,7 +57,9 @@ pub fn crate_catalog(
         Some(path) => path.canonicalize().map_err(display_io)?,
         None => find_repo_root(&std::env::current_dir().map_err(display_io)?)?,
     };
-    let metadata = cargo_metadata(&repo)?;
+    // The catalog covers the same packages as the repo contract: the root
+    // workspace plus every declared contract workspace.
+    let metadata = crate::repo_contract::cargo_metadata(&repo)?;
     let mut entries = workspace_packages(&repo, &metadata)?;
     let mut report = CrateCatalogReport {
         packages: entries.len(),
@@ -67,27 +73,6 @@ pub fn crate_catalog(
 
     sync_catalogs(&repo, &entries, check, &mut report)?;
     Ok(report)
-}
-
-fn cargo_metadata(repo: &Path) -> Result<Value, String> {
-    let output = Command::new("cargo")
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--all-features",
-            "--no-deps",
-        ])
-        .current_dir(repo)
-        .output()
-        .map_err(display_io)?;
-    if !output.status.success() {
-        return Err(format!(
-            "cargo metadata failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    serde_json::from_slice(&output.stdout).map_err(|err| format!("parse cargo metadata: {err}"))
 }
 
 fn workspace_packages(repo: &Path, metadata: &Value) -> Result<Vec<PackageEntry>, String> {

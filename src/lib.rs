@@ -95,8 +95,11 @@ mod json_render;
 mod platform_inventory;
 mod recipe_discovery;
 mod repo_contract;
+#[path = "../crates/simdoc/src/repo_contract_cut.rs"]
 mod repo_contract_cut;
+#[path = "../crates/simdoc/src/repo_contract_render.rs"]
 mod repo_contract_render;
+#[path = "../crates/simdoc/src/repo_contract_scan.rs"]
 mod repo_contract_scan;
 mod sealed_resources;
 mod validation_matrix;

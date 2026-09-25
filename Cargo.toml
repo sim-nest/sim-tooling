@@ -23,6 +23,11 @@ exclude = [
     "crates/sim-check-pack-xtask",
 ]
 
+# The check-pack crates keep their own resolver root under crates/; they are
+# still packages of this repository and belong in its generated contract.
+[workspace.metadata.sim]
+contract-workspaces = ["crates"]
+
 [workspace.package]
 edition = "2024"
 license = "MPL-2.0"

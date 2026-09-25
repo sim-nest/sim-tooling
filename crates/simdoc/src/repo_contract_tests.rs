@@ -1,6 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::{
     env, fs,
     path::PathBuf,
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -34,7 +40,7 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
     let root = crate::tooling_checkout_root();
     let artifacts = contract_artifacts(&root).unwrap();
 
-    assert_eq!(artifacts.package_count, 1);
+    assert_eq!(artifacts.package_count, 4);
 
     let feature_map = generated_json(&artifacts, "feature-map.json");
     let provenance = generated_json(&artifacts, "provenance.json");
@@ -53,7 +59,22 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
         .iter()
         .map(|package| package["package"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(package_names, ["xtask"]);
+    assert_eq!(
+        package_names,
+        [
+            "sim-check-pack",
+            "sim-check-pack-ubuntu-pc",
+            "sim-check-pack-xtask",
+            "xtask"
+        ]
+    );
+    let check_pack = repo_contract["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"] == "sim-check-pack")
+        .unwrap();
+    assert_eq!(check_pack["manifest"], "crates/sim-check-pack/Cargo.toml");
     assert_eq!(provenance["schema"], "sim.provenance.v1");
     assert_eq!(provenance["repo"], "sim-tooling");
     assert_eq!(
@@ -94,6 +115,12 @@ fn simdoc_generated_contracts_list_controlled_tooling_target() {
             .subjects
             .iter()
             .any(|subject| subject.id.as_str() == "crate/xtask")
+    );
+    assert!(
+        index_fragment
+            .subjects
+            .iter()
+            .any(|subject| subject.id.as_str() == "crate/sim-check-pack")
     );
     assert!(
         index_fragment
@@ -155,6 +182,175 @@ fn preserved_source_commit_ignores_changed_workspace_hash() {
     });
 
     assert!(preserved_source_commit(&preserved, "new-hash").is_none());
+}
+
+#[test]
+fn contract_workspaces_default_to_the_root_workspace() {
+    assert!(declared_contract_workspaces(&json!({})).unwrap().is_empty());
+    assert!(
+        declared_contract_workspaces(&json!({"metadata": {"sim": {}}}))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        declared_contract_workspaces(&json!({
+            "metadata": {"sim": {"contract-workspaces": ["crates", "tools/pack"]}}
+        }))
+        .unwrap(),
+        ["crates", "tools/pack"]
+    );
+}
+
+#[test]
+fn contract_workspaces_refuse_invalid_declarations() {
+    for (declared, expected) in [
+        (json!("crates"), "must be an array"),
+        (json!([1]), "entries must be strings"),
+        (json!([""]), "plain repository-relative"),
+        (json!(["../other"]), "plain repository-relative"),
+        (json!(["/abs"]), "plain repository-relative"),
+        (json!(["./crates"]), "plain repository-relative"),
+        (json!(["crates", "crates"]), "declared twice"),
+    ] {
+        let metadata = json!({"metadata": {"sim": {"contract-workspaces": declared}}});
+        let err = declared_contract_workspaces(&metadata).unwrap_err();
+        assert!(err.contains(expected), "{declared}: {err}");
+    }
+}
+
+#[test]
+fn contract_workspaces_refuse_a_package_in_two_workspaces() {
+    let root = temp_root("sim-tooling-contract-workspaces");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), "").unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"dup\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [workspace]\nexclude = [\"nested\"]\n\n\
+         [workspace.metadata.sim]\ncontract-workspaces = [\"nested\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("nested/dup/src")).unwrap();
+    fs::write(root.join("nested/dup/src/lib.rs"), "").unwrap();
+    fs::write(
+        root.join("nested/Cargo.toml"),
+        "[workspace]\nmembers = [\"dup\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("nested/dup/Cargo.toml"),
+        "[package]\nname = \"dup\"\nversion = \"0.2.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+
+    let err = cargo_metadata(&root).unwrap_err();
+    assert!(err.contains("more than one contract workspace"), "{err}");
+
+    fs::write(
+        root.join("nested/dup/Cargo.toml"),
+        "[package]\nname = \"other\"\nversion = \"0.2.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    let names = workspace_package_names(&cargo_metadata(&root).unwrap()).unwrap();
+    assert_eq!(names.into_iter().collect::<Vec<_>>(), ["dup", "other"]);
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"dup\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [workspace]\nexclude = [\"nested\"]\n\n\
+         [workspace.metadata.sim]\ncontract-workspaces = [\"nested/dup\"]\n",
+    )
+    .unwrap();
+    let err = cargo_metadata(&root).unwrap_err();
+    assert!(err.contains("is not a Cargo workspace root"), "{err}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn generation_timestamp_survives_unchanged_workspace_hash() {
+    let preserved = json!({
+        "workspace_hash": "same-hash",
+        "generation_timestamp": "2026-08-21T10:00:00+02:00"
+    });
+    let no_git = temp_root("sim-tooling-timestamp-preserved");
+
+    assert_eq!(
+        generation_timestamp(&no_git, &preserved, "same-hash", "not-read").unwrap(),
+        "2026-08-21T10:00:00+02:00"
+    );
+
+    fs::remove_dir_all(no_git).unwrap();
+}
+
+#[test]
+fn generation_timestamp_takes_commit_date_after_workspace_change() {
+    let (repo, commit) =
+        committed_repo("sim-tooling-timestamp-changed", "2026-09-20T08:30:00+02:00");
+    let preserved = json!({
+        "workspace_hash": "old-hash",
+        "generation_timestamp": "2026-08-21T10:00:00+02:00"
+    });
+
+    assert_eq!(
+        generation_timestamp(&repo, &preserved, "new-hash", &commit).unwrap(),
+        "2026-09-20T08:30:00+02:00"
+    );
+    assert_eq!(
+        generation_timestamp(&repo, &json!({}), "new-hash", &commit).unwrap(),
+        "2026-09-20T08:30:00+02:00"
+    );
+
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn generation_timestamp_refuses_unreadable_commit_date() {
+    let (repo, _) = committed_repo("sim-tooling-timestamp-missing", "2026-09-20T08:30:00+02:00");
+    let missing = "0".repeat(40);
+
+    let err = generation_timestamp(&repo, &json!({}), "new-hash", &missing).unwrap_err();
+    assert!(err.contains("did not return a committer date"), "{err}");
+    let err = generation_timestamp(&repo, &json!({}), "new-hash", "--output=x").unwrap_err();
+    assert!(err.contains("not a hexadecimal commit id"), "{err}");
+    let legacy = json!({"workspace_hash": "same-hash", "generation_timestamp": "unknown"});
+    assert!(generation_timestamp(&repo, &legacy, "same-hash", &missing).is_err());
+
+    fs::remove_dir_all(repo).unwrap();
+}
+
+fn committed_repo(name: &str, committer_date: &str) -> (PathBuf, String) {
+    let repo = temp_root(name);
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "user.name=simdoc",
+                "-c",
+                "user.email=simdoc@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_DATE", committer_date)
+            .env("GIT_COMMITTER_DATE", committer_date)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?} failed: {output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "commit",
+        "--quiet",
+        "--no-verify",
+        "--allow-empty",
+        "-m",
+        "fixture",
+    ]);
+    let commit = git(&["rev-parse", "HEAD"]);
+    (repo, commit)
 }
 
 fn generated_json(artifacts: &ContractArtifacts, name: &'static str) -> Value {

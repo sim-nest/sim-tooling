@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Produces an owner-selected Cargo resolver view from one retained unit graph.
 
 use super::{
@@ -11,66 +16,28 @@ use super::{
 };
 use serde::Serialize;
 use serde_json::Value as Json;
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    os::unix::fs::{PermissionsExt, symlink},
+    fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
 
+mod checks;
+mod options;
+mod view;
+
+use checks::{
+    exact_file, file_digest, tool_version, validate_graph, validate_metadata, validate_narrow_lock,
+};
+use options::{Options, Profile, parse};
+use view::{
+    ViewBinding, ViewBudget, install_package_view, revalidate_view_bindings, write_view_file,
+};
+
 const MAXIMUM_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const MAXIMUM_DIAGNOSTIC_BYTES: usize = 2 * 1024 * 1024;
-const MAXIMUM_VIEW_ENTRIES: usize = 4096;
-const MAXIMUM_VIEW_BYTES: usize = 256 * 1024 * 1024;
-
-struct Options {
-    metadata: PathBuf,
-    unit_graph: PathBuf,
-    workspace: PathBuf,
-    lock: PathBuf,
-    config: PathBuf,
-    vendor_root: PathBuf,
-    cargo_home: PathBuf,
-    cargo: PathBuf,
-    rustc: PathBuf,
-    destination: PathBuf,
-    owner_roots: Vec<PathBuf>,
-    package: String,
-    binary: String,
-    target: String,
-    profile: Profile,
-    expected: BTreeMap<&'static str, String>,
-    expected_cargo_version: String,
-    expected_rustc_version: String,
-    expected_units: usize,
-    expected_local_packages: usize,
-    expected_registry_packages: usize,
-    view_limit: TreeLimit,
-}
-
-#[derive(Clone, Copy, Serialize)]
-enum Profile {
-    Development,
-    Release,
-}
-
-#[derive(Serialize)]
-struct ViewBinding {
-    package: String,
-    manifest_owner: String,
-    manifest_owner_sha256: String,
-    manifest_sha256: String,
-    members: Vec<MemberBinding>,
-}
-
-#[derive(Serialize)]
-struct MemberBinding {
-    name: String,
-    owner: String,
-}
 
 #[derive(Serialize)]
 struct SelectionReport {
@@ -118,106 +85,6 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         destination.display()
     );
     Ok(())
-}
-
-fn parse(args: &[String]) -> Result<Options, String> {
-    let mut values = BTreeMap::new();
-    let mut owner_roots = Vec::new();
-    let mut index = 3;
-    while index < args.len() {
-        let flag = args[index].as_str();
-        let value = args
-            .get(index + 1)
-            .ok_or_else(|| format!("{flag} requires a value"))?;
-        if flag == "--owner-root" {
-            owner_roots.push(PathBuf::from(value));
-        } else if values.insert(flag, value.clone()).is_some() {
-            return Err(format!("build-inputs select repeats {flag}"));
-        }
-        index += 2;
-    }
-    let required = |name: &'static str| {
-        values
-            .get(name)
-            .cloned()
-            .ok_or_else(|| format!("build-inputs select requires {name}"))
-    };
-    if owner_roots.is_empty() {
-        return Err("build-inputs select requires at least one --owner-root".into());
-    }
-    let identifier = |role: &str, value: String| -> Result<String, String> {
-        if value.is_empty()
-            || value.len() > 128
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(format!("build-inputs select {role} is invalid"));
-        }
-        Ok(value)
-    };
-    let target = required("--target")?;
-    if target.is_empty()
-        || target.len() > 128
-        || !target
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        return Err("build-inputs select target is invalid".into());
-    }
-    let profile = match required("--profile")?.as_str() {
-        "development" => Profile::Development,
-        "release" => Profile::Release,
-        _ => return Err("build-inputs select profile is invalid".into()),
-    };
-    let number = |name: &'static str, hard: usize| -> Result<usize, String> {
-        let value = required(name)?
-            .parse::<usize>()
-            .map_err(|_| format!("{name} is not a canonical positive integer"))?;
-        if value == 0 || value > hard {
-            return Err(format!("{name} exceeds its hard bound"));
-        }
-        Ok(value)
-    };
-    let mut expected = BTreeMap::new();
-    for (key, flag) in [
-        ("metadata", "--expected-metadata-sha256"),
-        ("unit-graph", "--expected-unit-graph-sha256"),
-        ("workspace-manifest", "--expected-workspace-manifest-sha256"),
-        ("lock", "--expected-lock-sha256"),
-        ("config", "--expected-config-sha256"),
-        ("cargo", "--expected-cargo-sha256"),
-        ("rustc", "--expected-rustc-sha256"),
-    ] {
-        expected.insert(key, expected_digest(&required(flag)?)?);
-    }
-    Ok(Options {
-        metadata: PathBuf::from(required("--metadata")?),
-        unit_graph: PathBuf::from(required("--unit-graph")?),
-        workspace: PathBuf::from(required("--workspace")?),
-        lock: PathBuf::from(required("--lock")?),
-        config: PathBuf::from(required("--config")?),
-        vendor_root: PathBuf::from(required("--vendor-root")?),
-        cargo_home: PathBuf::from(required("--cargo-home")?),
-        cargo: PathBuf::from(required("--cargo")?),
-        rustc: PathBuf::from(required("--rustc")?),
-        destination: PathBuf::from(required("--destination")?),
-        owner_roots,
-        package: identifier("package", required("--package")?)?,
-        binary: identifier("binary", required("--bin")?)?,
-        target,
-        profile,
-        expected,
-        expected_cargo_version: required("--expected-cargo-version")?,
-        expected_rustc_version: required("--expected-rustc-version")?,
-        expected_units: number("--expected-units", 16_384)?,
-        expected_local_packages: number("--expected-local-packages", 4096)?,
-        expected_registry_packages: number("--expected-registry-packages", 4096)?,
-        view_limit: TreeLimit {
-            entries: number("--max-view-entries", MAXIMUM_VIEW_ENTRIES)?,
-            bytes: number("--max-view-bytes", MAXIMUM_VIEW_BYTES)?,
-        },
-    })
 }
 
 fn select(options: Options) -> Result<SelectionReport, String> {
@@ -609,120 +476,6 @@ fn select_into(input: SelectionInputs<'_>) -> Result<SelectionReport, String> {
     Ok(report)
 }
 
-fn install_package_view(
-    package: &ResolverPackage,
-    workspace: &Path,
-    destination: &Path,
-    owner_roots: &[PathBuf],
-    workspace_member: bool,
-    budget: &mut ViewBudget,
-) -> Result<ViewBinding, String> {
-    let source_root = package
-        .manifest
-        .parent()
-        .ok_or("selected package manifest has no parent")?
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    let expected = workspace.join("packages").join(&package.name);
-    if source_root != expected || package.manifest != expected.join("Cargo.toml") {
-        return Err(format!(
-            "selected package path is not canonical: {}",
-            package.id
-        ));
-    }
-    let owner_manifest = bounded_read(&package.manifest)?;
-    let manifest = if workspace_member {
-        owner_manifest.clone()
-    } else {
-        attach_resolver_package_to_workspace(&owner_manifest)?
-    };
-    let target = destination.join(&package.name);
-    fs::create_dir(&target).map_err(|error| error.to_string())?;
-    budget.add(0)?;
-    budget.add(manifest.len())?;
-    write_view_file(&target.join("Cargo.toml"), &manifest, false)?;
-    let mut entries = fs::read_dir(&source_root)
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    let mut members = Vec::new();
-    for entry in entries {
-        let name = entry.file_name();
-        if name == "Cargo.toml" {
-            continue;
-        }
-        if matches!(name.to_str(), Some(".git" | ".sim" | "target")) {
-            continue;
-        }
-        let owner = entry
-            .path()
-            .canonicalize()
-            .map_err(|error| format!("{}: {error}", entry.path().display()))?;
-        if !owner_roots.iter().any(|root| owner.starts_with(root)) {
-            return Err(format!(
-                "selected package member escaped owner roots: {}",
-                owner.display()
-            ));
-        }
-        let name = name
-            .to_str()
-            .filter(|name| !name.is_empty() && name.len() <= 255)
-            .ok_or("selected package member name is invalid")?;
-        symlink(&owner, target.join(name)).map_err(|error| error.to_string())?;
-        budget.add(0)?;
-        members.push(MemberBinding {
-            name: name.into(),
-            owner: owner.display().to_string(),
-        });
-    }
-    if members.is_empty() {
-        return Err(format!(
-            "selected package has no source members: {}",
-            package.id
-        ));
-    }
-    Ok(ViewBinding {
-        package: package.name.clone(),
-        manifest_owner: package.manifest.display().to_string(),
-        manifest_owner_sha256: digest(&owner_manifest),
-        manifest_sha256: digest(&manifest),
-        members,
-    })
-}
-
-fn revalidate_view_bindings(view: &Path, bindings: &[ViewBinding]) -> Result<(), String> {
-    for package in bindings {
-        let root = view.join("packages").join(&package.package);
-        if digest(&bounded_read(Path::new(&package.manifest_owner))?)
-            != package.manifest_owner_sha256
-        {
-            return Err(format!(
-                "selected package owner manifest changed: {}",
-                package.package
-            ));
-        }
-        if digest(&bounded_read(&root.join("Cargo.toml"))?) != package.manifest_sha256 {
-            return Err(format!(
-                "selected package manifest changed: {}",
-                package.package
-            ));
-        }
-        for member in &package.members {
-            let path = root.join(&member.name);
-            if path.canonicalize().map_err(|error| error.to_string())?
-                != PathBuf::from(&member.owner)
-            {
-                return Err(format!(
-                    "selected package source changed: {}",
-                    package.package
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn validate_selected_targets(package: &Package, owners: &[PathBuf]) -> Result<(), String> {
     for target in &package.targets {
         let source = target
@@ -785,212 +538,10 @@ fn invoke(
     Ok(output)
 }
 
-fn validate_metadata(bytes: &[u8]) -> Result<(), String> {
-    let value: Json = serde_json::from_slice(bytes)
-        .map_err(|error| format!("selected Cargo metadata is invalid: {error}"))?;
-    let packages = value.get("packages").and_then(Json::as_array);
-    let nodes = value
-        .get("resolve")
-        .and_then(|resolve| resolve.get("nodes"))
-        .and_then(Json::as_array);
-    if packages.is_none_or(|rows| rows.is_empty() || rows.len() > 16_384)
-        || nodes.is_none_or(|rows| rows.is_empty() || rows.len() > 16_384)
-    {
-        return Err("selected Cargo metadata is empty or unbounded".into());
-    }
-    Ok(())
-}
-
-fn validate_graph(bytes: &[u8]) -> Result<(), String> {
-    let value: Json = serde_json::from_slice(bytes)
-        .map_err(|error| format!("selected Cargo unit graph is invalid: {error}"))?;
-    let units = value.get("units").and_then(Json::as_array);
-    if value.get("version").and_then(Json::as_u64) != Some(1)
-        || units.is_none_or(|rows| rows.is_empty() || rows.len() > 16_384)
-    {
-        return Err("selected Cargo unit graph schema or unit count differs".into());
-    }
-    Ok(())
-}
-
-fn validate_narrow_lock(
-    original: &[u8],
-    narrowed: &[u8],
-    local: &[ResolverPackage],
-) -> Result<(), String> {
-    let original = lock_rows(original)?;
-    let narrowed = lock_rows(narrowed)?;
-    let local = local
-        .iter()
-        .map(|package| package.name.as_str())
-        .collect::<BTreeSet<_>>();
-    for row in narrowed {
-        let name = row
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .ok_or("selected Cargo.lock package name is invalid")?;
-        let version = row
-            .get("version")
-            .and_then(toml::Value::as_str)
-            .ok_or("selected Cargo.lock package version is invalid")?;
-        let source = row.get("source").and_then(toml::Value::as_str);
-        if source.is_none() {
-            if !local.contains(name) {
-                return Err(format!(
-                    "selected Cargo.lock introduced local package {name}"
-                ));
-            }
-            continue;
-        }
-        let checksum = row
-            .get("checksum")
-            .and_then(toml::Value::as_str)
-            .ok_or("selected Cargo.lock registry checksum is invalid")?;
-        let found = original.iter().any(|candidate| {
-            candidate.get("name").and_then(toml::Value::as_str) == Some(name)
-                && candidate.get("version").and_then(toml::Value::as_str) == Some(version)
-                && candidate.get("source").and_then(toml::Value::as_str) == source
-                && candidate.get("checksum").and_then(toml::Value::as_str) == Some(checksum)
-        });
-        if !found {
-            return Err(format!(
-                "selected Cargo.lock introduced registry package {name} {version}"
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn lock_rows(bytes: &[u8]) -> Result<Vec<toml::Value>, String> {
-    let root: toml::Value = toml::from_str(
-        std::str::from_utf8(bytes).map_err(|error| format!("Cargo.lock is not UTF-8: {error}"))?,
-    )
-    .map_err(|error| format!("Cargo.lock is invalid: {error}"))?;
-    root.get("package")
-        .and_then(toml::Value::as_array)
-        .cloned()
-        .ok_or_else(|| "Cargo.lock has no packages".into())
-}
-
-fn exact_file(path: &Path, expected: &str, role: &str) -> Result<PathBuf, String> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    if !canonical.is_file() || file_digest(&canonical)? != expected {
-        return Err(format!("build-inputs select {role} identity differs"));
-    }
-    Ok(canonical)
-}
-
-fn file_digest(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
-}
-
-fn tool_version(path: &Path, role: &str, expected: &str) -> Result<String, String> {
-    if expected.is_empty() || expected.len() > 64 || expected.contains(char::is_whitespace) {
-        return Err(format!(
-            "build-inputs select expected {role} version is invalid"
-        ));
-    }
-    let output = Command::new(path)
-        .args(["--version", "--verbose"])
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .map_err(|error| format!("start selected {role}: {error}"))?;
-    if !output.status.success() || output.stdout.len() > 4096 || !output.stderr.is_empty() {
-        return Err(format!("selected {role} version observation failed"));
-    }
-    let text = std::str::from_utf8(&output.stdout)
-        .map_err(|error| format!("selected {role} version is not UTF-8: {error}"))?;
-    let first = text
-        .lines()
-        .next()
-        .ok_or("selected tool version is empty")?;
-    if first.split_whitespace().nth(1) != Some(expected) {
-        return Err(format!("selected {role} version differs"));
-    }
-    Ok(first.into())
-}
-
-fn write_view_file(path: &Path, bytes: &[u8], mutable: bool) -> Result<(), String> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    file.write_all(bytes).map_err(|error| error.to_string())?;
-    file.sync_all().map_err(|error| error.to_string())?;
-    fs::set_permissions(
-        path,
-        fs::Permissions::from_mode(if mutable { 0o600 } else { 0o444 }),
-    )
-    .map_err(|error| error.to_string())
-}
-
-fn expected_digest(value: &str) -> Result<String, String> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("build-inputs select expected digest is invalid".into());
-    }
-    Ok(value.to_ascii_lowercase())
-}
-
-struct ViewBudget {
-    limit: TreeLimit,
-    entries: usize,
-    bytes: usize,
-}
-
-impl ViewBudget {
-    fn new(limit: TreeLimit) -> Self {
-        Self {
-            limit,
-            entries: 1,
-            bytes: 0,
-        }
-    }
-
-    fn add(&mut self, bytes: usize) -> Result<(), String> {
-        self.entries = self
-            .entries
-            .checked_add(1)
-            .ok_or("selected view entry overflow")?;
-        self.bytes = self
-            .bytes
-            .checked_add(bytes)
-            .ok_or("selected view byte overflow")?;
-        if self.entries > self.limit.entries || self.bytes > self.limit.bytes {
-            return Err("selected resolver view exceeds its finite limit".into());
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn narrowed_lock_refuses_a_registry_version_absent_from_retained_lock() {
-        let original = b"version = 4\n\n[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"aaa\"\n";
-        let substituted = b"version = 4\n\n[[package]]\nname = \"dep\"\nversion = \"2.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"bbb\"\n";
-        assert!(validate_narrow_lock(original, substituted, &[]).is_err());
-    }
 
     #[test]
     fn canonical_graph_allows_only_the_owned_local_root_to_move() {
@@ -1026,76 +577,5 @@ mod tests {
         let substituted = canonical_unit_graph(&metadata("/view"), &graph("/view", "extra"))
             .expect("substituted graph");
         assert_ne!(first, substituted);
-    }
-
-    #[test]
-    fn selected_view_limits_never_exceed_native_tree_limits() {
-        let args = [
-            "xtask",
-            "build-inputs",
-            "select",
-            "--metadata",
-            "/metadata",
-            "--unit-graph",
-            "/graph",
-            "--workspace",
-            "/workspace",
-            "--lock",
-            "/lock",
-            "--config",
-            "/config",
-            "--vendor-root",
-            "/cargo/registry/src/index",
-            "--cargo-home",
-            "/cargo",
-            "--cargo",
-            "/bin/cargo",
-            "--rustc",
-            "/bin/rustc",
-            "--destination",
-            "/out",
-            "--owner-root",
-            "/owner",
-            "--package",
-            "app",
-            "--bin",
-            "app",
-            "--target",
-            "x86_64-unknown-linux-gnu",
-            "--profile",
-            "release",
-            "--expected-cargo-version",
-            "1.96.0",
-            "--expected-rustc-version",
-            "1.96.0",
-            "--expected-units",
-            "156",
-            "--expected-local-packages",
-            "42",
-            "--expected-registry-packages",
-            "49",
-            "--max-view-entries",
-            "4097",
-            "--max-view-bytes",
-            "268435456",
-            "--expected-metadata-sha256",
-            &"a".repeat(64),
-            "--expected-unit-graph-sha256",
-            &"b".repeat(64),
-            "--expected-workspace-manifest-sha256",
-            &"c".repeat(64),
-            "--expected-lock-sha256",
-            &"d".repeat(64),
-            "--expected-config-sha256",
-            &"e".repeat(64),
-            "--expected-cargo-sha256",
-            &"f".repeat(64),
-            "--expected-rustc-sha256",
-            &"0".repeat(64),
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-        assert!(parse(&args).is_err());
     }
 }

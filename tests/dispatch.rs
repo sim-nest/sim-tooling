@@ -16,15 +16,18 @@ fn check_pack_reports_its_separate_checker_workspace() {
 }
 
 #[test]
-fn simdoc_extra_flags_reach_simdoc_parser() {
+fn simdoc_reports_its_isolated_resolver_root() {
     let args = vec![
         "xtask".to_owned(),
         "simdoc".to_owned(),
-        "--not-a-real-flag".to_owned(),
+        "--check".to_owned(),
     ];
 
-    let err = xtask::run(args).expect_err("unknown simdoc flag should fail");
-    assert!(err.contains("unknown simdoc argument"));
+    let err = xtask::run(args).expect_err("simdoc no longer runs inside xtask");
+    assert_eq!(
+        err,
+        "simdoc moved to its isolated resolver root; run `cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc ...`"
+    );
 }
 
 #[test]
