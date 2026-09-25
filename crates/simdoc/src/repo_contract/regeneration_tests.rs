@@ -61,7 +61,7 @@ fn undeclared_commands_fall_back_to_the_direct_encoder_check() {
 }
 
 #[test]
-fn direct_encoder_command_names_the_encoder_from_the_repository_root() {
+fn direct_encoder_command_never_names_a_path_outside_the_repository() {
     let root = temp_root("regeneration-layout");
     let repo = root.join("sim-platform");
     let manifest = root.join("sim-tooling/crates/simdoc/Cargo.toml");
@@ -69,16 +69,25 @@ fn direct_encoder_command_names_the_encoder_from_the_repository_root() {
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(&manifest, "").unwrap();
 
+    let err = direct_encoder_command(&repo, &manifest).unwrap_err();
+    assert!(
+        err.contains("declare workspace.metadata.sim.docs-command"),
+        "{err}"
+    );
+    let err = regeneration(&repo, &json!({})).unwrap_err();
+    assert!(err.contains("outside this repository"), "{err}");
+
+    let inside = root.join("sim-tooling");
     assert_eq!(
-        direct_encoder_command(&repo, &manifest).unwrap(),
-        "cargo run --locked --manifest-path ../sim-tooling/crates/simdoc/Cargo.toml -- simdoc"
+        direct_encoder_command(&inside, &manifest).unwrap(),
+        "cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc"
     );
 
-    let spaced = root.join("with space/Cargo.toml");
+    let spaced = inside.join("with space/Cargo.toml");
     fs::create_dir_all(spaced.parent().unwrap()).unwrap();
     fs::write(&spaced, "").unwrap();
     assert!(
-        direct_encoder_command(&repo, &spaced)
+        direct_encoder_command(&inside, &spaced)
             .unwrap_err()
             .contains("cannot be recorded")
     );
@@ -150,18 +159,34 @@ fn toolchain_identity_is_the_pinned_channel() {
 }
 
 #[test]
-fn execution_records_operation_identities_and_no_resolver_by_default() {
-    if env::var_os(crate::resolver_input::RESOLVER_ENV).is_some() {
-        return;
-    }
-    let recorded = execution(&tooling_root()).unwrap();
-
+fn execution_records_identities_and_no_path_for_an_outside_resolver() {
+    let recorded = execution_with(None);
     assert_eq!(recorded["operation"], CONTRACT_OPERATION);
     assert_eq!(recorded["executable"], executable_identity());
     assert_eq!(recorded["toolchain"], toolchain_identity());
     assert!(recorded["resolver"].is_null());
+
+    let root = temp_root("regeneration-resolver");
+    let meta = root.join("sim-private/.meta-workspace");
+    fs::create_dir_all(&meta).unwrap();
+    fs::write(meta.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+    fs::write(meta.join("Cargo.lock"), "version = 4\n").unwrap();
+    let resolver = crate::resolver_input::validate(&meta.join("Cargo.toml")).unwrap();
+
+    let recorded = execution_with(Some(&resolver));
+    assert_eq!(recorded["resolver"]["kind"], "shared-resolver");
     let text = recorded.to_string();
-    assert!(!text.contains(env!("CARGO_MANIFEST_DIR")), "{text}");
+    for leak in [
+        root.to_string_lossy().as_ref(),
+        "sim-private",
+        "meta-workspace",
+        "Cargo.toml",
+        "../",
+        env!("CARGO_MANIFEST_DIR"),
+    ] {
+        assert!(!text.contains(leak), "{leak} in {text}");
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn temp_root(name: &str) -> PathBuf {

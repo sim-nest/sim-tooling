@@ -244,7 +244,8 @@ impl Fixture {
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
              description = \"Fixture application.\"\n\n\
              [workspace]\nexclude = [\"nested\"]\n\n\
-             [workspace.metadata.sim]\ncontract-workspaces = [\"nested\"]\n",
+             [workspace.metadata.sim]\ncontract-workspaces = [\"nested\"]\n\
+             docs-command = \"cargo run -p xtask -- simdoc\"\n",
         );
         fixture.write(
             "src/lib.rs",

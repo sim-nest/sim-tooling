@@ -10,12 +10,14 @@
 //! pre-release route, where standalone workspaces pin unpublished siblings).
 //! It is accepted only when it names an ordinary `Cargo.toml` that declares a
 //! `[workspace]` and sits beside a `Cargo.lock`; anything else is refused. The
-//! accepted input is recorded in provenance by its path relative to the
-//! repository and the SHA-256 of its lock, never by an absolute path.
+//! accepted input is recorded in provenance only by content: the SHA-256 of
+//! its manifest and of its lock. It lives outside the repository (often in a
+//! private, gitignored location), so neither its path nor any directory name
+//! is ever recorded.
 
 use std::{
     env, fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use serde_json::{Value, json};
@@ -30,22 +32,23 @@ const MAX_LOCK_BYTES: u64 = 64 * 1024 * 1024;
 /// A validated shared resolver input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResolverInput {
-    /// Canonical path of the workspace manifest.
+    /// Canonical path of the workspace manifest; used to run cargo, never
+    /// recorded.
     pub(crate) manifest: PathBuf,
+    /// SHA-256 of the workspace manifest.
+    pub(crate) manifest_sha256: String,
     /// SHA-256 of the workspace's `Cargo.lock`.
     pub(crate) lock_sha256: String,
 }
 
 impl ResolverInput {
-    /// The provenance projection, relative to `repo`.
-    pub(crate) fn projection(&self, repo: &Path) -> Result<Value, String> {
-        let repo = repo
-            .canonicalize()
-            .map_err(|err| format!("{}: {err}", repo.display()))?;
-        Ok(json!({
-            "manifest": relative_path(&repo, &self.manifest)?,
+    /// The provenance projection: content digests only, no path.
+    pub(crate) fn projection(&self) -> Value {
+        json!({
+            "kind": "shared-resolver",
+            "manifest_sha256": self.manifest_sha256,
             "lock_sha256": self.lock_sha256,
-        }))
+        })
     }
 }
 
@@ -54,14 +57,6 @@ pub(crate) fn resolver_input() -> Result<Option<ResolverInput>, String> {
     match env::var_os(RESOLVER_ENV) {
         None => Ok(None),
         Some(value) => validate(Path::new(&value)).map(Some),
-    }
-}
-
-/// The provenance projection of the environment's resolver input, or null.
-pub(crate) fn resolver_projection(repo: &Path) -> Result<Value, String> {
-    match resolver_input()? {
-        Some(input) => input.projection(repo),
-        None => Ok(Value::Null),
     }
 }
 
@@ -84,8 +79,9 @@ pub(crate) fn validate(path: &Path) -> Result<ResolverInput, String> {
     let manifest = path
         .canonicalize()
         .map_err(|err| refused(&err.to_string()))?;
-    let table = fs::read_to_string(&manifest)
-        .map_err(|err| refused(&err.to_string()))?
+    let manifest_bytes = fs::read(&manifest).map_err(|err| refused(&err.to_string()))?;
+    let table = String::from_utf8(manifest_bytes.clone())
+        .map_err(|_| refused("manifest is not UTF-8"))?
         .parse::<toml::Table>()
         .map_err(|err| refused(&format!("invalid TOML: {err}")))?;
     if !table.get("workspace").is_some_and(toml::Value::is_table) {
@@ -102,35 +98,9 @@ pub(crate) fn validate(path: &Path) -> Result<ResolverInput, String> {
     let lock_bytes = fs::read(&lock).map_err(|err| refused(&err.to_string()))?;
     Ok(ResolverInput {
         manifest,
+        manifest_sha256: content_digest(&manifest_bytes),
         lock_sha256: content_digest(&lock_bytes),
     })
-}
-
-/// `to` relative to `from`; both must be canonical absolute paths.
-pub(crate) fn relative_path(from: &Path, to: &Path) -> Result<String, String> {
-    let from = normal_components(from)?;
-    let to = normal_components(to)?;
-    let shared = from
-        .iter()
-        .zip(&to)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut parts = vec![".."; from.len() - shared];
-    parts.extend(to[shared..].iter().map(String::as_str));
-    Ok(parts.join("/"))
-}
-
-fn normal_components(path: &Path) -> Result<Vec<String>, String> {
-    path.components()
-        .filter(|component| !matches!(component, Component::RootDir))
-        .map(|component| match component {
-            Component::Normal(part) => part
-                .to_str()
-                .map(str::to_owned)
-                .ok_or_else(|| format!("{} is not UTF-8", path.display())),
-            _ => Err(format!("{} is not a canonical path", path.display())),
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -150,23 +120,27 @@ mod tests {
     }
 
     #[test]
-    fn a_locked_workspace_manifest_is_accepted_and_recorded_relatively() {
+    fn a_resolver_outside_the_repository_is_recorded_by_content_only() {
         let root = temp_root("resolver-accepted");
         let meta = root.join("sim-private/.meta-workspace");
         fs::create_dir_all(&meta).unwrap();
-        fs::create_dir_all(root.join("sim-platform")).unwrap();
         fs::write(meta.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
         fs::write(meta.join("Cargo.lock"), "version = 4\n").unwrap();
 
         let input = validate(&meta.join("Cargo.toml")).unwrap();
-        assert_eq!(input.lock_sha256, content_digest(b"version = 4\n"));
+        let projection = input.projection();
         assert_eq!(
-            input.projection(&root.join("sim-platform")).unwrap(),
+            projection,
             json!({
-                "manifest": "../sim-private/.meta-workspace/Cargo.toml",
+                "kind": "shared-resolver",
+                "manifest_sha256": content_digest(b"[workspace]\nmembers = []\n"),
                 "lock_sha256": content_digest(b"version = 4\n"),
             })
         );
+        let text = projection.to_string();
+        for leak in ["/", "sim-private", "meta-workspace", "Cargo.toml", ".."] {
+            assert!(!text.contains(leak), "{leak} in {text}");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -23,8 +23,10 @@
 //! ```
 //!
 //! Without `docs-command`, the regeneration command is the direct encoder
-//! invocation from the repository root; without `validation-commands`, the
-//! only validation command is that command with `--check`.
+//! invocation from the repository root, which exists only when the encoder
+//! lives inside that repository; any other repository must declare it.
+//! Without `validation-commands`, the only validation command is the
+//! regeneration command with `--check`.
 
 use std::{
     collections::BTreeSet,
@@ -35,7 +37,7 @@ use serde_json::{Value, json};
 
 use crate::{
     content_digest::content_digest,
-    resolver_input::{relative_path, resolver_projection},
+    resolver_input::{ResolverInput, resolver_input},
 };
 
 const DOCS_COMMAND_KEY: &str = "docs-command";
@@ -82,14 +84,21 @@ pub(crate) fn toolchain_identity() -> Value {
     })
 }
 
-/// What produced the artifacts for `repo`.
-pub(crate) fn execution(repo: &Path) -> Result<Value, String> {
-    Ok(json!({
+/// What produced the artifacts, with the environment's validated shared
+/// resolver input if one is set.
+pub(crate) fn execution() -> Result<Value, String> {
+    Ok(execution_with(resolver_input()?.as_ref()))
+}
+
+/// What produced the artifacts. Every field is a version or a content digest:
+/// nothing outside the repository is recorded by path.
+pub(crate) fn execution_with(resolver: Option<&ResolverInput>) -> Value {
+    json!({
         "operation": CONTRACT_OPERATION,
         "executable": executable_identity(),
         "toolchain": toolchain_identity(),
-        "resolver": resolver_projection(repo)?,
-    }))
+        "resolver": resolver.map_or(Value::Null, ResolverInput::projection),
+    })
 }
 
 /// Reads the repository's declared regeneration commands from the root
@@ -149,7 +158,9 @@ fn encoder_manifest() -> PathBuf {
 }
 
 /// The direct invocation of this encoder from `repo`'s root, naming the
-/// encoder manifest by its path relative to that root.
+/// encoder manifest by its path inside that repository. An encoder outside
+/// the repository cannot be named without recording a path outside it, so the
+/// repository must declare its own `docs-command` instead.
 pub(crate) fn direct_encoder_command(repo: &Path, manifest: &Path) -> Result<String, String> {
     let repo = repo
         .canonicalize()
@@ -157,7 +168,18 @@ pub(crate) fn direct_encoder_command(repo: &Path, manifest: &Path) -> Result<Str
     let manifest = manifest
         .canonicalize()
         .map_err(|err| format!("encoder manifest {}: {err}", manifest.display()))?;
-    let relative = relative_path(&repo, &manifest)?;
+    let relative = manifest
+        .strip_prefix(&repo)
+        .map_err(|_| {
+            format!(
+                "the simdoc encoder is outside this repository; declare \
+                 workspace.metadata.sim.{DOCS_COMMAND_KEY} with the command that regenerates its \
+                 documentation (no path outside the repository is recorded)"
+            )
+        })?
+        .to_str()
+        .ok_or("encoder manifest path is not UTF-8")?
+        .replace(std::path::MAIN_SEPARATOR, "/");
     if !relative
         .bytes()
         .all(|byte| byte.is_ascii_graphic() && byte != b'\\')

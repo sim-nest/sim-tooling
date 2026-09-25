@@ -34,6 +34,8 @@ use package_projection::*;
 // simdoc is the one contract engine: xtask's repo-contract, index-check,
 // crate-catalog, and validation-matrix routes run this locked executable
 // instead of compiling any of it.
+#[path = "repo_contract/path_guard.rs"]
+mod path_guard;
 #[path = "repo_contract/workspace_policy.rs"]
 mod workspace_policy;
 #[path = "repo_contract/workspaces.rs"]
@@ -158,6 +160,7 @@ fn contract_artifacts_observed(
     );
     after_projections();
     ensure_inputs_unchanged(repo, &provenance)?;
+    path_guard::ensure_repository_local(repo, &files)?;
 
     Ok(ContractArtifacts {
         package_count: packages.len(),

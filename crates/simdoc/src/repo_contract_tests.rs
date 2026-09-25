@@ -346,3 +346,19 @@ fn a_fixture_contract_is_generated_from_one_measured_snapshot() {
     .unwrap();
     assert!(err.contains("changed during generation"), "{err}");
 }
+
+#[test]
+fn a_contract_that_would_record_an_outside_path_is_refused() {
+    let repo = crate::test_fixture::FixtureRepo::nested("contract-outside-path");
+    let outside = repo.path().parent().unwrap().to_string_lossy().into_owned();
+    repo.write(
+        "nested/tool/Cargo.toml",
+        &repo
+            .read("nested/tool/Cargo.toml")
+            .replace("Fixture tool.", &format!("Built from {outside}.")),
+    );
+    repo.commit();
+
+    let err = contract_artifacts(repo.path()).err().unwrap();
+    assert!(err.contains("nothing outside the repository"), "{err}");
+}

@@ -28,7 +28,7 @@ pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String>
         "repo": repo_name(repo),
         "source_commit": source_commit,
         "source_remote": source_remote,
-        "execution": execution(repo)?,
+        "execution": execution()?,
         "regeneration_command": regeneration.regeneration_command,
         "api_docs": "target/doc/",
         "generator": GENERATOR,
