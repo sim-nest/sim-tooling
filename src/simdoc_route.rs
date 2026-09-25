@@ -13,12 +13,14 @@
 //!
 //! Before anything runs, [`crate::simdoc_pin`] verifies the engine against
 //! the identity this repository commits: its source and lock digests, the
-//! pinned toolchain, and `cargo`/`rustc` resolved through `rustup` rather
-//! than `PATH` (the caller's `CARGO` variable is ignored). The engine is then
-//! built with exactly those binaries from the sim-tooling root, with compiler
-//! wrappers removed, and its embedded identity must match before any real
-//! command runs. Output is never captured: the child's standard streams pass
-//! straight through, so nothing unbounded is buffered here.
+//! pinned toolchain, and a toolchain directory whose `cargo`, `rustc`,
+//! `rustdoc`, and libraries hash to the committed digest and report the
+//! committed commits. Nothing is looked up on `PATH` and `rustup` is never
+//! run. The engine is built and run with exactly those binaries from the
+//! sim-tooling root under a cleared environment (compiler wrappers and flag
+//! variables cannot reach it), and its embedded identity must match before
+//! any real command runs. Output is never captured: the child's standard
+//! streams pass straight through, so nothing unbounded is buffered here.
 
 use std::{
     env, fs,
@@ -94,7 +96,7 @@ pub(crate) fn verified_engine() -> Result<&'static Toolchain, String> {
                 .map_err(|err| format!("read the sim-tooling Cargo.toml: {err}"))?;
             let pin = EncoderPin::from_manifest(&manifest)?;
             simdoc_pin::verify_source(&root, &pin)?;
-            let toolchain = simdoc_pin::resolve_toolchain(&simdoc_pin::rustup(), &pin.toolchain)?;
+            let toolchain = simdoc_pin::locate_toolchain(&pin, &simdoc_pin::candidate_roots(&pin))?;
             let output = engine_command(&toolchain, "identity", &[])
                 .stderr(Stdio::inherit())
                 .output()
@@ -105,25 +107,25 @@ pub(crate) fn verified_engine() -> Result<&'static Toolchain, String> {
                     output.status
                 ));
             }
-            simdoc_pin::verify_identity(&String::from_utf8_lossy(&output.stdout), &pin)?;
+            simdoc_pin::verify_identity(
+                &String::from_utf8_lossy(&output.stdout),
+                &pin,
+                &toolchain,
+            )?;
             Ok(toolchain)
         })
         .as_ref()
         .map_err(Clone::clone)
 }
 
-/// The engine invocation: the pinned toolchain's `cargo run --locked` on the
-/// simdoc manifest, from the sim-tooling root, compiling with the pinned
-/// `rustc` and no compiler wrapper.
+/// The engine invocation: the accepted toolchain's `cargo run --locked` on the
+/// simdoc manifest, from the sim-tooling root, compiling with that toolchain's
+/// `rustc` under a cleared environment and no compiler wrapper.
 pub(crate) fn engine_command(toolchain: &Toolchain, subcommand: &str, args: &[String]) -> Command {
     let root = tooling_root();
-    let mut command = Command::new(&toolchain.cargo);
+    let mut command = toolchain.command(&toolchain.cargo);
     command
         .current_dir(&root)
-        .env("RUSTUP_TOOLCHAIN", &toolchain.channel)
-        .env("RUSTC", &toolchain.rustc)
-        .env_remove("RUSTC_WRAPPER")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
         .args(["run", "--quiet", "--locked", "--manifest-path"])
         .arg(root.join("crates/simdoc/Cargo.toml"))
         .arg("--")
@@ -200,7 +202,9 @@ mod tests {
         let toolchain = Toolchain {
             cargo: PathBuf::from("/toolchains/1.96.0/bin/cargo"),
             rustc: PathBuf::from("/toolchains/1.96.0/bin/rustc"),
+            rustdoc: PathBuf::from("/toolchains/1.96.0/bin/rustdoc"),
             channel: "1.96.0".to_owned(),
+            host: "x86_64-unknown-linux-gnu".to_owned(),
         };
         let command = engine_command(&toolchain, "repo-contract", &["--check".to_owned()]);
         assert_eq!(command.get_program(), "/toolchains/1.96.0/bin/cargo");
@@ -230,17 +234,22 @@ mod tests {
             .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
             .collect::<Vec<(OsString, Option<OsString>)>>();
         for (name, value) in [
-            ("RUSTUP_TOOLCHAIN", Some("1.96.0")),
+            ("PATH", Some("/toolchains/1.96.0/bin:/usr/bin:/bin")),
             ("RUSTC", Some("/toolchains/1.96.0/bin/rustc")),
-            ("RUSTC_WRAPPER", None),
-            ("RUSTC_WORKSPACE_WRAPPER", None),
+            ("RUSTDOC", Some("/toolchains/1.96.0/bin/rustdoc")),
+            ("RUSTC_WRAPPER", Some("")),
+            ("RUSTC_WORKSPACE_WRAPPER", Some("")),
         ] {
             assert!(
                 envs.contains(&(OsString::from(name), value.map(OsString::from))),
                 "{name}"
             );
         }
-        assert!(envs.iter().all(|(name, _)| name != "CARGO"));
+        assert!(
+            envs.iter()
+                .all(|(name, _)| name != "CARGO" && name != "RUSTUP_TOOLCHAIN"),
+            "the launcher names no cargo variable and no rustup toolchain"
+        );
     }
 
     #[test]

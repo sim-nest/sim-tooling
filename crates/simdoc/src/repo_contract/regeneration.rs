@@ -86,7 +86,8 @@ pub(crate) fn toolchain_identity() -> Value {
 pub(crate) fn identity_lines() -> String {
     format!(
         "package={}\nversion={}\nsource_sha256={}\nlock_sha256={}\n\
-         rustc_release={}\nrustc_commit={}\ncargo_release={}\ncargo_commit={}\n",
+         rustc_release={}\nrustc_commit={}\ncargo_release={}\ncargo_commit={}\n\
+         toolchain_sha256={}\n",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
         env!("SIMDOC_SOURCE_SHA256"),
@@ -95,6 +96,7 @@ pub(crate) fn identity_lines() -> String {
         env!("SIMDOC_RUSTC_COMMIT"),
         env!("SIMDOC_CARGO_RELEASE"),
         env!("SIMDOC_CARGO_COMMIT"),
+        env!("SIMDOC_TOOLCHAIN_SHA256"),
     )
 }
 

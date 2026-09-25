@@ -84,9 +84,9 @@ pub(crate) fn lane_digest(contents: &str) -> String {
 }
 
 pub(crate) fn file_lane_digest(root: &Path, lane: &str) -> Option<String> {
-    crate::owned::read(root.join(lane))
+    crate::owned::read_output(root.join(lane))
         .ok()
-        .map(|bytes| format!("sha256:{}", content_digest(&bytes)))
+        .map(|text| format!("sha256:{}", content_digest(text.as_bytes())))
 }
 
 pub(crate) fn state_path(root: &Path) -> PathBuf {

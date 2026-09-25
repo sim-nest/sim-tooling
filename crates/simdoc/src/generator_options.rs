@@ -8,7 +8,6 @@
 use std::{
     env, io,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 /// Parsed options for repo-local generator commands.
@@ -84,7 +83,8 @@ fn is_git_root(dir: &Path) -> bool {
 }
 
 fn cargo_workspace_root(dir: &Path) -> Result<Option<PathBuf>, String> {
-    let output = Command::new("cargo")
+    let output = crate::tools::tools()?
+        .cargo()
         .args([
             "metadata",
             "--locked",

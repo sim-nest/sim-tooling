@@ -6,7 +6,6 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub(crate) fn run_api_docs(
     root: &Path,
@@ -24,7 +23,7 @@ pub(crate) fn run_api_docs(
         return Ok(());
     }
 
-    let mut command = Command::new("cargo");
+    let mut command = crate::tools::tools()?.cargo();
     // Documentation generation is a verifier of the repository's selected
     // dependency graph, not an authority to rewrite it.  In particular, a
     // shared constellation resolver may make newer packages visible than the
@@ -130,10 +129,9 @@ fn collect_doc_inputs(root: &Path, dir: &Path, files: &mut Vec<String>) -> Resul
 }
 
 fn rustc_version() -> String {
-    Command::new("rustc")
-        .arg("--version")
-        .output()
+    crate::tools::tools()
         .ok()
+        .and_then(|tools| tools.rustc().arg("--version").output().ok())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
         .unwrap_or_default()
 }

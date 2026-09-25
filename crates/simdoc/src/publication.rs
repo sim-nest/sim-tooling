@@ -9,14 +9,19 @@
 //! Generated files are published with the repository, so nothing local to the
 //! machine that produced them may appear. Content is refused when it contains
 //!
-//! - the repository's absolute location, its parent directory, or the home
-//!   directory, anywhere;
+//! - a location of the machine that ran the generator: the repository, its
+//!   parent, the home, working, temporary, Cargo, or rustup directory, or the
+//!   shared resolver's directory, anywhere;
 //! - an embedded absolute Unix path, Windows drive or UNC path, or
-//!   home-relative path, unless that exact path already occurs in repository
-//!   content the run consumed through [`crate::owned`] (so quoting committed
-//!   source is fine, and nothing new is introduced);
-//! - in JSON, any string value that is itself an absolute, home-relative, or
-//!   parent-escaping path.
+//!   home-relative path, unless it is a reviewed public path: a literal in
+//!   [`PUBLIC_LITERALS`], or a path whose first segment is one of the typed
+//!   roots in [`PUBLIC_ROOTS`] (well-known system locations, HTTP routes, and
+//!   sandbox or test-filesystem namespaces). A path that only occurs in some file the run read is
+//!   never permitted by that fact: permission comes from this table alone, so
+//!   no repository content, tracked or not, can approve a path;
+//! - a path with a `..` segment;
+//! - in JSON, any string value that is itself a non-public absolute path, a
+//!   home-relative path, or a parent-escaping path.
 //!
 //! Every write goes to an ordinary file inside the repository reached without
 //! passing through a symlink.
@@ -28,6 +33,54 @@ use std::{
 };
 
 use serde_json::Value;
+
+/// Why a root is publishable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RootKind {
+    /// A well-known operating-system location: names no machine.
+    System,
+    /// The first segment of an HTTP route or served asset.
+    Route,
+    /// A path inside a sandbox or a test's virtual filesystem, never a
+    /// location on the machine that ran the generator.
+    Virtual,
+}
+
+/// Reviewed first segments an absolute path may start with. Adding an entry
+/// is a reviewed code change: refusing a new root is the safe default.
+pub(crate) const PUBLIC_ROOTS: &[(&str, RootKind)] = &[
+    ("bin", RootKind::System),
+    ("dev", RootKind::System),
+    ("etc", RootKind::System),
+    ("lib", RootKind::System),
+    ("lib64", RootKind::System),
+    ("proc", RootKind::System),
+    ("run", RootKind::System),
+    ("sbin", RootKind::System),
+    ("sys", RootKind::System),
+    ("tmp", RootKind::System),
+    ("usr", RootKind::System),
+    ("var", RootKind::System),
+    ("api", RootKind::Route),
+    ("v1", RootKind::Route),
+    ("target", RootKind::Virtual),
+    ("toolchain", RootKind::Virtual),
+    ("scratch", RootKind::Virtual),
+];
+
+/// Reviewed exact paths that no root covers: documented test values and a
+/// vendor library location quoted from committed source.
+pub(crate) const PUBLIC_LITERALS: &[&str] = &[
+    "/opt/viture/libviture_sdk.so",
+    "C:\\SIM\\Workspace",
+    "D:\\escape",
+];
+
+/// First segments that name a machine or a person, never publishable whatever
+/// the tables say (a test proves the tables never contain one).
+pub(crate) const NEVER_PUBLIC_ROOTS: &[&str] = &[
+    "home", "Users", "root", "srv", "mnt", "media", "opt", "private", "Volumes", "snap", "nix",
+];
 
 /// Refuses `content`, to be published as `name`, when it would record
 /// anything local to this machine.
@@ -42,11 +95,12 @@ pub(crate) fn guard(repo: &Path, name: &str, content: &str) -> Result<(), String
     }
     if let Some(token) = path_tokens(content)
         .into_iter()
-        .find(|token| !crate::owned::consumed_path(token))
+        .find(|token| !is_public_path(token))
     {
         return Err(format!(
-            "refused to publish {name}: it embeds the path {token:?}, which no consumed \
-             repository file contains; nothing outside the repository may be recorded by path"
+            "refused to publish {name}: it embeds the path {token:?}, which is not a reviewed \
+             public path; nothing outside the repository may be recorded by path (a reviewed \
+             public root or literal is added in simdoc's publication.rs)"
         ));
     }
     if name.ends_with(".json") {
@@ -59,6 +113,26 @@ pub(crate) fn guard(repo: &Path, name: &str, content: &str) -> Result<(), String
         }
     }
     Ok(())
+}
+
+/// Whether `token`, an absolute or home-relative path found in text, may be
+/// published: it has no `..` segment and is a reviewed literal or starts with
+/// a reviewed root.
+pub(crate) fn is_public_path(token: &str) -> bool {
+    if token.split(['/', '\\']).any(|segment| segment == "..") {
+        return false;
+    }
+    if PUBLIC_LITERALS.contains(&token) {
+        return true;
+    }
+    let Some(rest) = token.strip_prefix('/') else {
+        return false;
+    };
+    let root = rest.split('/').next().unwrap_or_default();
+    if NEVER_PUBLIC_ROOTS.contains(&root) {
+        return false;
+    }
+    PUBLIC_ROOTS.iter().any(|(name, _)| *name == root)
 }
 
 /// Guards every artifact of a set.
@@ -131,9 +205,37 @@ fn local_locations(repo: &Path) -> Vec<String> {
     if let Some(parent) = repo.parent().filter(|parent| parent.parent().is_some()) {
         locations.push(parent.to_string_lossy().into_owned());
     }
-    if let Some(home) = env::var_os("HOME").filter(|home| home.len() > 1) {
-        locations.push(Path::new(&home).to_string_lossy().into_owned());
+    let mut named = vec![env::temp_dir()];
+    named.extend(env::current_dir().ok());
+    for variable in [
+        "HOME",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        crate::resolver_input::RESOLVER_ENV,
+    ] {
+        if let Some(value) = env::var_os(variable) {
+            let path = Path::new(&value);
+            // The resolver variable names a manifest; its directory is local.
+            named.push(if variable == crate::resolver_input::RESOLVER_ENV {
+                path.parent().map(Path::to_path_buf).unwrap_or_default()
+            } else {
+                path.to_path_buf()
+            });
+        }
     }
+    for path in named {
+        // A location with a single segment (`/`, `/tmp`) names no machine.
+        if path
+            .components()
+            .filter(|part| matches!(part, Component::Normal(_)))
+            .count()
+            >= 2
+        {
+            locations.push(path.to_string_lossy().into_owned());
+        }
+    }
+    locations.sort();
+    locations.dedup();
     locations
 }
 
@@ -219,8 +321,10 @@ fn outside_json_path(value: &Value) -> Option<&str> {
 }
 
 fn is_outside_path(text: &str) -> bool {
-    text.starts_with('/')
-        || text.starts_with("~/")
+    if text.starts_with('/') {
+        return !is_public_path(text);
+    }
+    text.starts_with("~/")
         || text == ".."
         || text.starts_with("../")
         || text.contains("/../")

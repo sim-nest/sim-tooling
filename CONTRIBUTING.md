@@ -33,6 +33,16 @@ pinned in `rust-toolchain.toml`, and they must be green before merge:
 `repo-contract`, `crate-catalog`, and `validation-matrix` commands run the same
 locked engine, and `cargo test` exercises their `--check` modes.
 
+`simdoc` trusts only what the repository commits. It reads only ordinary files
+Git tracks (`git add` a new file before generating; an untracked or ignored file
+is refused, never read), publishes only reviewed public paths (see
+`crates/simdoc/src/publication.rs`), and never runs a repository script or any
+program found on `PATH`: it launches only the toolchain pinned under
+`[workspace.metadata.sim.encoder]` in the root `Cargo.toml` (its `cargo`,
+`rustc`, `rustdoc`, and libraries are checked against a committed digest and
+commits), and `git` from a root-owned system location. A reviewer refreshes
+that pin, after reading the engine diff, with `cargo run -p xtask -- simdoc-pin`.
+
 Please keep source and Markdown ASCII-only, and add or update tests for behavior
 you change. Public APIs carry `#![deny(missing_docs)]`; document new public items.
 

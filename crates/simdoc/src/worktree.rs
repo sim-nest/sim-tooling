@@ -6,17 +6,17 @@
 //! The Git worktree that owns a repository contract.
 //!
 //! A contract may only describe files its own worktree owns: ordinary files
-//! that `git ls-files --cached --others --exclude-standard` reports for the
-//! worktree rooted exactly at the repository. Ignored files, files inside a
-//! submodule (gitlink) or a nested repository, symlinks, and anything outside
-//! the repository are refused, because the source commit and workspace hash
-//! recorded in provenance would not bind them.
+//! that `git ls-files --cached` reports, that is, files Git tracks, for the
+//! worktree rooted exactly at the repository. Untracked files (whether or not
+//! they are ignored), files inside a submodule (gitlink) or a nested
+//! repository, symlinks, and anything outside the repository are refused:
+//! the source commit recorded in provenance binds only what is tracked, and
+//! a file nobody committed is content nobody reviewed.
 
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use crate::bounded_process::run_bounded;
@@ -54,17 +54,7 @@ impl Worktree {
                 root.display()
             ));
         }
-        let listing = git(
-            &root,
-            &[
-                "ls-files",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-                "-z",
-            ],
-            "git ls-files",
-        )?;
+        let listing = git(&root, &["ls-files", "--cached", "-z"], "git ls-files")?;
         let listing = String::from_utf8(listing)
             .map_err(|_| "git ls-files returned a non-UTF-8 path".to_owned())?;
         let visible = listing
@@ -120,6 +110,32 @@ impl Worktree {
             .collect()
     }
 
+    /// Whether Git's ignore rules ignore `path` (an untracked, generated or
+    /// local file such as a nested crate's `Cargo.lock`). Asked of Git itself
+    /// so every ignore file and global rule applies; never true for a tracked
+    /// file.
+    pub(crate) fn is_ignored(&self, path: &Path) -> Result<bool, String> {
+        let relative = self
+            .lexical_relative(path)
+            .filter(|relative| !relative.is_empty())
+            .ok_or_else(|| format!("{} resolves outside the repository", path.display()))?;
+        let mut command = crate::tools::tools()?.git();
+        command
+            .arg("-C")
+            .arg(&self.root)
+            .args(["check-ignore", "-q", "--"])
+            .arg(&relative);
+        let captured = run_bounded(command, "git check-ignore", 1024, MAX_DIAGNOSTIC_BYTES)?;
+        match captured.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(format!(
+                "git check-ignore failed for {relative}: {}",
+                String::from_utf8_lossy(&captured.stderr).trim()
+            )),
+        }
+    }
+
     /// Requires `path` to be an ordinary file owned by this worktree, reached
     /// from the repository root without passing through any symlink, and
     /// returns its repository-relative path.
@@ -147,7 +163,7 @@ impl Worktree {
         if !self.visible.contains(&relative) {
             return Err(format!(
                 "{role} {relative} is not a file of this Git worktree \
-                 (ignored, inside a submodule or nested repository, or outside Git)"
+                 (untracked, ignored, inside a submodule or nested repository, or outside Git)"
             ));
         }
         Ok(relative)
@@ -170,7 +186,7 @@ impl Worktree {
 }
 
 fn git(repo: &Path, args: &[&str], role: &str) -> Result<Vec<u8>, String> {
-    let mut command = Command::new("git");
+    let mut command = crate::tools::tools()?.git();
     command.arg("-C").arg(repo).args(args);
     let captured = run_bounded(command, role, MAX_LISTING_BYTES, MAX_DIAGNOSTIC_BYTES)?;
     if !captured.status.success() {

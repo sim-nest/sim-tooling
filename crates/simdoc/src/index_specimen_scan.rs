@@ -231,7 +231,7 @@ fn recipe_harness(repo: &Path) -> Option<String> {
         .unwrap_or(false)
     {
         Some("xtask check-recipes".to_owned())
-    } else if repo.join("scripts/check-recipes.sh").is_file() {
+    } else if crate::owned::is_owned_file(repo.join("scripts/check-recipes.sh")) {
         Some("sh scripts/check-recipes.sh".to_owned())
     } else {
         None
@@ -414,6 +414,23 @@ mod tests {
         );
 
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn an_untracked_recipe_script_is_not_a_harness() {
+        let repo = crate::test_fixture::FixtureRepo::nested("harness-untracked");
+        repo.write("scripts/check-recipes.sh", "#!/bin/sh\n");
+        let root = repo.path().canonicalize().unwrap();
+        let scope = crate::owned::enter(&root).unwrap();
+        assert_eq!(recipe_harness(&root), None);
+        scope.finish().unwrap();
+        repo.commit();
+        let scope = crate::owned::enter(&root).unwrap();
+        assert_eq!(
+            recipe_harness(&root).as_deref(),
+            Some("sh scripts/check-recipes.sh")
+        );
+        scope.finish().unwrap();
     }
 
     #[test]

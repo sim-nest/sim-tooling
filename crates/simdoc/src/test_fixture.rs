@@ -104,6 +104,21 @@ impl FixtureRepo {
         assert!(status.success(), "git {args:?} failed");
     }
 
+    /// Runs the production `simdoc` entrypoint (rustdoc skipped) on this
+    /// repository with `extra` arguments such as `--check`.
+    pub(crate) fn run_simdoc(&self, extra: &[&str]) -> Result<(), String> {
+        let mut args = vec![
+            "simdoc".to_owned(),
+            "simdoc".to_owned(),
+            "--repo-root".to_owned(),
+            self.root.to_string_lossy().into_owned(),
+            "--rustdoc".to_owned(),
+            "skip".to_owned(),
+        ];
+        args.extend(extra.iter().map(|arg| (*arg).to_owned()));
+        crate::run(args)
+    }
+
     /// Reads one repository file.
     pub(crate) fn read(&self, relative: &str) -> String {
         fs::read_to_string(self.root.join(relative)).unwrap()

@@ -52,8 +52,22 @@ impl Fixture {
         fs::write(root.join("ignored.toml"), "secret\n").unwrap();
         fs::create_dir_all(root.join("nested")).unwrap();
         fs::write(root.join("nested/recipe.toml"), "title = \"nested\"\n").unwrap();
-        git(&root, &["init", "--quiet"]);
         git(&root.join("nested"), &["init", "--quiet"]);
+        git(&root.join("nested"), &["add", "-A"]);
+        git(&root.join("nested"), &FIXTURE_COMMIT);
+        git(&root, &["init", "--quiet"]);
+        git(
+            &root,
+            &[
+                "add",
+                "recipes/public/recipe.toml",
+                "recipes/private",
+                "recipes/linked.toml",
+            ],
+        );
+        git(&root, &["add", ".gitignore"]);
+        git(&root, &["add", "nested"]);
+        git(&root, &FIXTURE_COMMIT);
         Self {
             root: root.canonicalize().unwrap(),
             outside,
@@ -67,6 +81,20 @@ impl Drop for Fixture {
         let _ = &self.outside;
     }
 }
+
+const FIXTURE_COMMIT: [&str; 11] = [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--quiet",
+    "--no-verify",
+    "--allow-empty",
+    "-mfixture",
+];
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -106,7 +134,6 @@ fn walks_list_only_owned_ordinary_files() {
             .all(|path| !path.ends_with("ignored.toml"))
     );
     assert!(read_to_string(fixture.root.join("recipes/public/recipe.toml")).is_ok());
-    assert!(!consumed_path("/srv/private/x"));
     scope.finish().unwrap();
 }
 
@@ -132,18 +159,50 @@ fn touching_any_file_the_worktree_does_not_own_refuses_the_run() {
 }
 
 #[test]
-fn consumed_content_admits_its_own_paths_and_nested_scopes_share_state() {
-    let fixture = Fixture::new("owned-consumed");
+fn untracked_files_are_never_owned_whether_or_not_they_are_ignored() {
+    let fixture = Fixture::new("owned-untracked");
     fs::write(
-        fixture.root.join("notes.md"),
-        "see /usr/share/doc/example\n",
+        fixture.root.join("features.toml"),
+        "summary = \"/srv/private/customer\"\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.root.join("recipes/public/new.toml"),
+        "title = \"new\"\n",
     )
     .unwrap();
     let scope = enter(&fixture.root).unwrap();
+
+    let listed = files_under(&fixture.root);
+    assert!(
+        listed
+            .iter()
+            .all(|path| !path.ends_with("features.toml") && !path.ends_with("new.toml")),
+        "{listed:?}"
+    );
+    assert!(read_to_string(fixture.root.join("features.toml")).is_err());
+    let err = scope.finish().unwrap_err();
+    assert!(
+        err.contains("features.toml") && err.contains("untracked"),
+        "{err}"
+    );
+
+    // Generated output may be new: it is compared, never consumed.
+    let scope = enter(&fixture.root).unwrap();
+    assert_eq!(
+        read_output(fixture.root.join("recipes/public/new.toml")).unwrap(),
+        "title = \"new\"\n"
+    );
+    assert!(read_output(fixture.root.join("recipes/private/recipe.toml")).is_err());
+    scope.finish().unwrap();
+}
+
+#[test]
+fn nested_scopes_share_state() {
+    let fixture = Fixture::new("owned-nested");
+    let scope = enter(&fixture.root).unwrap();
     let nested = enter(&fixture.root).unwrap();
-    read_to_string(fixture.root.join("notes.md")).unwrap();
+    let _ = read_to_string(fixture.root.join("nested/recipe.toml"));
     nested.finish().unwrap();
-    assert!(consumed_path("/usr/share/doc/example"));
-    let _ = read_to_string(fixture.root.join("ignored.toml"));
     assert!(scope.finish().is_err());
 }

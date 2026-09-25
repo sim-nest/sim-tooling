@@ -264,7 +264,7 @@ fn write_or_check(
         .to_string();
     crate::publication::guard(repo, &name, expected)?;
     crate::publication::ensure_ordinary_target(repo, path)?;
-    let current = crate::owned::read_to_string(path).unwrap_or_default();
+    let current = crate::owned::read_output(path).unwrap_or_default();
     if current == expected {
         return Ok(());
     }
@@ -510,6 +510,8 @@ mod tests {
             repo.read("nested/tool/README.md")
                 .contains(GENERATED_MARKER)
         );
+        // The generated files become the repository's once committed.
+        repo.commit();
         assert!(crate_catalog(true, Some(repo.path().to_path_buf())).is_ok());
     }
 

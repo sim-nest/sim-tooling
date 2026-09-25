@@ -534,6 +534,14 @@ mod tests {
                 .success()
         );
 
+        assert!(
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
         let scope = crate::owned::enter(&root).unwrap();
         let paths = input_files(&root.canonicalize().unwrap())
             .into_iter()

@@ -30,5 +30,13 @@ toml = "0.8"
 [build-dependencies]
 sha2 = "0.10"
 
+# The build script digests the toolchain (hundreds of megabytes) and the
+# encoder digests it again at run time; keep both fast.
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
 [lints.rust]
 unsafe_code = "deny"

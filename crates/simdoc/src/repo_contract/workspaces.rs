@@ -11,7 +11,6 @@
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde_json::Value;
@@ -148,7 +147,7 @@ fn workspace_root(metadata: &Value) -> Result<PathBuf, String> {
 /// Reads one workspace's `cargo metadata --no-deps` and retains only its
 /// bounded projection, charging it against `retained`.
 fn workspace_metadata(manifest: &Path, retained: &mut usize) -> Result<Value, String> {
-    let mut command = Command::new("cargo");
+    let mut command = crate::tools::tools()?.cargo();
     command
         .args([
             "metadata",

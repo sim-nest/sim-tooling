@@ -19,18 +19,30 @@
 //! and it is measured again after use so any change refuses the run. It lives
 //! outside the repository (often in a private, gitignored location), so it is
 //! recorded only by content digests: never by path or directory name.
+//!
+//! A meta-workspace is a symlink farm: each package directory holds a
+//! generated manifest and links (`src`, `recipes`, `README.md`, ...) into the
+//! constellation's repository checkouts. A link is followed to its canonical
+//! target and accepted only when that target lies in a Git worktree that is a
+//! sibling checkout of the repository being documented, is an ordinary file
+//! (or a directory of ordinary files with no link inside), and every such file
+//! is tracked by that worktree (see [`crate::worktree`]) or ignored by its Git
+//! ignore rules (generated or local files, such as the `Cargo.lock` of a
+//! nested crate, which are no part of the package's source and are neither
+//! read nor bound). An untracked file that is not ignored refuses the input. What is digested is
+//! the canonical target's content, under the link's name inside the package,
+//! so the identity binds exactly what cargo reads and records no path.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{bounded_process::run_bounded, content_digest::content_digest};
+use crate::{bounded_process::run_bounded, content_digest::content_digest, worktree::Worktree};
 
 /// Environment variable naming the shared resolver manifest.
 pub(crate) const RESOLVER_ENV: &str = "SIMDOC_CARGO_MANIFEST_PATH";
@@ -151,7 +163,7 @@ pub(crate) fn validate(path: &Path, repo: &Path) -> Result<ResolverInput, String
             .filter(|package| members.contains(package))
             .collect()
     };
-    let (closure_sha256, closure_packages) = source_closure(&manifest, &selected)?;
+    let (closure_sha256, closure_packages) = source_closure(&manifest, &selected, repo)?;
     Ok(ResolverInput {
         manifest,
         manifest_sha256: content_digest(&manifest_bytes),
@@ -176,8 +188,13 @@ fn read_ordinary(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 /// Digest of every file of every path package reachable from `selected`
 /// (or every workspace member when `selected` is empty) in the locked
 /// resolve, and the number of those packages.
-fn source_closure(manifest: &Path, selected: &[String]) -> Result<(String, usize), String> {
-    let mut command = Command::new("cargo");
+fn source_closure(
+    manifest: &Path,
+    selected: &[String],
+    repo: &Path,
+) -> Result<(String, usize), String> {
+    let mut boundary = Boundary::new(repo);
+    let mut command = crate::tools::tools()?.cargo();
     command
         .args([
             "metadata",
@@ -273,7 +290,7 @@ fn source_closure(manifest: &Path, selected: &[String]) -> Result<(String, usize
         hasher.update([0]);
         hasher.update(package["version"].as_str().unwrap_or_default().as_bytes());
         hasher.update([0]);
-        for file in package_files(&root)? {
+        for (relative, file) in package_files(&root, &mut boundary)? {
             let content = read_ordinary(&file, crate::owned::MAX_FILE_BYTES)
                 .map_err(|why| format!("shared resolver source {}: {why}", file.display()))?;
             files += 1;
@@ -284,10 +301,7 @@ fn source_closure(manifest: &Path, selected: &[String]) -> Result<(String, usize
                      {MAX_CLOSURE_FILES} files or {MAX_CLOSURE_BYTES} bytes"
                 ));
             }
-            let relative = file
-                .strip_prefix(&root)
-                .map_err(|_| "shared resolver source escaped its package".to_owned())?;
-            hasher.update(relative.to_string_lossy().as_bytes());
+            hasher.update(relative.as_bytes());
             hasher.update([0]);
             hasher.update((content.len() as u64).to_le_bytes());
             hasher.update(&content);
@@ -302,36 +316,122 @@ fn source_closure(manifest: &Path, selected: &[String]) -> Result<(String, usize
     Ok((digest, path_packages))
 }
 
-/// Every ordinary file of a path package, in path order, skipping build
-/// output and VCS metadata. A symlink inside the package would let cargo read
-/// bytes the digest does not bind, so it refuses the input.
-fn package_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+/// The canonical targets a resolver package's links may lead to: files of
+/// the Git worktrees that are sibling checkouts of the documented repository.
+struct Boundary {
+    /// The directory holding the constellation's checkouts.
+    checkouts: Option<PathBuf>,
+    worktrees: BTreeMap<PathBuf, Worktree>,
+}
+
+impl Boundary {
+    fn new(repo: &Path) -> Self {
+        Self {
+            checkouts: repo.parent().map(Path::to_path_buf),
+            worktrees: BTreeMap::new(),
+        }
+    }
+
+    /// The worktree owning the canonical `target`, opened once.
+    fn worktree(&mut self, target: &Path) -> Result<&Worktree, String> {
+        let refused = |why: &str| format!("{RESOLVER_ENV} refused: link target {why}");
+        let checkouts = self
+            .checkouts
+            .as_deref()
+            .ok_or_else(|| refused("has no constellation to lie in"))?;
+        let name = target
+            .strip_prefix(checkouts)
+            .ok()
+            .and_then(|rest| rest.components().next())
+            .filter(|part| matches!(part, std::path::Component::Normal(_)))
+            .ok_or_else(|| refused("lies outside the constellation's checkouts"))?;
+        let top = checkouts.join(name);
+        if !top.join(".git").exists() {
+            return Err(refused("is not inside a Git checkout"));
+        }
+        if !self.worktrees.contains_key(&top) {
+            self.worktrees.insert(top.clone(), Worktree::open(&top)?);
+        }
+        Ok(&self.worktrees[&top])
+    }
+}
+
+/// Every ordinary file a path package's cargo build can read, in path order,
+/// as `(name inside the package, file to read)`: the package's own files, and
+/// the canonical files behind each link (see the module documentation).
+/// Build output and VCS metadata directories are skipped. A link inside a
+/// followed tree, or a link to anything not owned, refuses the input.
+fn package_files(root: &Path, boundary: &mut Boundary) -> Result<Vec<(String, PathBuf)>, String> {
     let mut files = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
+    let mut pending = vec![(root.to_path_buf(), String::new())];
+    while let Some((dir, prefix)) = pending.pop() {
         for entry in fs::read_dir(&dir).map_err(|err| format!("{}: {err}", dir.display()))? {
             let entry = entry.map_err(|err| format!("{}: {err}", dir.display()))?;
             let kind = entry
                 .file_type()
                 .map_err(|err| format!("{}: {err}", entry.path().display()))?;
-            let name = entry.file_name();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = format!("{prefix}{name}");
             if kind.is_symlink() {
-                return Err(format!(
-                    "{RESOLVER_ENV} refused: shared resolver source {} is a symlink",
-                    entry.path().display()
-                ));
-            }
-            if kind.is_dir() {
+                let canonical = entry.path().canonicalize().map_err(|err| {
+                    format!(
+                        "{RESOLVER_ENV} refused: link {}: {err}",
+                        entry.path().display()
+                    )
+                })?;
+                let worktree = boundary.worktree(&canonical)?;
+                if canonical.is_dir() {
+                    owned_tree(worktree, &canonical, &format!("{relative}/"), &mut files)?;
+                } else {
+                    worktree
+                        .owned_file(&canonical, "resolver link target")
+                        .map_err(|why| format!("{RESOLVER_ENV} refused: {why}"))?;
+                    files.push((relative, canonical));
+                }
+            } else if kind.is_dir() {
                 if name != "target" && name != ".git" {
-                    pending.push(entry.path());
+                    pending.push((entry.path(), format!("{relative}/")));
                 }
             } else if kind.is_file() {
-                files.push(entry.path());
+                files.push((relative, entry.path()));
             }
         }
     }
     files.sort();
     Ok(files)
+}
+
+/// Every file beneath the canonical directory `dir`, each of which must be an
+/// ordinary file `worktree` tracks, reached through no further link.
+fn owned_tree(
+    worktree: &Worktree,
+    dir: &Path,
+    prefix: &str,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))? {
+        let entry = entry.map_err(|err| format!("{}: {err}", dir.display()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|err| format!("{}: {err}", entry.path().display()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if kind.is_dir() {
+            if name != "target" && name != ".git" {
+                owned_tree(worktree, &entry.path(), &format!("{prefix}{name}/"), files)?;
+            }
+        } else if let Err(why) = worktree.owned_file(&entry.path(), "resolver source") {
+            // A file Git ignores (a nested crate's `Cargo.lock`, build
+            // output) is no part of the package's source and is skipped;
+            // any other file the worktree does not track refuses the input.
+            if worktree.is_ignored(&entry.path())? {
+                continue;
+            }
+            return Err(format!("{RESOLVER_ENV} refused: {why}"));
+        } else {
+            files.push((format!("{prefix}{name}"), entry.path()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

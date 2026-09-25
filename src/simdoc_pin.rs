@@ -3,7 +3,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The committed identity of the contract engine, and its enforcement.
+//! The committed identity of the contract engine and its toolchain, and its
+//! enforcement.
 //!
 //! The repository commits the identity it trusts under
 //! `[workspace.metadata.sim.encoder]` in its root `Cargo.toml`:
@@ -13,19 +14,30 @@
 //! source_sha256 = "..."
 //! lock_sha256 = "..."
 //! toolchain = "1.96.0"
+//! rustc_commit = "..."
+//! cargo_commit = "..."
+//!
+//! [workspace.metadata.sim.encoder.toolchain_sha256]
+//! x86_64-unknown-linux-gnu = "..."
 //! ```
 //!
 //! Before xtask runs the engine it verifies, independently of the engine's
 //! own code, that the engine's source tree and lock hash to the committed
-//! digests, that the tooling pins the committed toolchain, and that `cargo`
-//! and `rustc` are that toolchain's binaries as resolved by `rustup` (never
-//! whatever comes first on `PATH`). After building, it asks the executable
-//! for its embedded identity and refuses unless every field matches. The
-//! committed identity changes only through `xtask simdoc-pin`, an explicit
-//! command whose diff is reviewed like any other.
+//! digests and that the tooling pins the committed toolchain. The toolchain
+//! is then found without executing anything on `PATH`, not even `rustup`: a
+//! directory (the one holding the `cargo` that started xtask, or the pinned
+//! channel under `RUSTUP_HOME`/`~/.rustup`) is accepted only when its
+//! `cargo`, `rustc`, `rustdoc`, and libraries hash to the digest committed for
+//! its host and the `-vV` commits of `cargo` and `rustc` equal the committed
+//! ones. Every child runs by absolute path with a cleared environment. After
+//! building, xtask asks the executable for its embedded identity and refuses
+//! unless every field matches. The committed identity changes only through
+//! `xtask simdoc-pin`, an explicit command whose diff is reviewed like any
+//! other.
 
 use std::{
-    ffi::{OsStr, OsString},
+    collections::BTreeMap,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -33,14 +45,21 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-const PIN_TABLE: &str = "[workspace.metadata.sim.encoder]";
+use crate::toolchain_identity::{host_triple, tool_identity, toolchain_digest};
 
-/// The committed engine identity.
-#[derive(Clone, Debug, PartialEq, Eq)]
+const PIN_TABLE: &str = "[workspace.metadata.sim.encoder]";
+const DIGEST_TABLE: &str = "[workspace.metadata.sim.encoder.toolchain_sha256]";
+
+/// The committed engine and toolchain identity.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct EncoderPin {
     pub(crate) source_sha256: String,
     pub(crate) lock_sha256: String,
     pub(crate) toolchain: String,
+    pub(crate) rustc_commit: String,
+    pub(crate) cargo_commit: String,
+    /// Content digest of the pinned toolchain, per host triple.
+    pub(crate) toolchain_sha256: BTreeMap<String, String>,
 }
 
 impl EncoderPin {
@@ -64,41 +83,71 @@ impl EncoderPin {
                 .map(str::to_owned)
                 .ok_or_else(|| format!("{PIN_TABLE} has no string `{name}`"))
         };
+        let toolchain_sha256 = encoder
+            .get("toolchain_sha256")
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| format!("{DIGEST_TABLE} is missing"))?
+            .iter()
+            .map(|(host, digest)| {
+                digest
+                    .as_str()
+                    .map(|digest| (host.clone(), digest.to_owned()))
+                    .ok_or_else(|| format!("{DIGEST_TABLE} `{host}` is not a string"))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         Ok(Self {
             source_sha256: field("source_sha256")?,
             lock_sha256: field("lock_sha256")?,
             toolchain: field("toolchain")?,
+            rustc_commit: field("rustc_commit")?,
+            cargo_commit: field("cargo_commit")?,
+            toolchain_sha256,
         })
     }
 
-    /// Computes the identity of the engine at `simdoc_dir` in `tooling_root`.
+    /// Computes the engine part of the identity (source, lock, channel) of
+    /// the engine at `simdoc_dir` in `tooling_root`. The toolchain fields are
+    /// left empty: they come from a located toolchain.
     pub(crate) fn measure(tooling_root: &Path, simdoc_dir: &Path) -> Result<Self, String> {
         Ok(Self {
             source_sha256: source_digest(simdoc_dir)?,
             lock_sha256: file_digest(&simdoc_dir.join("Cargo.lock"))?,
             toolchain: pinned_channel(tooling_root)?,
+            ..Self::default()
         })
     }
 
-    fn table(&self) -> String {
-        format!(
-            "{PIN_TABLE}\nsource_sha256 = \"{}\"\nlock_sha256 = \"{}\"\ntoolchain = \"{}\"\n",
-            self.source_sha256, self.lock_sha256, self.toolchain
-        )
+    /// Whether the engine part (source, lock, channel) equals `other`'s.
+    fn same_engine(&self, other: &Self) -> bool {
+        self.source_sha256 == other.source_sha256
+            && self.lock_sha256 == other.lock_sha256
+            && self.toolchain == other.toolchain
     }
 
-    /// Rewrites the committed identity table in `manifest`.
+    fn table(&self) -> String {
+        let mut text = format!(
+            "{PIN_TABLE}\nsource_sha256 = \"{}\"\nlock_sha256 = \"{}\"\ntoolchain = \"{}\"\n\
+             rustc_commit = \"{}\"\ncargo_commit = \"{}\"\n\n{DIGEST_TABLE}\n",
+            self.source_sha256,
+            self.lock_sha256,
+            self.toolchain,
+            self.rustc_commit,
+            self.cargo_commit
+        );
+        for (host, digest) in &self.toolchain_sha256 {
+            text.push_str(&format!("{host} = \"{digest}\"\n"));
+        }
+        text
+    }
+
+    /// Rewrites the committed identity tables in `manifest`.
     pub(crate) fn write_into(&self, manifest: &str) -> String {
         let mut kept = Vec::new();
         let mut skipping = false;
         for line in manifest.lines() {
-            let header = line.trim_start().starts_with('[');
-            if line.trim() == PIN_TABLE {
-                skipping = true;
-                continue;
-            }
-            if skipping && header {
-                skipping = false;
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                skipping = trimmed == PIN_TABLE || trimmed == DIGEST_TABLE;
             }
             if !skipping {
                 kept.push(line);
@@ -202,76 +251,189 @@ pub(crate) fn pinned_channel(tooling_root: &Path) -> Result<String, String> {
         .ok_or_else(|| "rust-toolchain.toml pins no channel".to_owned())
 }
 
-/// The pinned toolchain's binaries, resolved through `rustup`.
+/// A toolchain accepted against the committed identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Toolchain {
     pub(crate) cargo: PathBuf,
     pub(crate) rustc: PathBuf,
+    pub(crate) rustdoc: PathBuf,
     pub(crate) channel: String,
+    pub(crate) host: String,
 }
 
-/// Resolves `cargo` and `rustc` of `channel` with `rustup which` and
-/// requires both to report exactly that release.
-pub(crate) fn resolve_toolchain(rustup: &OsStr, channel: &str) -> Result<Toolchain, String> {
-    let which = |tool: &str| -> Result<PathBuf, String> {
-        let output = Command::new(rustup)
-            .args(["which", "--toolchain", channel, tool])
-            .output()
-            .map_err(|err| format!("run rustup which {tool}: {err}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "rustup cannot resolve {tool} for toolchain {channel}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
+/// Toolchain directories worth examining, in order: the one holding the
+/// `cargo` that started this process, then the pinned channel under the
+/// rustup home for each host the pin knows. Nothing here is trusted: every
+/// candidate is accepted only by content.
+pub(crate) fn candidate_roots(pin: &EncoderPin) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(cargo) = std::env::var_os("CARGO").map(PathBuf::from)
+        && cargo.is_absolute()
+        && let Some(root) = cargo.parent().and_then(Path::parent)
+    {
+        roots.push(root.to_path_buf());
+    }
+    let home = std::env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".rustup")));
+    if let Some(home) = home {
+        for host in pin.toolchain_sha256.keys() {
+            roots.push(
+                home.join("toolchains")
+                    .join(format!("{}-{host}", pin.toolchain)),
+            );
         }
-        let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-        if !path.is_absolute() {
-            return Err(format!("rustup resolved {tool} to a relative path"));
+    }
+    roots
+}
+
+/// Accepts the first of `candidates` whose content is exactly the toolchain
+/// the pin commits: its files hash to the digest committed for a host, its
+/// `-vV` reports the pinned release, that host, and the committed commits.
+/// `rustup` is never run.
+pub(crate) fn locate_toolchain(
+    pin: &EncoderPin,
+    candidates: &[PathBuf],
+) -> Result<Toolchain, String> {
+    let mut refusals = Vec::new();
+    for root in candidates {
+        match accept(pin, root) {
+            Ok(toolchain) => return Ok(toolchain),
+            Err(why) => refusals.push(format!("{}: {why}", root.display())),
         }
-        Ok(path)
+    }
+    Err(format!(
+        "no toolchain matches the committed identity (release {}, commits {} / {}); \
+         candidates: {}; install the pinned toolchain or review and run `cargo run -p xtask -- simdoc-pin`",
+        pin.toolchain,
+        pin.rustc_commit,
+        pin.cargo_commit,
+        if refusals.is_empty() {
+            "none found".to_owned()
+        } else {
+            refusals.join("; ")
+        }
+    ))
+}
+
+fn accept(pin: &EncoderPin, root: &Path) -> Result<Toolchain, String> {
+    let digest = toolchain_digest(root).map_err(|err| err.to_string())?;
+    let Some((host, _)) = pin
+        .toolchain_sha256
+        .iter()
+        .find(|(_, committed)| **committed == digest)
+    else {
+        return Err(format!(
+            "content digest {digest} is not committed for any host"
+        ));
     };
     let toolchain = Toolchain {
-        cargo: which("cargo")?,
-        rustc: which("rustc")?,
-        channel: channel.to_owned(),
+        cargo: root.join("bin/cargo"),
+        rustc: root.join("bin/rustc"),
+        rustdoc: root.join("bin/rustdoc"),
+        channel: pin.toolchain.clone(),
+        host: host.clone(),
     };
-    for tool in [&toolchain.cargo, &toolchain.rustc] {
-        let release = tool_release(tool)?;
-        if release != channel {
+    for (path, commit) in [
+        (&toolchain.cargo, &pin.cargo_commit),
+        (&toolchain.rustc, &pin.rustc_commit),
+    ] {
+        let (release, found, reported_host) = reported(path)?;
+        if release != pin.toolchain || found != *commit || reported_host != *host {
             return Err(format!(
-                "{} reports release {release}, not the pinned {channel}",
-                tool.display()
+                "{} reports {release} ({found}) for {reported_host}, not the committed {} \
+                 ({commit}) for {host}",
+                path.display(),
+                pin.toolchain
             ));
         }
     }
     Ok(toolchain)
 }
 
-fn tool_release(tool: &Path) -> Result<String, String> {
+/// `(release, commit-hash, host)` a tool reports, run by absolute path with an
+/// empty environment.
+fn reported(tool: &Path) -> Result<(String, String, String), String> {
     let output = Command::new(tool)
+        .env_clear()
         .args(["--version", "--verbose"])
         .output()
         .map_err(|err| format!("run {} -vV: {err}", tool.display()))?;
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("release:"))
-        .map(|release| release.trim().to_owned())
-        .ok_or_else(|| format!("{} -vV reports no release", tool.display()))
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (release, commit) = tool_identity(&text)
+        .ok_or_else(|| format!("{} -vV reports no identity", tool.display()))?;
+    let host =
+        host_triple(&text).ok_or_else(|| format!("{} -vV reports no host", tool.display()))?;
+    Ok((release, commit, host))
 }
 
-/// Requires the executable's reported identity to be exactly the pin.
-pub(crate) fn verify_identity(reported: &str, pin: &EncoderPin) -> Result<(), String> {
+/// The environment variables a launched child inherits from the caller.
+const PASSED_ENVIRONMENT: [&str; 9] = [
+    "HOME",
+    "CARGO_HOME",
+    "CARGO_TARGET_DIR",
+    "CARGO_NET_OFFLINE",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "SIMDOC_CARGO_MANIFEST_PATH",
+    "SIMDOC_FORCE_DOCS",
+];
+
+impl Toolchain {
+    /// A command that runs `program` (an absolute path) with a cleared
+    /// environment, a `PATH` of this toolchain's directory and the system
+    /// binary directories, and this toolchain named for every tool.
+    pub(crate) fn command(&self, program: &Path) -> Command {
+        let mut command = Command::new(program);
+        command.env_clear();
+        for name in PASSED_ENVIRONMENT {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        let bin = self
+            .cargo
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let mut path = OsString::from(bin);
+        path.push(":/usr/bin:/bin");
+        command
+            .env("PATH", path)
+            .env("RUSTC", &self.rustc)
+            .env("RUSTDOC", &self.rustdoc)
+            .env("RUSTC_WRAPPER", "")
+            .env("RUSTC_WORKSPACE_WRAPPER", "");
+        command
+    }
+}
+
+/// Requires the executable's reported identity to be exactly the pin, for the
+/// host `toolchain` was accepted for.
+pub(crate) fn verify_identity(
+    reported: &str,
+    pin: &EncoderPin,
+    toolchain: &Toolchain,
+) -> Result<(), String> {
     let field = |name: &str| {
         reported
             .lines()
             .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
             .unwrap_or_default()
     };
+    let digest = pin
+        .toolchain_sha256
+        .get(&toolchain.host)
+        .map_or("", String::as_str);
     for (name, expected) in [
         ("source_sha256", pin.source_sha256.as_str()),
         ("lock_sha256", pin.lock_sha256.as_str()),
         ("rustc_release", pin.toolchain.as_str()),
         ("cargo_release", pin.toolchain.as_str()),
+        ("rustc_commit", pin.rustc_commit.as_str()),
+        ("cargo_commit", pin.cargo_commit.as_str()),
+        ("toolchain_sha256", digest),
     ] {
         let actual = field(name);
         if actual != expected {
@@ -286,13 +448,43 @@ pub(crate) fn verify_identity(reported: &str, pin: &EncoderPin) -> Result<(), St
 /// Requires the engine on disk to be the committed one.
 pub(crate) fn verify_source(tooling_root: &Path, pin: &EncoderPin) -> Result<(), String> {
     let measured = EncoderPin::measure(tooling_root, &tooling_root.join("crates/simdoc"))?;
-    if measured != *pin {
+    if !measured.same_engine(pin) {
         return Err(format!(
-            "the engine on disk is not the committed one (committed {pin:?}, found {measured:?}); \
-             review the change and run `cargo run -p xtask -- simdoc-pin`"
+            "the engine on disk is not the committed one (committed source {}, lock {}, \
+             toolchain {}; found source {}, lock {}, toolchain {}); review the change and \
+             run `cargo run -p xtask -- simdoc-pin`",
+            pin.source_sha256,
+            pin.lock_sha256,
+            pin.toolchain,
+            measured.source_sha256,
+            measured.lock_sha256,
+            measured.toolchain
         ));
     }
     Ok(())
+}
+
+/// The toolchain of the `cargo` that started this process: `(host, digest,
+/// rustc commit, cargo commit)`, provided it is the `channel` release.
+fn running_toolchain(channel: &str) -> Result<(String, String, String, String), String> {
+    let cargo = std::env::var_os("CARGO")
+        .map(PathBuf::from)
+        .filter(|cargo| cargo.is_absolute())
+        .ok_or("run simdoc-pin through `cargo run -p xtask`, which names the toolchain")?;
+    let root = cargo
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("cargo does not sit in a toolchain bin directory")?;
+    let digest = toolchain_digest(root).map_err(|err| err.to_string())?;
+    let (cargo_release, cargo_commit, host) = reported(&root.join("bin/cargo"))?;
+    let (rustc_release, rustc_commit, rustc_host) = reported(&root.join("bin/rustc"))?;
+    if cargo_release != channel || rustc_release != channel || host != rustc_host {
+        return Err(format!(
+            "the running toolchain is cargo {cargo_release} / rustc {rustc_release}, not the \
+             pinned {channel}"
+        ));
+    }
+    Ok((host, digest, rustc_commit, cargo_commit))
 }
 
 /// Runs `simdoc-pin [--check]`: writes (or checks) the committed identity.
@@ -305,29 +497,42 @@ pub(crate) fn run(tooling_root: &Path, args: &[String]) -> Result<(), String> {
     let manifest_path = tooling_root.join("Cargo.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .map_err(|err| format!("read {}: {err}", manifest_path.display()))?;
-    let measured = EncoderPin::measure(tooling_root, &tooling_root.join("crates/simdoc"))?;
+    let mut measured = EncoderPin::measure(tooling_root, &tooling_root.join("crates/simdoc"))?;
+    let (host, digest, rustc_commit, cargo_commit) = running_toolchain(&measured.toolchain)?;
+    measured.rustc_commit = rustc_commit;
+    measured.cargo_commit = cargo_commit;
+    let committed = EncoderPin::from_manifest(&manifest);
     if check {
-        let committed = EncoderPin::from_manifest(&manifest)?;
-        if committed != measured {
+        let committed = committed?;
+        if !committed.same_engine(&measured)
+            || committed.rustc_commit != measured.rustc_commit
+            || committed.cargo_commit != measured.cargo_commit
+            || committed.toolchain_sha256.get(&host) != Some(&digest)
+        {
             return Err(format!(
-                "the committed engine identity is stale (committed {committed:?}, found {measured:?})"
+                "the committed engine identity is stale for {host} (committed {committed:?}, \
+                 found {measured:?} with toolchain digest {digest})"
             ));
         }
         println!("simdoc-pin: committed engine identity is current");
         return Ok(());
     }
+    // Other hosts' digests stay only while they describe the same release.
+    if let Ok(previous) = committed
+        && previous.toolchain == measured.toolchain
+        && previous.rustc_commit == measured.rustc_commit
+        && previous.cargo_commit == measured.cargo_commit
+    {
+        measured.toolchain_sha256 = previous.toolchain_sha256;
+    }
+    measured.toolchain_sha256.insert(host.clone(), digest);
     fs::write(&manifest_path, measured.write_into(&manifest))
         .map_err(|err| format!("write {}: {err}", manifest_path.display()))?;
     println!(
-        "simdoc-pin: committed engine source {} lock {} toolchain {}",
+        "simdoc-pin: committed engine source {} lock {} toolchain {} ({host})",
         measured.source_sha256, measured.lock_sha256, measured.toolchain
     );
     Ok(())
-}
-
-/// The `rustup` executable launchers resolve toolchains with.
-pub(crate) fn rustup() -> OsString {
-    OsString::from("rustup")
 }
 
 #[cfg(test)]

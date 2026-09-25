@@ -3,17 +3,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{
-    env, fs,
-    os::unix::fs::symlink,
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, os::unix::fs::symlink};
 
 use serde_json::json;
 
+use super::super::policy_fixture::{
+    Repo, cargo_metadata, contract_packages, git, raw_cargo_metadata, temp_root, write_package,
+};
 use super::*;
-use crate::repo_contract::{cargo_metadata, contract_packages, workspace_package_names};
+use crate::repo_contract::workspace_package_names;
 
 // conformance: a repo contract covers every Cargo manifest its Git worktree
 // owns exactly once; exclusions are typed, proved, and never hide first-party
@@ -84,8 +82,8 @@ fn contract_exclusions_are_typed_and_reasoned() {
             "needs a `consumer`",
         ),
         (
-            json!([{"path": "t", "class": "focused-test-harness", "consumer": "c.rs", "reason": "r"}]),
-            "takes no consumer",
+            json!([{"path": "t", "class": "focused-test-harness", "reason": "r"}]),
+            "needs a `consumer`: the exact `validation-commands` entry",
         ),
         (
             json!([entry("../x", "test-fixture", "r")]),
@@ -236,7 +234,7 @@ fn an_exclusion_may_not_hide_a_contract_manifest() {
     repo.root_package(
         "app",
         r#"contract-workspaces = ["nested"]
-contract-exclusions = [{ path = "nested", class = "focused-test-harness", reason = "overlaps" }]"#,
+contract-exclusions = [{ path = "nested", class = "focused-test-harness", consumer = "cargo test --manifest-path nested/tool/Cargo.toml", reason = "overlaps" }]"#,
     );
     repo.nested_workspace("nested", &["tool"]);
     repo.package("nested/tool", "tool", "");
@@ -253,7 +251,10 @@ fn an_exclusion_class_needs_its_native_evidence() {
     let repo = Repo::new("policy-class-evidence");
     repo.nested_workspace("fixtures/ui", &["case"]);
     repo.package("fixtures/ui/case", "case", "publish = false\n");
-    repo.write("tests/cases.rs", "// drives fixtures/ui\n");
+    repo.write(
+        "tests/cases.rs",
+        "#[test]\nfn cases() { run(\"fixtures/ui\"); }\n",
+    );
     repo.write("recipes/book.toml", "fixtures = \"fixtures/ui\"\n");
     repo.root_package(
         "app",
@@ -269,10 +270,9 @@ fn an_exclusion_class_needs_its_native_evidence() {
     let err = cargo_metadata(&repo.root).unwrap_err();
     assert!(err.contains("has no `recipes` path component"), "{err}");
 
-    repo.root_package(
-        "app",
-        r#"contract-exclusions = [{ path = "fixtures", class = "focused-test-harness", reason = "cases" }]"#,
-    );
+    let harness = r#"validation-commands = ["cargo test --manifest-path fixtures/ui/case/Cargo.toml"]
+contract-exclusions = [{ path = "fixtures", class = "focused-test-harness", consumer = "cargo test --manifest-path fixtures/ui/case/Cargo.toml", reason = "cases" }]"#;
+    repo.root_package("app", harness);
     let err = cargo_metadata(&repo.root).unwrap_err();
     assert!(
         err.contains("has no path dependency on a contract package"),
@@ -284,6 +284,7 @@ fn an_exclusion_class_needs_its_native_evidence() {
         "case",
         "publish = false\n\n[dependencies]\napp = { path = \"../../..\" }\n",
     );
+    repo.write("fixtures/ui/case/tests/run.rs", "#[test]\nfn run() {}\n");
     let contract = contract_packages(&repo.root).unwrap();
     assert_eq!(
         contract.exclusions[0].exclusion.class,
@@ -298,7 +299,7 @@ fn a_fixture_needs_a_native_consumer_that_references_it() {
     repo.package("tests/ui/case", "case", "publish = false\n");
     repo.write("src/helper.rs", "// tests/ui\n");
     repo.write("tests/unrelated.rs", "#[test]\nfn nothing() {}\n");
-    repo.write("tests/ui.rs", "// runs tests/ui\n");
+    repo.write("tests/ui.rs", "#[test]\nfn ui() { run(\"tests/ui\"); }\n");
     let declare = |consumer: &str| {
         repo.root_package(
             "app",
@@ -318,7 +319,7 @@ fn a_fixture_needs_a_native_consumer_that_references_it() {
     declare("tests/unrelated.rs");
     let err = cargo_metadata(&repo.root).unwrap_err();
     assert!(
-        err.contains("is not referenced by its consumer tests/unrelated.rs"),
+        err.contains("is not consumed by tests/unrelated.rs"),
         "{err}"
     );
 
@@ -343,7 +344,10 @@ fn a_publishable_package_can_never_be_excluded() {
     let repo = Repo::new("policy-publishable");
     repo.nested_workspace("tests/real", &["real"]);
     repo.package("tests/real/real", "real", "");
-    repo.write("tests/real.rs", "// loads tests/real\n");
+    repo.write(
+        "tests/real.rs",
+        "#[test]\nfn real() { load(\"tests/real\"); }\n",
+    );
     repo.root_package(
         "app",
         r#"contract-exclusions = [{ path = "tests/real", class = "test-fixture", consumer = "tests/real.rs", reason = "fixture" }]"#,
@@ -360,7 +364,10 @@ fn a_publishable_package_can_never_be_excluded() {
 fn a_contract_package_may_not_depend_on_excluded_code() {
     let repo = Repo::new("policy-first-party");
     repo.package("tests/helper", "helper", "publish = false\n");
-    repo.write("tests/uses_helper.rs", "// tests/helper\n");
+    repo.write(
+        "tests/uses_helper.rs",
+        "#[test]\nfn uses() { load(\"tests/helper\"); }\n",
+    );
     repo.root_package_with(
         "app",
         r#"contract-exclusions = [{ path = "tests/helper", class = "test-fixture", consumer = "tests/uses_helper.rs", reason = "helper" }]"#,
@@ -450,6 +457,34 @@ fn an_ignored_workspace_or_source_is_not_owned() {
 }
 
 #[test]
+fn an_untracked_workspace_or_source_is_not_owned() {
+    // Untracked, and not ignored: a file nobody committed is not the repository's.
+    let repo = Repo::new("policy-untracked");
+    repo.root_package("app", r#"contract-workspaces = ["nested"]"#);
+    repo.nested_workspace("nested", &["tool"]);
+    repo.package("nested/tool", "tool", "");
+    git(&repo.root, &["add", "Cargo.toml", "src/lib.rs"]);
+
+    let err = raw_cargo_metadata(&repo.root).unwrap_err();
+    assert!(
+        err.contains(
+            "contract workspace manifest nested/Cargo.toml is not a file of this Git worktree"
+        ),
+        "{err}"
+    );
+    assert!(err.contains("untracked"), "{err}");
+
+    let repo = Repo::new("policy-untracked-source");
+    repo.root_package("app", "");
+    git(&repo.root, &["add", "Cargo.toml"]);
+    let err = raw_cargo_metadata(&repo.root).unwrap_err();
+    assert!(
+        err.contains("package target source src/lib.rs is not a file of this Git worktree"),
+        "{err}"
+    );
+}
+
+#[test]
 fn a_symlinked_source_inside_the_repository_is_not_an_ordinary_file() {
     let repo = Repo::new("policy-symlinked-source");
     repo.root_package("app", "");
@@ -470,6 +505,7 @@ fn a_nested_repository_or_submodule_is_not_owned() {
         repo.package("nested/tool", "tool", "");
         let nested = repo.root.join("nested");
         git(&nested, &["init", "--quiet"]);
+        git(&repo.root, &["add", "-A", "--", ".", ":!nested"]);
         if as_gitlink {
             git(&nested, &["add", "-A"]);
             git(
@@ -491,7 +527,7 @@ fn a_nested_repository_or_submodule_is_not_owned() {
             git(&repo.root, &["add", "nested"]);
         }
 
-        let err = cargo_metadata(&repo.root).unwrap_err();
+        let err = raw_cargo_metadata(&repo.root).unwrap_err();
         assert!(
             err.contains("nested/Cargo.toml is not a file of this Git worktree"),
             "gitlink {as_gitlink}: {err}"
@@ -531,94 +567,6 @@ fn classification_requires_a_git_worktree() {
     assert!(err.contains("cannot classify Cargo manifests"), "{err}");
 
     fs::remove_dir_all(root).unwrap();
-}
-
-struct Repo {
-    root: PathBuf,
-}
-
-impl Repo {
-    fn new(name: &str) -> Self {
-        let root = temp_root(name);
-        git(&root, &["init", "--quiet"]);
-        Self { root }
-    }
-
-    fn write(&self, relative: &str, text: &str) {
-        let path = self.root.join(relative);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, text).unwrap();
-    }
-
-    fn root_package(&self, name: &str, sim_metadata: &str) {
-        self.root_package_with(name, sim_metadata, "");
-    }
-
-    fn root_package_with(&self, name: &str, sim_metadata: &str, extra: &str) {
-        self.write("src/lib.rs", "");
-        self.write(
-            "Cargo.toml",
-            &format!(
-                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n{extra}\n\
-                 [workspace]\nexclude = [\"nested\", \"fixtures\", \"linked\", \"tests\"]\n\n\
-                 [workspace.metadata.sim]\n{sim_metadata}\n"
-            ),
-        );
-    }
-
-    fn nested_workspace(&self, relative: &str, members: &[&str]) {
-        let members = members
-            .iter()
-            .map(|member| format!("\"{member}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.write(
-            &format!("{relative}/Cargo.toml"),
-            &format!("[workspace]\nmembers = [{members}]\n"),
-        );
-    }
-
-    fn package(&self, relative: &str, name: &str, extra: &str) {
-        write_package(&self.root.join(relative), name, extra);
-    }
-}
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn write_package(dir: &Path, name: &str, extra: &str) {
-    fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(dir.join("src/lib.rs"), "").unwrap();
-    fs::write(
-        dir.join("Cargo.toml"),
-        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{extra}"),
-    )
-    .unwrap();
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?} failed");
-}
-
-fn temp_root(name: &str) -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).unwrap();
-    root
 }
 
 #[test]

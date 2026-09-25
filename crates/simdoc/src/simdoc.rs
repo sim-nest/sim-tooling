@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::cardspine_state::{CardSpineState, file_lane_digest, lane_digest, lanes_to_reencode};
 use crate::repo_contract::contract_artifacts_with;
@@ -40,13 +39,16 @@ fn simdoc_lanes(root: &Path, check: bool, rustdoc: RustdocMode) -> Result<(), St
     } else {
         run_api_docs(root, rustdoc == RustdocMode::Force, resolver.as_ref())?;
     }
-    run_recipe_gate(root)?;
+    let recipes = crate::recipe_gate::validate(root)?;
+    println!("simdoc: {recipes} recipe manifest(s) validated");
 
     // The catalog runs first: it may add package metadata to manifests, which
     // the contract's workspace hash binds. Its package set must then equal
     // the contract's, so the two published views can never disagree.
     let catalog = crate::crate_catalog::crate_catalog(check, Some(root.to_path_buf()))?;
-    let expected = expected_files(root, resolver.as_ref())?;
+    // `--check` never trusts the local cache: it would let a tampered lane skip
+    // the comparison.
+    let expected = expected_files(root, resolver.as_ref(), !check)?;
     ensure_catalog_matches_contract(&catalog.package_names, &expected.files)?;
     let card_lanes_encoded = expected.card_lanes_encoded();
     if check {
@@ -145,24 +147,11 @@ fn usage(program: &str) -> String {
     format!("usage: {program} simdoc [--repo-root PATH] [--check] [--rustdoc auto|skip|force]")
 }
 
-fn run_recipe_gate(root: &Path) -> Result<(), String> {
-    let checker = root.join("scripts/check-recipes.sh");
-    if !checker.exists() {
-        return Ok(());
-    }
-    let status = Command::new("sh")
-        .arg(checker)
-        .current_dir(root)
-        .status()
-        .map_err(|err| format!("recipe gate: {err}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("recipe gate failed with status {status}"))
-    }
-}
-
-fn expected_files(root: &Path, resolver: Option<&ResolverInput>) -> Result<ExpectedFiles, String> {
+fn expected_files(
+    root: &Path,
+    resolver: Option<&ResolverInput>,
+    trust_state: bool,
+) -> Result<ExpectedFiles, String> {
     let repo = repo_name(root);
     let contract_files = contract_artifacts_with(root, resolver)?.files;
     let index_fragment_source = contract_files
@@ -173,7 +162,11 @@ fn expected_files(root: &Path, resolver: Option<&ResolverInput>) -> Result<Expec
     let recipe_paths = recipe_paths(&spine);
     let human_readme =
         crate::simdoc_index::render_human_readme(root, &repo, &recipe_paths, &index_doc)?;
-    let state = CardSpineState::read(root)?;
+    let state = if trust_state {
+        CardSpineState::read(root)?
+    } else {
+        None
+    };
     let reencode = state
         .as_ref()
         .map(|state| lanes_to_reencode(&spine, state))
@@ -391,7 +384,7 @@ fn check_files(root: &Path, files: &[GeneratedFile]) -> Result<(), String> {
         crate::publication::guard(root, &file.path, contents)?;
         let path = root.join(&file.path);
         crate::publication::ensure_ordinary_target(root, &path)?;
-        match crate::owned::read_to_string(&path) {
+        match crate::owned::read_output(&path) {
             Ok(current) if current == *contents => {}
             Ok(_) => stale.push(file.path.clone()),
             Err(_) => stale.push(file.path.clone()),
@@ -480,6 +473,10 @@ impl GeneratedFile {
 }
 
 #[cfg(test)]
+#[path = "simdoc_check_tests.rs"]
+mod check_tests;
+
+#[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
     use std::fs;
@@ -506,7 +503,7 @@ mod tests {
     #[test]
     fn simdoc_carries_every_repo_contract_projection() {
         let root = crate::tooling_checkout_root();
-        let paths = expected_files(&root, None)
+        let paths = expected_files(&root, None, false)
             .unwrap()
             .files
             .into_iter()

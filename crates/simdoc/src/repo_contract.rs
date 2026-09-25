@@ -9,7 +9,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde_json::{Value, json};
@@ -33,6 +32,11 @@ use package_projection::*;
 // simdoc is the one contract engine: xtask's repo-contract, index-check,
 // crate-catalog, and validation-matrix routes run this locked executable
 // instead of compiling any of it.
+#[path = "repo_contract/exclusion_witness.rs"]
+mod exclusion_witness;
+#[cfg(test)]
+#[path = "repo_contract/policy_fixture.rs"]
+mod policy_fixture;
 #[path = "repo_contract/workspace_policy.rs"]
 mod workspace_policy;
 #[path = "repo_contract/workspaces.rs"]
@@ -243,7 +247,7 @@ fn write_or_check(
     report: &mut RepoContractReport,
 ) -> Result<(), String> {
     crate::publication::ensure_ordinary_target(repo, path)?;
-    let current = crate::owned::read_to_string(path).unwrap_or_default();
+    let current = crate::owned::read_output(path).unwrap_or_default();
     if current == expected {
         return Ok(());
     }

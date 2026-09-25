@@ -7,7 +7,7 @@
 //!
 //! Every generator runs inside a scope bound to the repository's Git
 //! worktree. Inside it, a file may be read or listed only when it is an
-//! ordinary file the worktree lists, reached from the root without passing
+//! ordinary file Git tracks in that worktree, reached from the root without passing
 //! through a symlink. Walks enumerate the worktree listing rather than the
 //! directory tree, so symlinked directories, nested repositories, submodules,
 //! and ignored files are never followed. An attempt to read a file that
@@ -19,7 +19,6 @@
 
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -34,8 +33,6 @@ pub(crate) const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 struct Scope {
     worktree: Worktree,
     violations: RefCell<Vec<String>>,
-    /// Paths embedded in consumed content; publication may repeat them.
-    consumed_paths: RefCell<BTreeSet<String>>,
 }
 
 thread_local! {
@@ -92,7 +89,6 @@ pub(crate) fn enter(repo: &Path) -> Result<ScopeGuard, String> {
     let scope = Rc::new(Scope {
         worktree: Worktree::open(&root)?,
         violations: RefCell::new(Vec::new()),
-        consumed_paths: RefCell::new(BTreeSet::new()),
     });
     let previous = SCOPE.with(|active| active.borrow_mut().replace(scope));
     Ok(ScopeGuard {
@@ -127,20 +123,44 @@ pub(crate) fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
         scope.violations.borrow_mut().push(err.clone());
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, err));
     }
-    let bytes = bounded_read(path)?;
-    if let Ok(text) = std::str::from_utf8(&bytes) {
-        scope.consumed_paths.borrow_mut().extend(
-            crate::publication::path_tokens(text)
-                .into_iter()
-                .map(str::to_owned),
-        );
-    }
-    Ok(bytes)
+    bounded_read(path)
 }
 
-/// Whether `token` occurs in repository content this scope consumed.
-pub(crate) fn consumed_path(token: &str) -> bool {
-    current().is_some_and(|scope| scope.consumed_paths.borrow().contains(token))
+/// Whether `path` is an ordinary file this run may consume. For existence
+/// checks that decide what is generated: an untracked or ignored file that
+/// happens to be present must not change generated output, so it does not
+/// exist as far as the generator is concerned. Records no violation.
+pub(crate) fn is_owned_file(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    match current() {
+        Some(scope) => scope.worktree.owned_file(path, "file").is_ok(),
+        None => path.is_file(),
+    }
+}
+
+/// Reads a file this run writes, only to compare it with what it would write.
+///
+/// An output may be new and so not yet tracked; its bytes are never consumed
+/// as content (they reach nothing but an equality test), so it need not be
+/// owned. It must still be an ordinary file reached without a symlink.
+pub(crate) fn read_output(path: impl AsRef<Path>) -> io::Result<String> {
+    let path = path.as_ref();
+    if let Some(scope) = current() {
+        crate::publication::ensure_ordinary_target(scope.worktree.root(), path)
+            .map_err(|err| io::Error::new(io::ErrorKind::PermissionDenied, err))?;
+    }
+    match fs::symlink_metadata(path) {
+        Err(err) => return Err(err),
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not an ordinary file", path.display()),
+            ));
+        }
+        Ok(_) => {}
+    }
+    String::from_utf8(bounded_read(path)?)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "file is not UTF-8"))
 }
 
 /// Every owned file beneath `dir`, in path order.

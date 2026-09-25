@@ -192,7 +192,9 @@ pub(super) fn display_io(err: io::Error) -> String {
 }
 
 pub(super) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = crate::tools::tools()
+        .ok()?
+        .git()
         .args(args)
         .current_dir(repo)
         .output()

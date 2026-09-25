@@ -216,7 +216,7 @@ fn slow_rows(repo: &Path) -> Vec<MatrixRow> {
         command: "cargo check --benches --all-features".to_owned(),
         purpose: "Bench targets compile under the full feature closure.".to_owned(),
     }];
-    if repo.join("fuzz/Cargo.toml").is_file() {
+    if crate::owned::is_owned_file(repo.join("fuzz/Cargo.toml")) {
         rows.push(MatrixRow {
             id: "slow-fuzz-compile".to_owned(),
             mode: MatrixMode::Slow,
@@ -305,7 +305,7 @@ fn write_or_check(
     check: bool,
     report: &mut ValidationMatrixReport,
 ) -> Result<(), String> {
-    match crate::owned::read_to_string(path) {
+    match crate::owned::read_output(path) {
         Ok(existing) if existing == content => Ok(()),
         Ok(_) | Err(_) if check => Err(format!(
             "{} is stale; run cargo run -p xtask -- validation-matrix",

@@ -3,7 +3,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use super::*;
 
@@ -137,8 +140,12 @@ fn a_symlink_inside_a_path_package_is_refused() {
     )
     .unwrap();
 
+    // The target is a file of a directory that is no Git checkout.
     let err = validate(&layout.manifest(), &layout.repo()).unwrap_err();
-    assert!(err.contains("is a symlink"), "{err}");
+    assert!(
+        err.contains("refused: link target is not inside a Git checkout"),
+        "{err}"
+    );
 }
 
 #[test]

@@ -96,6 +96,100 @@ fn collect(root: &Path, relative: &Path, files: &mut Vec<PathBuf>) -> io::Result
     Ok(())
 }
 
+/// The `host:` triple from `<tool> --version --verbose` output.
+pub(crate) fn host_triple(verbose_version: &str) -> Option<String> {
+    verbose_version
+        .lines()
+        .find_map(|line| line.strip_prefix("host:"))
+        .map(|value| value.trim().to_owned())
+}
+
+/// The ordinary files that define a toolchain's identity: the `cargo`,
+/// `rustc`, and `rustdoc` executables and every file directly in `lib`
+/// (`librustc_driver` and LLVM, which is where the compiler actually lives).
+/// A symlink or any other kind of entry refuses the identity.
+pub(crate) fn toolchain_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = ["cargo", "rustc", "rustdoc"]
+        .iter()
+        .map(|name| Path::new("bin").join(name))
+        .collect::<Vec<_>>();
+    for entry in fs::read_dir(root.join("lib"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            continue;
+        }
+        files.push(Path::new("lib").join(entry.file_name()));
+    }
+    files.sort();
+    for relative in &files {
+        let metadata = fs::symlink_metadata(root.join(relative))?;
+        if !metadata.is_file() {
+            return Err(io::Error::other(format!(
+                "toolchain file {} is not an ordinary file",
+                relative.display()
+            )));
+        }
+    }
+    Ok(files)
+}
+
+/// SHA-256 over [`toolchain_files`] of the toolchain rooted at `root`: each
+/// file's slash-separated path relative to the root, a NUL, its length
+/// (u64 little-endian), and its bytes, streamed in path order.
+pub(crate) fn toolchain_digest(root: &Path) -> io::Result<String> {
+    use std::io::Read;
+
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1024 * 1024];
+    for relative in toolchain_files(root)? {
+        let mut file = fs::File::open(root.join(&relative))?;
+        let length = file.metadata()?.len();
+        hasher.update(
+            relative
+                .to_str()
+                .ok_or_else(|| io::Error::other("toolchain path is not UTF-8"))?
+                .replace(std::path::MAIN_SEPARATOR, "/")
+                .as_bytes(),
+        );
+        hasher.update([0]);
+        hasher.update(length.to_le_bytes());
+        let mut remaining = length;
+        while remaining > 0 {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                return Err(io::Error::other("toolchain file shrank while hashed"));
+            }
+            hasher.update(&buffer[..read]);
+            remaining = remaining.saturating_sub(read as u64);
+        }
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// The toolchain digest the committed root manifest pins for `host`, from its
+/// `[workspace.metadata.sim.encoder.toolchain_sha256]` table.
+pub(crate) fn pinned_toolchain_digest(root_manifest: &str, host: &str) -> Option<String> {
+    let mut in_table = false;
+    for line in root_manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_table = line == "[workspace.metadata.sim.encoder.toolchain_sha256]";
+            continue;
+        }
+        if in_table
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim().trim_matches('"') == host
+        {
+            return Some(value.trim().trim_matches('"').to_owned());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -152,5 +246,65 @@ mod tests {
         assert_ne!(second, source_digest(&root).unwrap());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_toolchain_digest_binds_binaries_and_libraries_and_refuses_symlinks() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!("simdoc-toolchain-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::create_dir_all(root.join("lib/rustlib")).unwrap();
+        for tool in ["cargo", "rustc", "rustdoc"] {
+            fs::write(root.join("bin").join(tool), tool).unwrap();
+        }
+        fs::write(root.join("bin/cargo-fmt"), "not part of the identity").unwrap();
+        fs::write(root.join("lib/librustc_driver-1.so"), "driver").unwrap();
+
+        let first = toolchain_digest(&root).unwrap();
+        assert_eq!(first, toolchain_digest(&root).unwrap());
+        fs::write(root.join("bin/cargo-fmt"), "changed").unwrap();
+        assert_eq!(first, toolchain_digest(&root).unwrap());
+        for changed in ["bin/rustc", "lib/librustc_driver-1.so"] {
+            let original = fs::read(root.join(changed)).unwrap();
+            fs::write(root.join(changed), "counterfeit").unwrap();
+            assert_ne!(first, toolchain_digest(&root).unwrap(), "{changed}");
+            fs::write(root.join(changed), original).unwrap();
+        }
+        fs::write(root.join("lib/libextra.so"), "extra").unwrap();
+        assert_ne!(first, toolchain_digest(&root).unwrap());
+        fs::remove_file(root.join("lib/libextra.so")).unwrap();
+        std::os::unix::fs::symlink(root.join("bin/rustc"), root.join("lib/liblink.so")).unwrap();
+        assert!(
+            toolchain_digest(&root)
+                .unwrap_err()
+                .to_string()
+                .contains("not an ordinary file")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_pinned_toolchain_digest_is_read_per_host() {
+        let manifest = "[workspace.metadata.sim.encoder]\ntoolchain = \"1.96.0\"\n\n\
+                        [workspace.metadata.sim.encoder.toolchain_sha256]\n\
+                        x86_64-unknown-linux-gnu = \"aa\"\n\"aarch64-apple-darwin\" = \"bb\"\n\n\
+                        [dependencies]\nx86_64-unknown-linux-gnu = \"cc\"\n";
+        assert_eq!(
+            pinned_toolchain_digest(manifest, "x86_64-unknown-linux-gnu").as_deref(),
+            Some("aa")
+        );
+        assert_eq!(
+            pinned_toolchain_digest(manifest, "aarch64-apple-darwin").as_deref(),
+            Some("bb")
+        );
+        assert_eq!(pinned_toolchain_digest(manifest, "riscv64"), None);
+        assert_eq!(
+            host_triple("rustc 1.96.0\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\n")
+                .as_deref(),
+            Some("x86_64-unknown-linux-gnu")
+        );
     }
 }
