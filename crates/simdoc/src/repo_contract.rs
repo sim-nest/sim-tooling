@@ -38,10 +38,14 @@ use package_projection::*;
 mod workspace_policy;
 #[path = "repo_contract/workspaces.rs"]
 mod workspaces;
+#[path = "repo_contract/worktree.rs"]
+mod worktree;
 #[cfg(test)]
 pub(crate) use workspaces::SourceDependency;
 use workspaces::*;
-pub(crate) use workspaces::{PackageContract, cargo_metadata, workspace_package_names};
+pub(crate) use workspaces::{
+    ContractPackages, PackageContract, cargo_metadata, contract_packages, workspace_package_names,
+};
 
 #[path = "repo_contract/provenance.rs"]
 mod provenance;
@@ -104,12 +108,23 @@ pub(crate) struct ContractArtifacts {
 }
 
 pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, String> {
+    contract_artifacts_observed(repo, &|| {})
+}
+
+/// Builds every contract artifact from one measured snapshot: the inputs the
+/// provenance hash binds are measured again after every projection has read
+/// them (`after_projections` runs in between), and any change refuses the run.
+fn contract_artifacts_observed(
+    repo: &Path,
+    after_projections: &dyn Fn(),
+) -> Result<ContractArtifacts, String> {
     let repo = repo.canonicalize().map_err(display_io)?;
     let repo = repo.as_path();
-    let metadata = cargo_metadata(repo)?;
-    let workspace_names = workspace_package_names(&metadata)?;
+    let contract = contract_packages(repo)?;
+    let metadata = &contract.metadata;
+    let workspace_names = workspace_package_names(metadata)?;
     let cut = crate::repo_contract_cut::load_or_derive_split_cut(repo, &workspace_names)?;
-    let packages = workspace_packages(repo, &metadata, &cut)?;
+    let packages = workspace_packages(repo, metadata, &cut)?;
     validate_cut(&packages, &cut)?;
 
     let package_groups = packages
@@ -120,7 +135,7 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
     let exemptions = non_citizen_exemptions(repo);
     let recipes = recipe_books(repo, &package_groups);
     let cards = card_index(repo, &package_groups);
-    let provenance = provenance(repo, &metadata)?;
+    let provenance = provenance(repo, metadata)?;
     let index_fragment = index_fragment::artifact(repo, &packages, &cards)?;
     let mut files = artifacts(ArtifactInputs {
         packages: &packages,
@@ -131,16 +146,39 @@ pub(crate) fn contract_artifacts(repo: &Path) -> Result<ContractArtifacts, Strin
         cards: &cards,
         provenance: &provenance,
         index_fragment: &index_fragment,
+        exclusions: &contract
+            .exclusions
+            .iter()
+            .map(|entry| entry.projection())
+            .collect::<Vec<_>>(),
     })?;
     files.insert(
         "sim-index-fragment.claims.sx",
         fragment_certificate_artifact(&index_fragment)?,
     );
+    after_projections();
+    ensure_inputs_unchanged(repo, &provenance)?;
 
     Ok(ContractArtifacts {
         package_count: packages.len(),
         files,
     })
+}
+
+/// Refuses the run when the inputs bound by the provenance workspace hash
+/// changed while the projections were reading them.
+fn ensure_inputs_unchanged(repo: &Path, provenance: &Value) -> Result<(), String> {
+    let (paths, hash) = measure_inputs(repo)?;
+    if provenance["workspace_hash"].as_str() != Some(hash.as_str())
+        || provenance["workspace_hash_inputs"] != json!(paths)
+    {
+        return Err(
+            "repository inputs changed during generation; the artifacts would not match their \
+             recorded workspace hash, so none were produced"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn fragment_certificate_artifact(fragment: &str) -> Result<String, String> {

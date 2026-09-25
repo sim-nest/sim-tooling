@@ -91,12 +91,13 @@ const CONTRACT_ARTIFACTS: [&str; 11] = [
 ];
 
 #[test]
-fn repo_contract_routes_emit_identical_bytes() {
-    let repo = source_checkout_root();
-    let through_xtask = scratch_dir("xtask-route");
-    let direct = scratch_dir("simdoc-route");
+fn every_contract_route_matches_the_engine_byte_for_byte_on_nested_packages() {
+    let through_xtask = Fixture::nested("route-xtask");
+    let direct = Fixture::nested("route-direct");
+    let emitted_xtask = scratch_dir("route-xtask-emit");
+    let emitted_direct = scratch_dir("route-direct-emit");
     let emit_args = |out: &PathBuf| {
-        let mut args = vec!["--repo".to_owned(), repo.to_string_lossy().into_owned()];
+        let mut args = Vec::new();
         for name in CONTRACT_ARTIFACTS {
             args.extend(["--emit".to_owned(), name.to_owned()]);
         }
@@ -104,32 +105,75 @@ fn repo_contract_routes_emit_identical_bytes() {
         args
     };
 
-    let mut xtask_args = vec!["xtask".to_owned(), "repo-contract".to_owned()];
-    xtask_args.extend(emit_args(&through_xtask));
-    xtask::run(xtask_args).expect("xtask repo-contract --emit");
-
-    let status = std::process::Command::new(env!("CARGO"))
-        .args(["run", "--quiet", "--locked", "--manifest-path"])
-        .arg(repo.join("crates/simdoc/Cargo.toml"))
-        .args(["--", "repo-contract"])
-        .args(emit_args(&direct))
-        .stdout(std::process::Stdio::null())
-        .status()
-        .expect("run simdoc directly");
-    assert!(status.success());
+    for (command, tail) in [
+        ("repo-contract", emit_args(&emitted_xtask)),
+        ("validation-matrix", Vec::new()),
+        ("crate-catalog", Vec::new()),
+    ] {
+        let mut args = vec![
+            "xtask".to_owned(),
+            command.to_owned(),
+            "--repo".to_owned(),
+            through_xtask.root.to_string_lossy().into_owned(),
+        ];
+        args.extend(tail);
+        xtask::run(args).unwrap_or_else(|err| panic!("xtask {command}: {err}"));
+    }
+    for (command, tail) in [
+        ("repo-contract", emit_args(&emitted_direct)),
+        ("validation-matrix", Vec::new()),
+        ("crate-catalog", Vec::new()),
+    ] {
+        let status = std::process::Command::new("cargo")
+            .current_dir(source_checkout_root())
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .args(["run", "--quiet", "--locked", "--manifest-path"])
+            .arg(source_checkout_root().join("crates/simdoc/Cargo.toml"))
+            .args(["--", command, "--repo"])
+            .arg(&direct.root)
+            .args(tail)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("run simdoc directly");
+        assert!(status.success(), "simdoc {command}");
+    }
 
     for name in CONTRACT_ARTIFACTS {
-        let left = fs::read(through_xtask.join(name)).unwrap();
-        let right = fs::read(direct.join(name)).unwrap();
+        let left = fs::read(emitted_xtask.join(name)).unwrap();
+        let right = fs::read(emitted_direct.join(name)).unwrap();
         assert!(!left.is_empty(), "{name} is empty");
         assert_eq!(left, right, "{name} differs between routes");
     }
-    fs::remove_dir_all(through_xtask).unwrap();
-    fs::remove_dir_all(direct).unwrap();
+    for relative in [
+        "docs/generated/validation-matrix.md",
+        "docs/generated/crate-catalog.json",
+        "docs/generated/crate-catalog.md",
+        "nested/tool/README.md",
+        "nested/tool/Cargo.toml",
+        "README.md",
+        "Cargo.toml",
+    ] {
+        assert_eq!(
+            through_xtask.read(relative),
+            direct.read(relative),
+            "{relative} differs between routes"
+        );
+    }
+    let matrix = through_xtask.read("docs/generated/validation-matrix.md");
+    assert!(
+        matrix.contains("`cargo check --manifest-path nested/Cargo.toml -p tool --all-features`")
+    );
+    let catalog = through_xtask.read("docs/generated/crate-catalog.json");
+    assert!(catalog.contains("\"nested/tool/Cargo.toml\""));
+    let contract = fs::read_to_string(emitted_xtask.join("repo-contract.json")).unwrap();
+    assert!(contract.contains("\"name\": \"tool\""));
+
+    fs::remove_dir_all(emitted_xtask).unwrap();
+    fs::remove_dir_all(emitted_direct).unwrap();
 }
 
 #[test]
-fn xtask_compiles_no_contract_engine_source() {
+fn xtask_carries_no_contract_generator() {
     let root = source_checkout_root();
     let manifest: toml::Table = fs::read_to_string(root.join("Cargo.toml"))
         .unwrap()
@@ -147,20 +191,127 @@ fn xtask_compiles_no_contract_engine_source() {
             );
         }
     }
+    let labels = [
+        concat!("xtask repo-contract", " v1"),
+        concat!("xtask crate-catalog", " v1"),
+        concat!("xtask validation-matrix", " v1"),
+        concat!("#[path = \"", "../crates/simdoc"),
+    ];
     let mut pending = vec![root.join("src")];
     while let Some(dir) = pending.pop() {
         for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let text = fs::read_to_string(&path).unwrap();
-                assert!(
-                    !text.contains(concat!("#[path = \"", "../crates/simdoc")),
-                    "{} compiles simdoc source",
-                    path.display()
-                );
+                continue;
             }
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                ![
+                    "repo_contract.rs",
+                    "crate_catalog.rs",
+                    "validation_matrix.rs"
+                ]
+                .contains(&name.as_str()),
+                "{} reintroduces a contract generator",
+                path.display()
+            );
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = fs::read_to_string(&path).unwrap();
+                for label in labels {
+                    assert!(
+                        !text.contains(label),
+                        "{} carries contract generator code ({label})",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+}
+
+struct Fixture {
+    root: PathBuf,
+}
+
+impl Fixture {
+    fn nested(label: &str) -> Self {
+        let root = scratch_dir(label).join("sim-fixture");
+        fs::create_dir_all(&root).unwrap();
+        let fixture = Self { root };
+        fixture.write(
+            "Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+             description = \"Fixture application.\"\n\n\
+             [workspace]\nexclude = [\"nested\"]\n\n\
+             [workspace.metadata.sim]\ncontract-workspaces = [\"nested\"]\n",
+        );
+        fixture.write(
+            "src/lib.rs",
+            "//! Fixture application.\n\npub fn app() {}\n",
+        );
+        fixture.write("nested/Cargo.toml", "[workspace]\nmembers = [\"tool\"]\n");
+        fixture.write(
+            "nested/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+             description = \"Fixture tool.\"\npublish = false\n\n[features]\nfast = []\n",
+        );
+        fixture.write(
+            "nested/tool/src/lib.rs",
+            "//! Fixture tool.\n\npub fn tool() {}\n",
+        );
+        fixture.git(&["init", "--quiet"]);
+        fixture.git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/sim-nest/sim-fixture",
+        ]);
+        fixture.git(&["add", "-A"]);
+        fixture.git(&[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "--no-verify",
+            "-m",
+            "fixture",
+        ]);
+        fixture
+    }
+
+    fn write(&self, relative: &str, text: &str) {
+        let path = self.root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    fn read(&self, relative: &str) -> String {
+        fs::read_to_string(self.root.join(relative)).unwrap()
+    }
+
+    fn git(&self, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&self.root)
+            .env("GIT_AUTHOR_DATE", "2026-09-01T12:00:00+00:00")
+            .env("GIT_COMMITTER_DATE", "2026-09-01T12:00:00+00:00")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Some(parent) = self.root.parent() {
+            let _ = fs::remove_dir_all(parent);
         }
     }
 }

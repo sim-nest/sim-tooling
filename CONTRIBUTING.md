@@ -14,14 +14,24 @@ crates.io -- no extra tooling or sibling checkouts are required:
 
 ## What a pull request must pass
 
-Every PR runs these gates in CI, and they must be green before merge:
+Every PR runs these gates in CI (`.github/workflows/ci.yml`) on the toolchain
+pinned in `rust-toolchain.toml`, and they must be green before merge:
 
 - `cargo fmt --all --check`
 - `cargo test`
 - `cargo clippy --all-targets -- -D warnings`
-- `cargo doc --no-deps`
-- `cargo run -p xtask -- simdoc --check`
+- `cargo doc --no-deps` (with `RUSTDOCFLAGS=-D warnings`)
+- `cargo fmt --manifest-path crates/simdoc/Cargo.toml --check`
+- `cargo test --locked --manifest-path crates/simdoc/Cargo.toml`
+- `cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings`
+- `cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check`
 - `cargo run -p xtask -- check-file-sizes`
+
+`simdoc` is the documentation and contract engine. It is its own resolver root
+(`crates/simdoc/Cargo.lock`), so it is always run with `--manifest-path` and
+`--locked`; `cargo run -p xtask -- simdoc` refuses and points here. The xtask
+`repo-contract`, `crate-catalog`, and `validation-matrix` commands run the same
+locked engine, and `cargo test` exercises their `--check` modes.
 
 Please keep source and Markdown ASCII-only, and add or update tests for behavior
 you change. Public APIs carry `#![deny(missing_docs)]`; document new public items.

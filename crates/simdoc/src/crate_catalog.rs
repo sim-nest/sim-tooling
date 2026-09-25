@@ -3,7 +3,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The crate-catalog task: generate or check crate metadata, READMEs, and the crate catalog.
+//! The crate-catalog task: generate or check crate metadata, READMEs, and the
+//! crate catalog for exactly the packages the repo contract covers. It runs
+//! inside the locked contract engine; xtask's `crate-catalog` route runs this
+//! executable.
 
 use std::{
     collections::BTreeSet,
@@ -20,7 +23,7 @@ const GENERATOR: &str = "xtask crate-catalog v1";
 
 /// Summary of a `crate-catalog` run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CrateCatalogReport {
+pub(crate) struct CrateCatalogReport {
     /// Number of workspace packages inspected.
     pub packages: usize,
     /// Number of `Cargo.toml` manifests updated.
@@ -44,10 +47,29 @@ struct PackageEntry {
     generated_readme: bool,
 }
 
+/// Runs `crate-catalog [--check] [--repo <path>]`; `args[1]` is the
+/// subcommand name.
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
+    let options = crate::generator_options::parse_repo_tool_args(args, "crate-catalog")?;
+    let report = crate_catalog(options.check, Some(options.repo))?;
+    if options.check {
+        println!("crate-catalog: metadata and generated files are current");
+    } else {
+        println!(
+            "crate-catalog: {} package(s), {} manifest(s), {} readme(s), {} catalog file(s)",
+            report.packages,
+            report.manifests_changed,
+            report.readmes_changed,
+            report.catalogs_changed
+        );
+    }
+    Ok(())
+}
+
 /// Generates crate metadata, READMEs, and the crate catalog for the current
 /// repository; with `check` true it instead verifies they are current and
 /// fails when they are stale. Returns the run summary.
-pub fn crate_catalog(
+pub(crate) fn crate_catalog(
     check: bool,
     repo_override: Option<PathBuf>,
 ) -> Result<CrateCatalogReport, String> {
@@ -57,9 +79,9 @@ pub fn crate_catalog(
         Some(path) => path.canonicalize().map_err(display_io)?,
         None => find_repo_root(&std::env::current_dir().map_err(display_io)?)?,
     };
-    // The catalog covers exactly the repo contract's packages, as discovered
-    // and classified by the locked contract engine.
-    let metadata = crate::simdoc_route::repo_packages(&repo)?["metadata"].take();
+    // The catalog covers exactly the repo contract's packages, discovered and
+    // classified by the same engine that writes the contract.
+    let metadata = crate::repo_contract::cargo_metadata(&repo)?;
     let mut entries = workspace_packages(&repo, &metadata)?;
     let mut report = CrateCatalogReport {
         packages: entries.len(),
@@ -451,4 +473,34 @@ fn find_repo_root(start: &Path) -> Result<PathBuf, String> {
 
 fn display_io(err: io::Error) -> String {
     err.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+    use crate::test_fixture::FixtureRepo;
+
+    #[test]
+    fn nested_contract_packages_are_catalogued() {
+        let repo = FixtureRepo::nested("catalog-nested");
+
+        crate_catalog(false, Some(repo.path().to_path_buf())).unwrap();
+        let catalog: Value =
+            serde_json::from_str(&repo.read("docs/generated/crate-catalog.json")).unwrap();
+
+        let manifests = catalog["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|package| package["manifest"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(manifests, ["Cargo.toml", "nested/tool/Cargo.toml"]);
+        assert!(
+            repo.read("nested/tool/README.md")
+                .contains(GENERATED_MARKER)
+        );
+        assert!(crate_catalog(true, Some(repo.path().to_path_buf())).is_ok());
+    }
 }

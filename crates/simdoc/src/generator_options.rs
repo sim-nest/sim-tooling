@@ -1,10 +1,66 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Shared command-line options for repo-local generators.
 
 use std::{
-    io,
+    env, io,
     path::{Path, PathBuf},
     process::Command,
 };
+
+/// Parsed options for repo-local generator commands.
+pub(crate) struct RepoToolOptions {
+    /// Repository root the generator should inspect.
+    pub(crate) repo: PathBuf,
+    /// Whether to verify generated files instead of writing them.
+    pub(crate) check: bool,
+}
+
+/// Parses common generator options.
+pub(crate) fn parse_repo_tool_args(
+    args: &[String],
+    command: &str,
+) -> Result<RepoToolOptions, String> {
+    let mut repo = None;
+    let mut check = false;
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--check" => check = true,
+            "--repo" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    format!("--repo requires a path\n{}", repo_tool_usage(command))
+                })?;
+                repo = Some(PathBuf::from(value));
+            }
+            "-h" | "--help" => return Err(repo_tool_usage(command)),
+            other => {
+                return Err(format!(
+                    "unknown {command} argument `{other}`\n{}",
+                    repo_tool_usage(command)
+                ));
+            }
+        }
+        index += 1;
+    }
+
+    let start = match repo {
+        Some(path) => path.canonicalize().map_err(display_io)?,
+        None => env::current_dir().map_err(display_io)?,
+    };
+    Ok(RepoToolOptions {
+        repo: find_repo_root(&start)?,
+        check,
+    })
+}
+
+fn repo_tool_usage(command: &str) -> String {
+    format!("usage: {command} [--check] [--repo <path>]")
+}
 
 /// Finds the public repository root for a generator command.
 pub(crate) fn find_repo_root(start: &Path) -> Result<PathBuf, String> {

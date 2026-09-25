@@ -4,10 +4,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::{
-    atelier, bench, build_inputs, citizenize, crate_catalog, file_size_gate, generator_options,
-    index_check, index_doctor, index_find, index_fixpoint, index_merge, index_overlap,
-    index_render, index_route, index_seed, index_snapshot, index_vault, platform_inventory,
-    sealed_resources, simdoc_route, validation_matrix,
+    atelier, bench, build_inputs, citizenize, file_size_gate, index_check, index_doctor,
+    index_find, index_fixpoint, index_merge, index_overlap, index_render, index_route, index_seed,
+    index_snapshot, index_vault, platform_inventory, sealed_resources, simdoc_route,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -113,35 +112,10 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
         [_, command, rest @ ..] if command == "repo-contract" => {
             simdoc_route::run_forwarded("repo-contract", rest)
         }
-        [_, command, ..] if command == "validation-matrix" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report =
-                validation_matrix::validation_matrix_for_repo(options.check, &options.repo)?;
-            if options.check {
-                println!("validation-matrix: generated matrix is current");
-                return Ok(());
-            }
-            println!(
-                "validation-matrix: {} row(s), {} artifact(s) changed",
-                report.rows, report.artifacts_changed
-            );
-            Ok(())
-        }
-        [_, command, ..] if command == "crate-catalog" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report = crate_catalog(options.check, Some(options.repo))?;
-            if options.check {
-                println!("crate-catalog: metadata and generated files are current");
-            } else {
-                println!(
-                    "crate-catalog: {} package(s), {} manifest(s), {} readme(s), {} catalog file(s)",
-                    report.packages,
-                    report.manifests_changed,
-                    report.readmes_changed,
-                    report.catalogs_changed
-                );
-            }
-            Ok(())
+        // The contract-derived generators run inside the locked simdoc
+        // engine, with the arguments passed through.
+        [_, command, rest @ ..] if command == "validation-matrix" || command == "crate-catalog" => {
+            simdoc_route::run_forwarded(command, rest)
         }
         [_, command, ..] if command == "citizenize" => citizenize::run(args),
         [program, ..] => Err(format!("usage: {program} <{USAGE_COMMANDS}>")),

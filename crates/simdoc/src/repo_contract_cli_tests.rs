@@ -18,9 +18,8 @@ use super::*;
 
 #[test]
 fn emit_mode_is_exclusive_bounded_and_repeatable() {
-    let repo = crate::tooling_checkout_root()
-        .to_string_lossy()
-        .into_owned();
+    let fixture = crate::test_fixture::FixtureRepo::nested("repo-contract-options");
+    let repo = fixture.path().to_string_lossy().into_owned();
     let out = temp_root("repo-contract-options");
     let args = |tail: &[&str]| {
         let mut args = vec!["simdoc".to_owned(), "repo-contract".to_owned()];
@@ -80,7 +79,8 @@ fn emit_mode_is_exclusive_bounded_and_repeatable() {
 
 #[test]
 fn emit_uses_canonical_fragment_and_leaves_repository_untouched() {
-    let repo = crate::tooling_checkout_root();
+    let fixture = crate::test_fixture::FixtureRepo::nested("repo-contract-emit");
+    let repo = fixture.path().to_path_buf();
     let before = git_output(&repo, &["status", "--porcelain"]).unwrap();
     let expected = contract_artifacts(&repo).unwrap();
     let out = temp_root("repo-contract-emit");

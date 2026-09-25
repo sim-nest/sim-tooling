@@ -17,10 +17,48 @@ use std::{
 use serde_json::Value;
 
 use super::workspace_policy::{
-    contract_exclusions, declared_contract_workspaces, ensure_manifests_classified,
-    ensure_packages_within, ensure_within, reject_symlinked_path,
+    ExcludedManifests, MAX_CONTRACT_PACKAGES, classify_manifests, contract_exclusions,
+    declared_contract_workspaces, reject_symlinked_path,
 };
+use super::worktree::Worktree;
 use super::*;
+use crate::bounded_process::run_bounded;
+
+/// Ceiling for one `cargo metadata --no-deps` document.
+const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
+/// Ceiling for Cargo diagnostics.
+const MAX_DIAGNOSTIC_BYTES: usize = 1024 * 1024;
+
+/// The packages a repository contract covers.
+#[derive(Debug)]
+pub(crate) struct ContractPackages {
+    root: PathBuf,
+    /// Merged `cargo metadata` of the root and every declared workspace.
+    pub(crate) metadata: Value,
+    /// Repository-relative roots of the declared nested workspaces.
+    pub(crate) declared: Vec<String>,
+    /// Proved exclusions with the manifests each removes.
+    pub(crate) exclusions: Vec<ExcludedManifests>,
+}
+
+impl ContractPackages {
+    /// The declared nested workspace that owns `package`, or `None` for a
+    /// member of the root workspace.
+    pub(crate) fn workspace_of(&self, package: &Value) -> Option<&str> {
+        let manifest = Path::new(package["manifest_path"].as_str()?);
+        let relative = manifest
+            .canonicalize()
+            .ok()?
+            .strip_prefix(&self.root)
+            .ok()?
+            .to_path_buf();
+        self.declared
+            .iter()
+            .filter(|root| relative.starts_with(root.as_str()))
+            .max_by_key(|root| root.len())
+            .map(String::as_str)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct PackageContract {
@@ -47,12 +85,14 @@ pub(crate) struct SourceDependency {
 }
 
 /// Reads `cargo metadata` for the root workspace and appends the members of
-/// every declared contract workspace. Fails on an invalid declaration, a
-/// package name claimed by two workspaces, a workspace, manifest, or target
-/// source outside the repository, or a git-visible Cargo manifest that is
-/// neither covered nor excluded with a reason.
-pub(crate) fn cargo_metadata(repo: &Path) -> Result<Value, String> {
-    let repo = repo.canonicalize().map_err(display_io)?;
+/// every declared contract workspace, then classifies every Cargo manifest
+/// the Git worktree owns. Fails on an invalid declaration, a package claimed
+/// by two workspaces, a manifest or target source the worktree does not own
+/// as an ordinary file, an unclassified manifest, an unproved exclusion, or
+/// output beyond its ceilings.
+pub(crate) fn contract_packages(repo: &Path) -> Result<ContractPackages, String> {
+    let worktree = Worktree::open(repo)?;
+    let repo = worktree.root().to_path_buf();
     let mut merged = workspace_metadata(&repo.join("Cargo.toml"))?;
     if workspace_root(&merged)? != repo {
         return Err(format!(
@@ -64,7 +104,8 @@ pub(crate) fn cargo_metadata(repo: &Path) -> Result<Value, String> {
     let exclusions = contract_exclusions(&merged)?;
     for relative in &declared {
         reject_symlinked_path(&repo, relative)?;
-        let root = ensure_within(&repo, &repo.join(relative), "contract workspace")?;
+        let root = repo.join(relative);
+        worktree.owned_file(&root.join("Cargo.toml"), "contract workspace manifest")?;
         let nested = workspace_metadata(&root.join("Cargo.toml"))?;
         if workspace_root(&nested)? != root {
             return Err(format!(
@@ -72,10 +113,24 @@ pub(crate) fn cargo_metadata(repo: &Path) -> Result<Value, String> {
             ));
         }
         append_workspace(&mut merged, nested)?;
+        if merged["packages"].as_array().map_or(0, Vec::len) > MAX_CONTRACT_PACKAGES {
+            return Err(format!(
+                "more than {MAX_CONTRACT_PACKAGES} contract packages; refusing an unbounded contract"
+            ));
+        }
     }
-    ensure_packages_within(&repo, &merged)?;
-    ensure_manifests_classified(&repo, &merged, &declared, &exclusions)?;
-    Ok(merged)
+    let exclusions = classify_manifests(&worktree, &merged, &declared, &exclusions)?;
+    Ok(ContractPackages {
+        root: repo,
+        metadata: merged,
+        declared,
+        exclusions,
+    })
+}
+
+/// The merged `cargo metadata` of every covered workspace.
+pub(crate) fn cargo_metadata(repo: &Path) -> Result<Value, String> {
+    Ok(contract_packages(repo)?.metadata)
 }
 
 fn workspace_root(metadata: &Value) -> Result<PathBuf, String> {
@@ -88,7 +143,8 @@ fn workspace_root(metadata: &Value) -> Result<PathBuf, String> {
 }
 
 fn workspace_metadata(manifest: &Path) -> Result<Value, String> {
-    let output = Command::new("cargo")
+    let mut command = Command::new("cargo");
+    command
         .args([
             "metadata",
             "--locked",
@@ -99,17 +155,21 @@ fn workspace_metadata(manifest: &Path) -> Result<Value, String> {
             "--no-deps",
             "--manifest-path",
         ])
-        .arg(manifest)
-        .output()
-        .map_err(display_io)?;
-    if !output.status.success() {
+        .arg(manifest);
+    let captured = run_bounded(
+        command,
+        "cargo metadata",
+        MAX_METADATA_BYTES,
+        MAX_DIAGNOSTIC_BYTES,
+    )?;
+    if !captured.status.success() {
         return Err(format!(
             "cargo metadata failed for {}: {}",
             manifest.display(),
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&captured.stderr)
         ));
     }
-    serde_json::from_slice(&output.stdout).map_err(|err| format!("parse cargo metadata: {err}"))
+    serde_json::from_slice(&captured.stdout).map_err(|err| format!("parse cargo metadata: {err}"))
 }
 
 fn append_workspace(merged: &mut Value, nested: Value) -> Result<(), String> {

@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! Pure identity rules for the simdoc build script, compiled into `build.rs`
+//! and into simdoc's own test build so each rule has a falsifying test.
+
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+use sha2::{Digest, Sha256};
+
+/// The `channel` pinned by a `rust-toolchain.toml` text.
+pub(crate) fn pinned_channel(toolchain_toml: &str) -> Option<String> {
+    toolchain_toml.lines().find_map(|line| {
+        let value = line
+            .trim()
+            .strip_prefix("channel")?
+            .trim()
+            .strip_prefix('=')?;
+        Some(value.trim().trim_matches('"').to_owned())
+    })
+}
+
+/// `(release, commit-hash)` from `<tool> --version --verbose` output.
+pub(crate) fn tool_identity(verbose_version: &str) -> Option<(String, String)> {
+    let field = |name: &str| {
+        verbose_version
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .map(|value| value.trim().to_owned())
+    };
+    Some((field("release:")?, field("commit-hash:")?))
+}
+
+/// Refuses a tool whose release is not the pinned channel.
+pub(crate) fn require_pinned(tool: &str, release: &str, pinned: &str) -> Result<(), String> {
+    if release == pinned {
+        Ok(())
+    } else {
+        Err(format!(
+            "simdoc must be built with the pinned toolchain {pinned}; {tool} is {release}"
+        ))
+    }
+}
+
+/// SHA-256 over the encoder's manifest, lock, build inputs, and `src` tree:
+/// every file's repository-relative path, length, and bytes, in path order.
+pub(crate) fn source_digest(root: &Path) -> io::Result<String> {
+    let mut files = vec![
+        PathBuf::from("Cargo.toml"),
+        PathBuf::from("Cargo.lock"),
+        PathBuf::from("build.rs"),
+        PathBuf::from("build_identity.rs"),
+    ];
+    collect(root, Path::new("src"), &mut files)?;
+    files.sort();
+    let mut hasher = Sha256::new();
+    for relative in files {
+        let bytes = fs::read(root.join(&relative))?;
+        let name = relative
+            .to_str()
+            .ok_or_else(|| io::Error::other("simdoc source path is not UTF-8"))?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        hasher.update(name.as_bytes());
+        hasher.update([0]);
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(&bytes);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn collect(root: &Path, relative: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in fs::read_dir(root.join(relative))? {
+        let entry = entry?;
+        let path = relative.join(entry.file_name());
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            collect(root, &path, files)?;
+        } else if kind.is_file() {
+            files.push(path);
+        } else {
+            return Err(io::Error::other(format!(
+                "simdoc source {} is not an ordinary file",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        env,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+
+    #[test]
+    fn the_pin_and_tool_identities_are_parsed_exactly() {
+        assert_eq!(
+            pinned_channel("[toolchain]\nchannel = \"1.96.0\"\ncomponents = []\n").as_deref(),
+            Some("1.96.0")
+        );
+        assert_eq!(pinned_channel("[toolchain]\n"), None);
+        assert_eq!(
+            tool_identity("rustc 1.96.0\nbinary: rustc\ncommit-hash: abc\nrelease: 1.96.0\n"),
+            Some(("1.96.0".to_owned(), "abc".to_owned()))
+        );
+        assert_eq!(tool_identity("rustc 1.96.0\n"), None);
+    }
+
+    #[test]
+    fn a_toolchain_other_than_the_pin_is_refused() {
+        assert!(require_pinned("rustc", "1.96.0", "1.96.0").is_ok());
+        let err = require_pinned("rustc", "1.97.1", "1.96.0").unwrap_err();
+        assert!(
+            err.contains("pinned toolchain 1.96.0; rustc is 1.97.1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_source_digest_binds_every_source_and_the_lock() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!("simdoc-digest-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(root.join("src/nested")).unwrap();
+        for file in ["Cargo.toml", "Cargo.lock", "build.rs", "build_identity.rs"] {
+            fs::write(root.join(file), file).unwrap();
+        }
+        fs::write(root.join("src/lib.rs"), "lib").unwrap();
+        fs::write(root.join("src/nested/mod.rs"), "nested").unwrap();
+
+        let first = source_digest(&root).unwrap();
+        assert_eq!(first, source_digest(&root).unwrap());
+        fs::write(root.join("src/nested/mod.rs"), "changed").unwrap();
+        let second = source_digest(&root).unwrap();
+        assert_ne!(first, second);
+        fs::write(root.join("Cargo.lock"), "relocked").unwrap();
+        assert_ne!(second, source_digest(&root).unwrap());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+}

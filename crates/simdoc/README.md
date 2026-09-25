@@ -8,7 +8,7 @@ Standalone SIM generated-document encoder.
 
 - Manifest: `crates/simdoc/Cargo.toml`
 - Publish: `false`
-- Targets: `bin, lib`
+- Targets: `bin, custom-build, lib`
 
 ## Crate Documentation
 

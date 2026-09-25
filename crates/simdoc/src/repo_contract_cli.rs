@@ -10,9 +10,6 @@
 //!   form is the `xtask-repo-contract-v1` wire interface: it writes only the
 //!   named artifacts into a preopened directory and never touches the
 //!   repository.
-//! - `repo-packages [--repo <path>]` prints the covered package metadata and
-//!   the package grouping cut as one JSON document, for tools that need the
-//!   contract's package set without its artifacts.
 //!
 //! The xtask routes run this executable, built from its own locked resolver
 //! root, so every contract byte comes from one dependency identity.
@@ -24,15 +21,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde_json::json;
-
 use crate::{
     generator_options::find_repo_root,
-    repo_contract::{
-        RepoContractReport, cargo_metadata, contract_artifacts, repo_contract_for_repo,
-        workspace_package_names,
-    },
-    repo_contract_cut::load_or_derive_split_cut,
+    repo_contract::{RepoContractReport, contract_artifacts, repo_contract_for_repo},
 };
 
 const USAGE: &str =
@@ -85,29 +76,6 @@ pub(crate) fn run_repo_contract(args: &[String]) -> Result<(), String> {
         "repo-contract: {} package(s), {} artifact(s) changed",
         report.packages, report.artifacts_changed
     );
-    Ok(())
-}
-
-/// Runs `repo-packages`; `args[1]` is the subcommand name.
-pub(crate) fn run_repo_packages(args: &[String]) -> Result<(), String> {
-    let repo = match args.get(2..).unwrap_or_default() {
-        [] => find_repo_root(&env::current_dir().map_err(display_io)?)?,
-        [flag, path] if flag == "--repo" => {
-            find_repo_root(&PathBuf::from(path).canonicalize().map_err(display_io)?)?
-        }
-        _ => return Err("usage: repo-packages [--repo <path>]".to_owned()),
-    };
-    let repo = repo.canonicalize().map_err(display_io)?;
-    let metadata = cargo_metadata(&repo)?;
-    let cut = load_or_derive_split_cut(&repo, &workspace_package_names(&metadata)?)?;
-    let document = json!({
-        "schema": "sim.repo-packages.v1",
-        "metadata": metadata,
-        "group_order": cut.group_order,
-        "groups": cut.groups,
-    });
-    let text = serde_json::to_string(&document).map_err(|err| err.to_string())?;
-    println!("{text}");
     Ok(())
 }
 

@@ -17,9 +17,10 @@
 //! - `repo-contract` -- generate or check the per-repo contract files, or emit
 //!   selected current artifacts to a preopened output directory without
 //!   mutating the inspected repository; served by the locked simdoc engine.
-//! - `validation-matrix` -- generate or check the validation matrix.
+//! - `validation-matrix` -- generate or check the validation matrix; served by
+//!   the locked simdoc engine.
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
-//!   crate catalog.
+//!   crate catalog; served by the locked simdoc engine.
 //! - `citizenize` -- rewrite a crate or path toward the citizen conventions.
 //! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
 //! - `index seed` -- extract private migration seed rows from legacy markdown.
@@ -43,7 +44,6 @@
 //!
 //! [`run`] dispatches an argument vector to the matching task. The library also
 //! exposes each task's entry point and report type, including
-//! [`validation_matrix`], [`crate_catalog`],
 //! [`citizenize_arg`], [`atelier_site`], and [`atelier_tools`].
 
 #![deny(unsafe_code)]
@@ -56,14 +56,11 @@ mod build_inputs;
 mod cardspine;
 mod citizenize;
 mod content_digest;
-mod crate_catalog;
-mod crate_catalog_manifest;
 mod dispatch;
 mod docencoder;
 mod file_size_gate;
 mod generated_artifact;
 mod generated_namespace;
-mod generator_options;
 mod index_author;
 mod index_check;
 mod index_doctor;
@@ -92,7 +89,6 @@ mod platform_inventory;
 mod recipe_discovery;
 mod sealed_resources;
 mod simdoc_route;
-mod validation_matrix;
 
 #[cfg(test)]
 mod index_vault_tests;
@@ -107,9 +103,7 @@ pub use atelier::{
 };
 pub use cardspine::{CARD_CONTENT_ID_ALGORITHM, Card, CardSpine, card_content_id};
 pub use citizenize::{CitizenizeReport, citizenize_arg, citizenize_path};
-pub use crate_catalog::{CrateCatalogReport, crate_catalog};
 pub use docencoder::{DocEncoder, DocPosition};
-pub use validation_matrix::{ValidationMatrixReport, validation_matrix};
 
 /// Dispatches an xtask command-line argument vector to the matching task.
 ///

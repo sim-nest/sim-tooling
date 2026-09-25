@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Rendering of generated contract artifacts for the repo-contract task.
 
 use std::collections::BTreeMap;
@@ -19,6 +24,7 @@ pub(crate) struct ArtifactInputs<'a> {
     pub(crate) cards: &'a [Value],
     pub(crate) provenance: &'a Value,
     pub(crate) index_fragment: &'a str,
+    pub(crate) exclusions: &'a [Value],
 }
 
 pub(crate) fn artifacts(
@@ -43,22 +49,22 @@ pub(crate) fn artifacts(
                 "citizens": input.citizens,
                 "non_citizen_exemptions": input.exemptions,
                 "recipes": input.recipes,
+                "contract_exclusions": input.exclusions,
                 "provenance": input.provenance,
             }),
             "repository contract",
         )?,
     );
-    map.insert(
-        "repo-contract.md",
-        repo_contract_markdown(
-            input.packages,
-            input.cut,
-            input.citizens,
-            input.exemptions,
-            input.recipes,
-            input.cards,
-        ),
+    let mut markdown = repo_contract_markdown(
+        input.packages,
+        input.cut,
+        input.citizens,
+        input.exemptions,
+        input.recipes,
+        input.cards,
     );
+    markdown.push_str(&exclusions_markdown(input.exclusions));
+    map.insert("repo-contract.md", markdown);
     map.insert(
         "provenance.json",
         json_render::pretty(input.provenance.clone(), "repository provenance")?,
@@ -225,4 +231,26 @@ fn feature_markdown(packages: &[PackageContract]) -> String {
 
 fn markdown_cell(text: &str) -> String {
     text.replace('|', "\\|")
+}
+
+fn exclusions_markdown(exclusions: &[Value]) -> String {
+    let mut out = String::from("\n## Contract Exclusions\n\n");
+    if exclusions.is_empty() {
+        out.push_str("Every Cargo manifest in this repository is covered by the contract.\n");
+        return out;
+    }
+    out.push_str("| Path | Class | Manifests | Reason |\n| --- | --- | --- | --- |\n");
+    for exclusion in exclusions {
+        out.push_str(&format!(
+            "| `{}` | `{}` | {} | {} |\n",
+            exclusion["path"].as_str().unwrap_or_default(),
+            exclusion["class"].as_str().unwrap_or_default(),
+            exclusion["manifests"].as_array().map_or(0, Vec::len),
+            exclusion["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .replace('|', "\\|")
+        ));
+    }
+    out
 }

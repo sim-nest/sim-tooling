@@ -8,9 +8,15 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
+mod bounded_process;
+#[cfg(test)]
+#[path = "../build_identity.rs"]
+mod build_identity;
 mod cardspine;
 mod cardspine_state;
 mod content_digest;
+mod crate_catalog;
+mod crate_catalog_manifest;
 mod docencoder;
 mod generator_options;
 mod index_anchor_scan;
@@ -27,9 +33,13 @@ mod repo_contract_render;
 mod repo_contract_scan;
 #[cfg(test)]
 mod resolver_boundary_tests;
+mod resolver_input;
 mod simdoc;
 mod simdoc_index;
 mod simdoc_rustdoc;
+#[cfg(test)]
+mod test_fixture;
+mod validation_matrix;
 
 pub use cardspine::{CARD_CONTENT_ID_ALGORITHM, Card, CardSpine, card_content_id};
 pub use docencoder::{DocEncoder, DocPosition};
@@ -49,12 +59,13 @@ pub(crate) fn tooling_checkout_root() -> std::path::PathBuf {
 }
 
 /// Runs one simdoc command: `simdoc` (the documentation lanes),
-/// `repo-contract` (write, check, or emit the repo contract artifacts), or
-/// `repo-packages` (the contract's package set and grouping cut as JSON).
+/// `repo-contract` (write, check, or emit the repo contract artifacts),
+/// `crate-catalog`, or `validation-matrix`.
 pub fn run(args: Vec<String>) -> Result<(), String> {
     match args.get(1).map(String::as_str) {
         Some("repo-contract") => repo_contract_cli::run_repo_contract(&args),
-        Some("repo-packages") => repo_contract_cli::run_repo_packages(&args),
+        Some("crate-catalog") => crate_catalog::run(&args),
+        Some("validation-matrix") => validation_matrix::run(&args),
         _ => simdoc::run(args),
     }
 }

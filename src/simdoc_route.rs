@@ -3,36 +3,55 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Routes to the one repo-contract engine.
+//! Routes to the one contract engine.
 //!
 //! The contract engine lives in `crates/simdoc`, its own resolver root with a
-//! committed lock. xtask never compiles any of it: every xtask route that needs
-//! contract output (`repo-contract`, including the `--emit` wire interface,
-//! `index-check`, `crate-catalog`, and `validation-matrix`) runs that locked
-//! executable, so one dependency identity produces every contract byte.
+//! committed lock. xtask never compiles any of it: every xtask route that
+//! produces contract output (`repo-contract` including the `--emit` wire
+//! interface, `crate-catalog`, `validation-matrix`, and `index-check`'s
+//! freshness comparison) runs that locked executable.
+//!
+//! The executable is built and run from the sim-tooling root with the
+//! environment's toolchain selectors (`RUSTUP_TOOLCHAIN`, `RUSTC`) removed, so
+//! rustup resolves the channel pinned in sim-tooling's `rust-toolchain.toml`;
+//! simdoc's build refuses any other compiler and records the one it used. The
+//! caller's `CARGO` variable is deliberately ignored: it names the cargo of
+//! whatever toolchain launched xtask, which is not the pinned identity.
+//! Output is never captured: the child's standard streams pass straight
+//! through, so nothing unbounded is buffered here.
 
 use std::{
-    env,
-    ffi::OsString,
-    fs,
+    env, fs,
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde_json::Value;
+/// Ceiling for one emitted artifact read back by xtask.
+const MAX_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+/// Flags whose value is a path, resolved against the caller's directory
+/// before the engine runs from the sim-tooling root.
+const PATH_FLAGS: [&str; 3] = ["--repo", "--repo-root", "--out-dir"];
 
-/// Manifest of the locked contract engine inside this sim-tooling checkout.
-pub(crate) fn simdoc_manifest() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/simdoc/Cargo.toml")
+/// The sim-tooling checkout this xtask was built from.
+pub(crate) fn tooling_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Runs one simdoc subcommand with `args`, printing its standard output and
-/// returning its diagnostic text as the error when it refuses.
+/// Runs one simdoc subcommand with `args` for the repository at the
+/// caller's current directory unless `args` names one.
 pub(crate) fn run_forwarded(subcommand: &str, args: &[String]) -> Result<(), String> {
-    let stdout = run_captured(subcommand, args)?;
-    print!("{stdout}");
-    Ok(())
+    let caller = env::current_dir().map_err(|err| format!("current dir: {err}"))?;
+    let args = anchored_args(&caller, args);
+    let status = engine_command(subcommand, &args)
+        .status()
+        .map_err(|err| format!("start simdoc {subcommand}: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("simdoc {subcommand} refused (status {status})"))
+    }
 }
 
 /// Returns the exact bytes of one repo-contract artifact for `repo`, emitted
@@ -40,56 +59,83 @@ pub(crate) fn run_forwarded(subcommand: &str, args: &[String]) -> Result<(), Str
 pub(crate) fn emitted_artifact(repo: &Path, name: &str) -> Result<String, String> {
     let scratch = scratch_directory()?;
     let result = (|| {
-        run_captured(
-            "repo-contract",
-            &[
-                "--repo".to_owned(),
-                path_arg(repo)?,
-                "--emit".to_owned(),
-                name.to_owned(),
-                "--out-dir".to_owned(),
-                path_arg(&scratch)?,
-            ],
-        )?;
-        fs::read_to_string(scratch.join(name)).map_err(|err| format!("read emitted {name}: {err}"))
+        let args = [
+            "--repo".to_owned(),
+            path_arg(repo)?,
+            "--emit".to_owned(),
+            name.to_owned(),
+            "--out-dir".to_owned(),
+            path_arg(&scratch)?,
+        ];
+        let status = engine_command("repo-contract", &args)
+            .stdout(Stdio::null())
+            .status()
+            .map_err(|err| format!("start simdoc repo-contract: {err}"))?;
+        if !status.success() {
+            return Err(format!("simdoc repo-contract refused (status {status})"));
+        }
+        read_bounded(&scratch.join(name))
     })();
     let _ = fs::remove_dir_all(&scratch);
     result
 }
 
-/// Returns the contract's package set for `repo`: `metadata` (the merged
-/// `cargo metadata` of every covered workspace), `group_order`, and `groups`.
-pub(crate) fn repo_packages(repo: &Path) -> Result<Value, String> {
-    let stdout = run_captured("repo-packages", &["--repo".to_owned(), path_arg(repo)?])?;
-    let document: Value = serde_json::from_str(&stdout)
-        .map_err(|err| format!("parse simdoc repo-packages output: {err}"))?;
-    if document["schema"] != "sim.repo-packages.v1" {
-        return Err("simdoc repo-packages returned an unknown schema".to_owned());
-    }
-    Ok(document)
-}
-
-fn run_captured(subcommand: &str, args: &[String]) -> Result<String, String> {
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let output = Command::new(cargo)
+/// The engine invocation: `cargo run --locked` on the simdoc manifest, from
+/// the sim-tooling root, with the toolchain selectors removed.
+pub(crate) fn engine_command(subcommand: &str, args: &[String]) -> Command {
+    let root = tooling_root();
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(&root)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTC")
         .args(["run", "--quiet", "--locked", "--manifest-path"])
-        .arg(simdoc_manifest())
+        .arg(root.join("crates/simdoc/Cargo.toml"))
         .arg("--")
         .arg(subcommand)
-        .args(args)
-        .output()
-        .map_err(|err| format!("start simdoc {subcommand}: {err}"))?;
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| format!("simdoc {subcommand} printed non-UTF-8 output"))?;
-    if output.status.success() {
-        return Ok(stdout);
+        .args(args);
+    command
+}
+
+/// Resolves every path-valued flag against `caller`, and names `caller` as
+/// the repository when no repository flag is given.
+pub(crate) fn anchored_args(caller: &Path, args: &[String]) -> Vec<String> {
+    let mut anchored = Vec::with_capacity(args.len() + 2);
+    let mut names_repo = false;
+    let mut index = 0;
+    while index < args.len() {
+        let flag = &args[index];
+        anchored.push(flag.clone());
+        if PATH_FLAGS.contains(&flag.as_str())
+            && let Some(value) = args.get(index + 1)
+        {
+            names_repo |= flag != "--out-dir";
+            anchored.push(caller.join(value).to_string_lossy().into_owned());
+            index += 2;
+            continue;
+        }
+        index += 1;
     }
-    let diagnostic = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(if diagnostic.is_empty() {
-        format!("simdoc {subcommand} failed with {}", output.status)
-    } else {
-        diagnostic
-    })
+    if !names_repo {
+        anchored.push("--repo".to_owned());
+        anchored.push(caller.to_string_lossy().into_owned());
+    }
+    anchored
+}
+
+fn read_bounded(path: &Path) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_ARTIFACT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("read {}: {err}", path.display()))?;
+    if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(format!(
+            "{} exceeds {MAX_ARTIFACT_BYTES} bytes",
+            path.display()
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8", path.display()))
 }
 
 fn path_arg(path: &Path) -> Result<String, String> {
@@ -106,4 +152,84 @@ fn scratch_directory() -> Result<PathBuf, String> {
     let path = env::temp_dir().join(format!("xtask-simdoc-{}-{stamp}", std::process::id()));
     fs::create_dir(&path).map_err(|err| format!("create {}: {err}", path.display()))?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    #[test]
+    fn the_engine_runs_locked_from_the_pinned_tooling_root() {
+        let command = engine_command("repo-contract", &["--check".to_owned()]);
+        assert_eq!(command.get_program(), "cargo");
+        assert_eq!(command.get_current_dir(), Some(tooling_root().as_path()));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            [
+                "run".to_owned(),
+                "--quiet".to_owned(),
+                "--locked".to_owned(),
+                "--manifest-path".to_owned(),
+                tooling_root()
+                    .join("crates/simdoc/Cargo.toml")
+                    .to_string_lossy()
+                    .into_owned(),
+                "--".to_owned(),
+                "repo-contract".to_owned(),
+                "--check".to_owned(),
+            ]
+        );
+        let removed = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_owned())
+            .collect::<Vec<OsString>>();
+        assert!(removed.contains(&OsString::from("RUSTUP_TOOLCHAIN")));
+        assert!(removed.contains(&OsString::from("RUSTC")));
+        assert!(
+            command
+                .get_envs()
+                .all(|(name, value)| name != "CARGO" || value.is_none())
+        );
+    }
+
+    #[test]
+    fn path_arguments_are_anchored_at_the_caller() {
+        let caller = Path::new("/work/sim-platform");
+        assert_eq!(
+            anchored_args(caller, &["--check".to_owned()]),
+            ["--check", "--repo", "/work/sim-platform"]
+        );
+        assert_eq!(
+            anchored_args(
+                caller,
+                &[
+                    "--repo".to_owned(),
+                    ".".to_owned(),
+                    "--emit".to_owned(),
+                    "provenance.json".to_owned(),
+                    "--out-dir".to_owned(),
+                    "out".to_owned(),
+                ]
+            ),
+            [
+                "--repo",
+                "/work/sim-platform/.",
+                "--emit",
+                "provenance.json",
+                "--out-dir",
+                "/work/sim-platform/out",
+            ]
+        );
+        assert_eq!(
+            anchored_args(caller, &["--repo".to_owned(), "/abs/repo".to_owned()]),
+            ["--repo", "/abs/repo"]
+        );
+    }
 }

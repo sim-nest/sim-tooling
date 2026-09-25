@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,8 +26,15 @@ pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), Stri
     // shared constellation resolver may make newer packages visible than the
     // standalone lock selected by the owning repository.
     command.args(["doc", "--locked", "--offline"]);
-    match env::var("SIMDOC_CARGO_MANIFEST_PATH") {
-        Ok(manifest_path) => {
+    // The shared resolver route is taken only for a validated, locked
+    // workspace manifest; provenance records the same validated input.
+    match crate::resolver_input::resolver_input()? {
+        Some(input) => {
+            let manifest_path = input
+                .manifest
+                .to_str()
+                .ok_or("shared resolver manifest path is not UTF-8")?
+                .to_owned();
             command.args(["--manifest-path", &manifest_path]);
             let allowed = meta_member_names(&manifest_path);
             let packages: Vec<String> = if allowed.is_empty() {
@@ -41,7 +53,7 @@ pub(crate) fn run_api_docs(root: &Path, force_docbuild: bool) -> Result<(), Stri
                 }
             }
         }
-        Err(_) => {
+        None => {
             command.arg("--workspace");
         }
     }
@@ -71,8 +83,10 @@ fn docbuild_fingerprint(root: &Path) -> Option<String> {
 
     let mut hasher = DefaultHasher::new();
     rustc_version().hash(&mut hasher);
-    env::var("SIMDOC_CARGO_MANIFEST_PATH")
-        .unwrap_or_default()
+    crate::resolver_input::resolver_input()
+        .ok()
+        .flatten()
+        .map(|input| (input.manifest, input.lock_sha256))
         .hash(&mut hasher);
     for rel in &inputs {
         rel.hash(&mut hasher);

@@ -27,5 +27,8 @@ sim-lib-net-core = "0.4.0"
 syn = { version = "2", features = ["fold", "full", "visit"] }
 toml = "0.8"
 
+[build-dependencies]
+sha2 = "0.10"
+
 [lints.rust]
 unsafe_code = "deny"

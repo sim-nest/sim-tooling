@@ -3,45 +3,107 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Which Cargo manifests a repository contract covers, and the containment
-//! rules every covered package must satisfy.
+//! Which Cargo manifests a repository contract covers.
 //!
-//! The root manifest classifies every git-visible `Cargo.toml` in the
-//! repository. A manifest is covered when it is the root manifest, a declared
-//! nested workspace root, or a member of one of those workspaces; otherwise it
-//! must sit under an explicit exclusion that states why:
+//! The root manifest classifies every Cargo manifest its Git worktree owns. A
+//! manifest is covered when it is the root manifest, a declared nested
+//! workspace root, or a member of one of those workspaces. Anything else must
+//! sit under a typed exclusion whose class the files themselves prove:
 //!
 //! ```toml
 //! [workspace.metadata.sim]
 //! contract-workspaces = ["crates"]
 //! contract-exclusions = [
-//!     { path = "tests/ui", reason = "compile-fail fixtures, not packages" },
+//!     { path = "crates/macros/tests/ui", class = "test-fixture", reason = "compile-fail cases" },
 //! ]
 //! ```
 //!
-//! Covered packages, their manifests, and their target sources must resolve
-//! beneath the canonical repository root, and no declared workspace may be
-//! reached through a symlink, so every fact in the contract is bound by the
-//! repository's own workspace hash.
+//! | class | native evidence |
+//! | --- | --- |
+//! | `test-fixture` | the path has a `tests` component |
+//! | `recipe-fixture` | the path has a `recipes` component |
+//! | `focused-test-harness` | every excluded package path-depends on a covered package |
+//!
+//! Every excluded package must also declare `publish = false`, and no covered
+//! package may depend on anything under an exclusion, so a real first-party
+//! crate can never be excluded. The exclusions are projected into the contract.
 
 use std::{
     collections::BTreeSet,
     fs,
     path::{Component, Path, PathBuf},
-    process::Command,
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use super::worktree::Worktree;
 
 const CONTRACT_WORKSPACES_KEY: &str = "contract-workspaces";
 const CONTRACT_EXCLUSIONS_KEY: &str = "contract-exclusions";
+/// Ceiling for declared nested workspaces.
+pub(crate) const MAX_CONTRACT_WORKSPACES: usize = 64;
+/// Ceiling for covered packages across all workspaces.
+pub(crate) const MAX_CONTRACT_PACKAGES: usize = 4096;
+/// Ceiling for Cargo manifests a worktree may own.
+const MAX_MANIFESTS: usize = 16_384;
+/// Ceiling for one excluded manifest read as evidence.
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 
-/// One `contract-exclusions` entry: a repository-relative directory whose
-/// Cargo manifests are deliberately outside the contract.
+/// Why a directory of Cargo manifests is outside the contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExclusionClass {
+    TestFixture,
+    RecipeFixture,
+    FocusedTestHarness,
+}
+
+impl ExclusionClass {
+    const NAMES: [(&'static str, Self); 3] = [
+        ("test-fixture", Self::TestFixture),
+        ("recipe-fixture", Self::RecipeFixture),
+        ("focused-test-harness", Self::FocusedTestHarness),
+    ];
+
+    fn parse(name: &str) -> Option<Self> {
+        Self::NAMES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, class)| *class)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        Self::NAMES
+            .iter()
+            .find(|(_, class)| *class == self)
+            .map_or("unknown", |(name, _)| name)
+    }
+}
+
+/// One `contract-exclusions` entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ContractExclusion {
     pub(crate) path: String,
+    pub(crate) class: ExclusionClass,
     pub(crate) reason: String,
+}
+
+/// An exclusion together with the manifests it removes from the contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExcludedManifests {
+    pub(crate) exclusion: ContractExclusion,
+    pub(crate) manifests: Vec<String>,
+}
+
+impl ExcludedManifests {
+    /// The contract projection of this exclusion.
+    pub(crate) fn projection(&self) -> Value {
+        json!({
+            "path": self.exclusion.path,
+            "class": self.exclusion.class.as_str(),
+            "reason": self.exclusion.reason,
+            "manifests": self.manifests,
+        })
+    }
 }
 
 /// Returns the repository-relative nested workspace roots declared under
@@ -53,6 +115,11 @@ pub(crate) fn declared_contract_workspaces(metadata: &Value) -> Result<Vec<Strin
     let entries = declared.as_array().ok_or_else(|| {
         format!("workspace.metadata.sim.{CONTRACT_WORKSPACES_KEY} must be an array of paths")
     })?;
+    if entries.len() > MAX_CONTRACT_WORKSPACES {
+        return Err(format!(
+            "more than {MAX_CONTRACT_WORKSPACES} contract workspaces are declared"
+        ));
+    }
     let mut seen = BTreeSet::new();
     let mut roots = Vec::new();
     for entry in entries {
@@ -72,7 +139,7 @@ pub(crate) fn declared_contract_workspaces(metadata: &Value) -> Result<Vec<Strin
     Ok(roots)
 }
 
-/// Returns the `[workspace.metadata.sim] contract-exclusions` entries.
+/// Returns the typed `[workspace.metadata.sim] contract-exclusions` entries.
 pub(crate) fn contract_exclusions(metadata: &Value) -> Result<Vec<ContractExclusion>, String> {
     let Some(declared) = metadata["metadata"]["sim"].get(CONTRACT_EXCLUSIONS_KEY) else {
         return Ok(Vec::new());
@@ -83,15 +150,35 @@ pub(crate) fn contract_exclusions(metadata: &Value) -> Result<Vec<ContractExclus
     let mut seen = BTreeSet::new();
     let mut exclusions = Vec::new();
     for entry in entries {
+        let table = entry
+            .as_object()
+            .ok_or_else(|| format!("every {CONTRACT_EXCLUSIONS_KEY} entry must be a table"))?;
+        if let Some(key) = table
+            .keys()
+            .find(|key| !matches!(key.as_str(), "path" | "class" | "reason"))
+        {
+            return Err(format!("contract exclusion has unexpected key `{key}`"));
+        }
         let path = entry["path"].as_str().ok_or_else(|| {
             format!("every {CONTRACT_EXCLUSIONS_KEY} entry needs a string `path`")
         })?;
-        let reason = entry["reason"].as_str().map(str::trim).unwrap_or_default();
         if !is_plain_relative(path) {
             return Err(format!(
                 "contract exclusion {path:?} must be a plain repository-relative directory"
             ));
         }
+        let class_name = entry["class"].as_str().unwrap_or_default();
+        let class = ExclusionClass::parse(class_name).ok_or_else(|| {
+            format!(
+                "contract exclusion {path:?} needs a class: one of {}",
+                ExclusionClass::NAMES
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+        let reason = entry["reason"].as_str().map(str::trim).unwrap_or_default();
         if reason.is_empty() {
             return Err(format!(
                 "contract exclusion {path:?} needs a non-empty reason"
@@ -102,6 +189,7 @@ pub(crate) fn contract_exclusions(metadata: &Value) -> Result<Vec<ContractExclus
         }
         exclusions.push(ContractExclusion {
             path: path.to_owned(),
+            class,
             reason: reason.to_owned(),
         });
     }
@@ -125,98 +213,80 @@ pub(crate) fn reject_symlinked_path(repo: &Path, relative: &str) -> Result<(), S
     Ok(())
 }
 
-/// Requires `path` to resolve beneath the canonical repository root.
-pub(crate) fn ensure_within(repo: &Path, path: &Path, role: &str) -> Result<PathBuf, String> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|err| format!("{role} {}: {err}", path.display()))?;
-    if !canonical.starts_with(repo) {
-        return Err(format!(
-            "{role} {} resolves outside the repository",
-            path.display()
-        ));
-    }
-    Ok(canonical)
-}
-
-/// Requires every covered package manifest and target source to resolve
-/// beneath the canonical repository root.
-pub(crate) fn ensure_packages_within(repo: &Path, metadata: &Value) -> Result<(), String> {
-    let members = member_ids(metadata)?;
-    for package in metadata["packages"]
-        .as_array()
-        .ok_or("cargo metadata missing packages")?
-    {
-        if !package["id"]
-            .as_str()
-            .is_some_and(|id| members.contains(id))
-        {
-            continue;
-        }
+/// Requires every covered package manifest and target source to be an
+/// ordinary file owned by the repository's Git worktree, and returns the
+/// repository-relative manifests of the covered packages.
+pub(crate) fn owned_package_manifests(
+    worktree: &Worktree,
+    metadata: &Value,
+) -> Result<BTreeSet<String>, String> {
+    let mut manifests = BTreeSet::new();
+    for package in member_packages(metadata)? {
         let name = package["name"].as_str().unwrap_or("<unnamed>");
         let manifest = package["manifest_path"]
             .as_str()
             .ok_or_else(|| format!("cargo metadata package {name} missing manifest_path"))?;
-        ensure_within(repo, Path::new(manifest), "package manifest")?;
+        manifests.insert(worktree.owned_file(Path::new(manifest), "package manifest")?);
         for target in package["targets"].as_array().into_iter().flatten() {
             let source = target["src_path"]
                 .as_str()
                 .ok_or_else(|| format!("cargo metadata target of {name} missing src_path"))?;
-            ensure_within(repo, Path::new(source), "package target source")?;
+            worktree.owned_file(Path::new(source), "package target source")?;
         }
     }
-    Ok(())
+    if manifests.len() > MAX_CONTRACT_PACKAGES {
+        return Err(format!(
+            "more than {MAX_CONTRACT_PACKAGES} contract packages; refusing an unbounded contract"
+        ));
+    }
+    Ok(manifests)
 }
 
-/// Requires every git-visible `Cargo.toml` to be covered by the contract or
-/// excluded with a reason, and every exclusion to be live and disjoint from
-/// the covered manifests.
-pub(crate) fn ensure_manifests_classified(
-    repo: &Path,
+/// Classifies every Cargo manifest the worktree owns: covered, or under an
+/// exclusion whose class and first-party guard are proved. Returns each
+/// exclusion with the manifests it removes.
+pub(crate) fn classify_manifests(
+    worktree: &Worktree,
     metadata: &Value,
     declared: &[String],
     exclusions: &[ContractExclusion],
-) -> Result<(), String> {
-    let mut covered = BTreeSet::from(["Cargo.toml".to_owned()]);
-    covered.extend(declared.iter().map(|root| format!("{root}/Cargo.toml")));
-    let members = member_ids(metadata)?;
-    for package in metadata["packages"]
-        .as_array()
-        .ok_or("cargo metadata missing packages")?
-    {
-        if !package["id"]
-            .as_str()
-            .is_some_and(|id| members.contains(id))
-        {
-            continue;
-        }
-        let manifest = package["manifest_path"]
-            .as_str()
-            .ok_or("cargo metadata package missing manifest_path")?;
-        let canonical = Path::new(manifest)
-            .canonicalize()
-            .map_err(|err| format!("package manifest {manifest}: {err}"))?;
-        covered.insert(slash_relative(repo, &canonical)?);
+) -> Result<Vec<ExcludedManifests>, String> {
+    let mut covered = owned_package_manifests(worktree, metadata)?;
+    covered.insert(worktree.owned_file(&worktree.root().join("Cargo.toml"), "root manifest")?);
+    for root in declared {
+        covered.insert(worktree.owned_file(
+            &worktree.root().join(root).join("Cargo.toml"),
+            "contract workspace manifest",
+        )?);
     }
 
-    let manifests = visible_manifests(repo)?;
+    let manifests = worktree.manifests();
+    if manifests.len() > MAX_MANIFESTS {
+        return Err(format!(
+            "more than {MAX_MANIFESTS} Cargo manifests; refusing an unbounded contract"
+        ));
+    }
+    let mut excluded = exclusions
+        .iter()
+        .map(|exclusion| ExcludedManifests {
+            exclusion: exclusion.clone(),
+            manifests: Vec::new(),
+        })
+        .collect::<Vec<_>>();
     let mut unclassified = Vec::new();
-    let mut live = BTreeSet::new();
     for manifest in &manifests {
-        let exclusion = exclusions
-            .iter()
-            .find(|exclusion| Path::new(manifest).starts_with(&exclusion.path));
+        let exclusion = excluded
+            .iter_mut()
+            .find(|entry| Path::new(manifest).starts_with(&entry.exclusion.path));
         match (covered.contains(manifest), exclusion) {
-            (true, Some(exclusion)) => {
+            (true, Some(entry)) => {
                 return Err(format!(
                     "contract exclusion {} covers contract manifest {manifest}",
-                    exclusion.path
+                    entry.exclusion.path
                 ));
             }
             (true, None) => {}
-            (false, Some(exclusion)) => {
-                live.insert(exclusion.path.as_str());
-            }
+            (false, Some(entry)) => entry.manifests.push(manifest.clone()),
             (false, None) => unclassified.push(manifest.as_str()),
         }
     }
@@ -224,72 +294,175 @@ pub(crate) fn ensure_manifests_classified(
         return Err(format!(
             "unclassified Cargo manifests: {}; declare their workspace under \
              [workspace.metadata.sim] {CONTRACT_WORKSPACES_KEY} or exclude them under \
-             {CONTRACT_EXCLUSIONS_KEY} with a reason",
+             {CONTRACT_EXCLUSIONS_KEY} with a class and a reason",
             unclassified.join(", ")
         ));
     }
-    if let Some(stale) = exclusions
-        .iter()
-        .find(|exclusion| !live.contains(exclusion.path.as_str()))
-    {
-        return Err(format!(
-            "contract exclusion {} matches no Cargo manifest",
-            stale.path
-        ));
+    let package_roots = covered_package_roots(metadata)?;
+    for entry in &excluded {
+        if entry.manifests.is_empty() {
+            return Err(format!(
+                "contract exclusion {} matches no Cargo manifest",
+                entry.exclusion.path
+            ));
+        }
+        prove_exclusion(worktree.root(), entry, &package_roots)?;
+    }
+    reject_first_party_dependencies(worktree.root(), metadata, &excluded)?;
+    Ok(excluded)
+}
+
+fn prove_exclusion(
+    repo: &Path,
+    entry: &ExcludedManifests,
+    package_roots: &BTreeSet<PathBuf>,
+) -> Result<(), String> {
+    let exclusion = &entry.exclusion;
+    let has_component = |name: &str| {
+        Path::new(&exclusion.path)
+            .components()
+            .any(|component| component.as_os_str() == name)
+    };
+    match exclusion.class {
+        ExclusionClass::TestFixture if !has_component("tests") => {
+            return Err(format!(
+                "test-fixture exclusion {} has no `tests` path component",
+                exclusion.path
+            ));
+        }
+        ExclusionClass::RecipeFixture if !has_component("recipes") => {
+            return Err(format!(
+                "recipe-fixture exclusion {} has no `recipes` path component",
+                exclusion.path
+            ));
+        }
+        _ => {}
+    }
+    for manifest in &entry.manifests {
+        let path = repo.join(manifest);
+        let table = read_manifest(&path)?;
+        let Some(package) = table.get("package").and_then(toml::Value::as_table) else {
+            continue;
+        };
+        if !declares_unpublished(package) {
+            return Err(format!(
+                "excluded package manifest {manifest} is publishable; a first-party crate \
+                 cannot be excluded (fixtures declare `publish = false`)"
+            ));
+        }
+        if exclusion.class == ExclusionClass::FocusedTestHarness
+            && !path_dependency_targets(&path, &table)
+                .iter()
+                .any(|target| package_roots.contains(target))
+        {
+            return Err(format!(
+                "focused-test-harness package {manifest} has no path dependency on a contract package"
+            ));
+        }
     }
     Ok(())
 }
 
-fn visible_manifests(repo: &Path) -> Result<BTreeSet<String>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args([
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ])
-        .output()
-        .map_err(|err| format!("git ls-files: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-files failed in {}; cannot classify Cargo manifests",
-            repo.display()
-        ));
+fn reject_first_party_dependencies(
+    repo: &Path,
+    metadata: &Value,
+    excluded: &[ExcludedManifests],
+) -> Result<(), String> {
+    for package in member_packages(metadata)? {
+        for dependency in package["dependencies"].as_array().into_iter().flatten() {
+            let Some(path) = dependency["path"].as_str() else {
+                continue;
+            };
+            let Ok(target) = Path::new(path).canonicalize() else {
+                continue;
+            };
+            if let Some(entry) = excluded
+                .iter()
+                .find(|entry| target.starts_with(repo.join(&entry.exclusion.path)))
+            {
+                return Err(format!(
+                    "contract package {} depends on {}, under exclusion {}; first-party code \
+                     cannot be excluded",
+                    package["name"].as_str().unwrap_or("<unnamed>"),
+                    dependency["name"].as_str().unwrap_or("<unnamed>"),
+                    entry.exclusion.path
+                ));
+            }
+        }
     }
-    let listing = String::from_utf8(output.stdout)
-        .map_err(|_| "git ls-files returned a non-UTF-8 path".to_owned())?;
-    Ok(listing
-        .split('\0')
-        .filter(|path| {
-            Path::new(path)
-                .file_name()
-                .is_some_and(|name| name == "Cargo.toml")
-        })
-        .filter(|path| repo.join(path).is_file())
-        .map(str::to_owned)
-        .collect())
+    Ok(())
 }
 
-fn member_ids(metadata: &Value) -> Result<BTreeSet<&str>, String> {
-    Ok(metadata["workspace_members"]
+fn covered_package_roots(metadata: &Value) -> Result<BTreeSet<PathBuf>, String> {
+    member_packages(metadata)?
+        .into_iter()
+        .map(|package| {
+            let manifest = package["manifest_path"]
+                .as_str()
+                .ok_or("cargo metadata package missing manifest_path")?;
+            Path::new(manifest)
+                .parent()
+                .ok_or_else(|| format!("manifest has no parent: {manifest}"))?
+                .canonicalize()
+                .map_err(|err| format!("{manifest}: {err}"))
+        })
+        .collect()
+}
+
+fn read_manifest(path: &Path) -> Result<toml::Table, String> {
+    let length = fs::metadata(path)
+        .map_err(|err| format!("{}: {err}", path.display()))?
+        .len();
+    if length > MAX_MANIFEST_BYTES {
+        return Err(format!(
+            "{} exceeds {MAX_MANIFEST_BYTES} bytes",
+            path.display()
+        ));
+    }
+    fs::read_to_string(path)
+        .map_err(|err| format!("{}: {err}", path.display()))?
+        .parse::<toml::Table>()
+        .map_err(|err| format!("{}: {err}", path.display()))
+}
+
+fn declares_unpublished(package: &toml::Table) -> bool {
+    match package.get("publish") {
+        Some(toml::Value::Boolean(false)) => true,
+        Some(toml::Value::Array(registries)) => registries.is_empty(),
+        _ => false,
+    }
+}
+
+fn path_dependency_targets(manifest: &Path, table: &toml::Table) -> Vec<PathBuf> {
+    let Some(dir) = manifest.parent() else {
+        return Vec::new();
+    };
+    ["dependencies", "dev-dependencies", "build-dependencies"]
+        .iter()
+        .filter_map(|key| table.get(*key).and_then(toml::Value::as_table))
+        .flat_map(|dependencies| dependencies.values())
+        .filter_map(|spec| spec.get("path").and_then(toml::Value::as_str))
+        .filter_map(|path| dir.join(path).canonicalize().ok())
+        .collect()
+}
+
+fn member_packages(metadata: &Value) -> Result<Vec<&Value>, String> {
+    let members = metadata["workspace_members"]
         .as_array()
         .ok_or("cargo metadata missing workspace_members")?
         .iter()
         .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    Ok(metadata["packages"]
+        .as_array()
+        .ok_or("cargo metadata missing packages")?
+        .iter()
+        .filter(|package| {
+            package["id"]
+                .as_str()
+                .is_some_and(|id| members.contains(id))
+        })
         .collect())
-}
-
-fn slash_relative(repo: &Path, path: &Path) -> Result<String, String> {
-    let relative = path
-        .strip_prefix(repo)
-        .map_err(|_| format!("{} resolves outside the repository", path.display()))?;
-    relative
-        .to_str()
-        .map(|text| text.replace(std::path::MAIN_SEPARATOR, "/"))
-        .ok_or_else(|| format!("{} is not UTF-8", relative.display()))
 }
 
 fn is_plain_relative(path: &str) -> bool {

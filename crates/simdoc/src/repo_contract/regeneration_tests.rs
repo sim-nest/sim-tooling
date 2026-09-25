@@ -12,8 +12,16 @@ use serde_json::json;
 
 use super::*;
 
-// conformance: provenance records the encoder that ran and only commands the
-// repository declares or the encoder can prove.
+// conformance: provenance records what executed, and only regeneration and
+// validation commands the repository declares or the encoder can prove.
+
+/// The sim-tooling checkout that contains this encoder.
+fn tooling_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
 
 #[test]
 fn declared_commands_are_recorded_verbatim() {
@@ -22,9 +30,12 @@ fn declared_commands_are_recorded_verbatim() {
         "validation-commands": ["cargo test", "cargo run -p xtask -- simdoc --check"],
     }}});
 
-    let recorded = regeneration(&crate::tooling_checkout_root(), &metadata).unwrap();
+    let recorded = regeneration(&tooling_root(), &metadata).unwrap();
 
-    assert_eq!(recorded.docs_command, "cargo run -p xtask -- simdoc");
+    assert_eq!(
+        recorded.regeneration_command,
+        "cargo run -p xtask -- simdoc"
+    );
     assert_eq!(
         recorded.validation_commands,
         ["cargo test", "cargo run -p xtask -- simdoc --check"]
@@ -33,10 +44,10 @@ fn declared_commands_are_recorded_verbatim() {
 
 #[test]
 fn undeclared_commands_fall_back_to_the_direct_encoder_check() {
-    let recorded = regeneration(&crate::tooling_checkout_root(), &json!({})).unwrap();
+    let recorded = regeneration(&tooling_root(), &json!({})).unwrap();
 
     assert_eq!(
-        recorded.docs_command,
+        recorded.regeneration_command,
         "cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc"
     );
     assert_eq!(
@@ -45,7 +56,7 @@ fn undeclared_commands_fall_back_to_the_direct_encoder_check() {
     );
 
     let declared_launcher = json!({"metadata": {"sim": {"docs-command": "just docs"}}});
-    let recorded = regeneration(&crate::tooling_checkout_root(), &declared_launcher).unwrap();
+    let recorded = regeneration(&tooling_root(), &declared_launcher).unwrap();
     assert_eq!(recorded.validation_commands, ["just docs --check"]);
 }
 
@@ -77,7 +88,7 @@ fn direct_encoder_command_names_the_encoder_from_the_repository_root() {
 
 #[test]
 fn invalid_command_declarations_are_refused() {
-    let repo = crate::tooling_checkout_root();
+    let repo = tooling_root();
     for (declared, expected) in [
         (json!({"docs-command": 1}), "must be strings"),
         (json!({"docs-command": ""}), "printable ASCII"),
@@ -105,17 +116,52 @@ fn invalid_command_declarations_are_refused() {
 }
 
 #[test]
-fn encoder_identity_binds_version_and_built_lock() {
+fn executable_identity_binds_version_source_and_built_lock() {
     let lock = fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock")).unwrap();
+    let identity = executable_identity();
 
-    assert_eq!(
-        encoder_identity(),
-        json!({
-            "package": "simdoc",
-            "version": env!("CARGO_PKG_VERSION"),
-            "lock_sha256": content_digest(&lock),
-        })
-    );
+    assert_eq!(identity["package"], "simdoc");
+    assert_eq!(identity["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(identity["lock_sha256"], content_digest(&lock));
+    let source = identity["source_sha256"].as_str().unwrap();
+    assert_eq!(source.len(), 64);
+    assert!(source.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_ne!(source, content_digest(&lock));
+}
+
+#[test]
+fn toolchain_identity_is_the_pinned_channel() {
+    let pin = fs::read_to_string(tooling_root().join("rust-toolchain.toml")).unwrap();
+    let channel = pin
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("channel = "))
+        .unwrap()
+        .trim_matches('"');
+    let toolchain = toolchain_identity();
+
+    for tool in ["rustc", "cargo"] {
+        assert_eq!(toolchain[tool]["release"], channel, "{tool}");
+        assert_eq!(
+            toolchain[tool]["commit_hash"].as_str().unwrap().len(),
+            40,
+            "{tool}"
+        );
+    }
+}
+
+#[test]
+fn execution_records_operation_identities_and_no_resolver_by_default() {
+    if env::var_os(crate::resolver_input::RESOLVER_ENV).is_some() {
+        return;
+    }
+    let recorded = execution(&tooling_root()).unwrap();
+
+    assert_eq!(recorded["operation"], CONTRACT_OPERATION);
+    assert_eq!(recorded["executable"], executable_identity());
+    assert_eq!(recorded["toolchain"], toolchain_identity());
+    assert!(recorded["resolver"].is_null());
+    let text = recorded.to_string();
+    assert!(!text.contains(env!("CARGO_MANIFEST_DIR")), "{text}");
 }
 
 fn temp_root(name: &str) -> PathBuf {

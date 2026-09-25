@@ -15,12 +15,7 @@ use super::*;
 
 pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String> {
     let preserved = preserved_provenance(repo);
-    let inputs = input_files(repo);
-    let input_paths = inputs
-        .iter()
-        .map(|path| rel_path(repo, path))
-        .collect::<Result<Vec<_>, _>>()?;
-    let workspace_hash = stable_hash(repo, &inputs);
+    let (input_paths, workspace_hash) = measure_inputs(repo)?;
     let source_commit = preserved_source_commit(&preserved, &workspace_hash)
         .or_else(|| git_output(repo, &["rev-parse", "HEAD"]))
         .ok_or_else(|| "git rev-parse HEAD did not return a commit".to_owned())?;
@@ -33,8 +28,8 @@ pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String>
         "repo": repo_name(repo),
         "source_commit": source_commit,
         "source_remote": source_remote,
-        "generated_by": regeneration.docs_command,
-        "encoder": encoder_identity(),
+        "execution": execution(repo)?,
+        "regeneration_command": regeneration.regeneration_command,
         "api_docs": "target/doc/",
         "generator": GENERATOR,
         "generation_timestamp": generation_timestamp,
@@ -45,6 +40,17 @@ pub(super) fn provenance(repo: &Path, metadata: &Value) -> Result<Value, String>
         "workspace_hash_inputs": input_paths,
         "validation_commands": regeneration.validation_commands,
     }))
+}
+
+/// The repository-relative input paths and their stable hash: exactly what
+/// the provenance workspace hash binds.
+pub(super) fn measure_inputs(repo: &Path) -> Result<(Vec<String>, String), String> {
+    let inputs = input_files(repo);
+    let paths = inputs
+        .iter()
+        .map(|path| rel_path(repo, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((paths, stable_hash(repo, &inputs)))
 }
 
 pub(super) fn preserved_source_commit(preserved: &Value, workspace_hash: &str) -> Option<String> {
