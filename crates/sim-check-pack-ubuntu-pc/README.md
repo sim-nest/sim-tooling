@@ -21,6 +21,12 @@ refusal of an interpolated command, and the post-gate witness (three native
 sites plus a typed pending projection member). Together these are the typed
 witness shapes the 22 facts require; the projection-final-image site stays a
 pending member, never satisfied here, until the projection-boundary packet
-completes it. Until the authoritative native batch is produced and reviewed,
-those witnesses exist only in source and rehearsal: no receipt from this
-crate is evidence of a native run by itself.
+completes it. The before-acknowledgement role enters as the platform's
+recorded provider-bound attestation: the product collector attests PID 1's
+terminals and installation currency once, live, and the composer
+(`examples/native_corpus_compose.rs`) re-derives every content fact from
+ordinary copies and checks it against that record, so the corpus is
+re-derivable after teardown and after a reboot. Until the authoritative
+native batch is produced and reviewed, those witnesses exist only in source
+and rehearsal: no receipt from this crate is evidence of a native run by
+itself.

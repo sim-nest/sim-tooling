@@ -16,10 +16,22 @@
 //! post-gate site (projection-final-image stays a typed pending member).
 //! Every specimen is re-verified through its public owner verifier; the
 //! definitions are frozen from those verified specimens, the four-role corpus
-//! is built with its provider-bound before-acknowledgement, every admission
-//! runs, and the 22 facts are composed. Nothing executes and no authority is
-//! produced. `--expect-corpus` pins a reviewed corpus identity, so a later
-//! retrospective re-derives the evidence instead of trusting printed output.
+//! is built with its recorded provider-bound before-acknowledgement
+//! attestation, every admission runs, and the 22 facts are composed. Nothing
+//! executes and no authority is produced.
+//!
+//! The before-acknowledgement specimen is a recorded attestation, not live
+//! evidence. That PID 1 retained each observer's successful terminal and that
+//! both observer installations were current around the reads is attested
+//! once, live, by the product collector, whose standard output is the
+//! specimen's `live-observation` record. This composition re-derives every
+//! content fact from ordinary copies (payloads, stop-time formatter
+//! terminals, installation configurations, provider lifecycle, target cut,
+//! plan and job) and checks that they are consistent with that attestation;
+//! it trusts the record exactly as it trusts every other root-held copy.
+//! `--expect-corpus` pins a reviewed corpus identity, so a later
+//! retrospective, after teardown or a reboot, re-derives the evidence instead
+//! of trusting printed output.
 
 use sim_check_pack_ubuntu_pc::compose_operation_local;
 use sim_kernel::ContentId;
@@ -28,8 +40,8 @@ use sim_platform_ubuntu_pc::{
     OperationLocalFormatterDefinition, OperationLocalOwnerCommandDefinition,
     OperationLocalPostGateDefinition, OperationLocalRefusalDefinition,
     OperationLocalSpecimenExpectation, OperationLocalStopDefinition, VerifiedNativeAcceptance,
-    verify_native_specimen_directory, verify_operation_local_corpus_with_provider_bound,
-    verify_provider_bound_specimen_directory,
+    verify_native_specimen_directory, verify_operation_local_corpus_with_recorded_provider_bound,
+    verify_recorded_provider_bound_specimen_directory,
 };
 use std::path::{Path, PathBuf};
 
@@ -101,15 +113,15 @@ fn run(invocation: &Invocation) -> Result<()> {
         NativeAcceptanceClass::IncompleteBeforeFinalBeforeCas,
     )?;
     let before_acknowledgement =
-        verify_provider_bound_specimen_directory(&root.join("before-acknowledgement"))
+        verify_recorded_provider_bound_specimen_directory(&root.join("before-acknowledgement"))
             .map_err(|error| format!("specimen before-acknowledgement: {error}"))?;
     let definition = OperationLocalCorpusDefinition::new([
         OperationLocalSpecimenExpectation::from_verified(&success)?,
         OperationLocalSpecimenExpectation::from_verified(&diverged)?,
         OperationLocalSpecimenExpectation::from_verified(&before_cas)?,
-        OperationLocalSpecimenExpectation::from_provider_bound(&before_acknowledgement)?,
+        OperationLocalSpecimenExpectation::from_recorded_provider_bound(&before_acknowledgement)?,
     ])?;
-    let mut corpus = verify_operation_local_corpus_with_provider_bound(
+    let mut corpus = verify_operation_local_corpus_with_recorded_provider_bound(
         &definition,
         [success, diverged, before_cas],
         before_acknowledgement,
