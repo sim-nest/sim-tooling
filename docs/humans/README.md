@@ -255,7 +255,7 @@ fn origin_sanitizer_emits_public_github_url() {
         sanitize_origin_url("https://github.com/sim-nest/sim-tooling.git").unwrap(),
         "https://github.com/sim-nest/sim-tooling"
     );
-    assert!(sanitize_origin_url("/scratch/tmp").is_err());
+    assert!(sanitize_origin_url("/tmp/sim-tooling").is_err());
 }
 
 #[test]
@@ -422,10 +422,7 @@ fn a_fixture_contract_is_generated_from_one_measured_snapshot() {
         "[package]\nname = \"case\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
     );
     repo.write("tests/ui/case/src/lib.rs", "");
-    repo.write(
-        "tests/ui.rs",
-        "#[test]\nfn ui() { let d = consume_fixture(\"tests/ui\"); }\n",
-    );
+    repo.write("tests/ui.rs", "// runs tests/ui\n");
     repo.commit();
     let artifacts = contract_artifacts(repo.path()).unwrap();
     let contract = generated_json(&artifacts, "repo-contract.json");

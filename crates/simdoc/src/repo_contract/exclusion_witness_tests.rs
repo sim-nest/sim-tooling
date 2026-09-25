@@ -83,6 +83,14 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
             "#![cfg(any())]\nfn consume_fixture(relative: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
         ),
         (
+            "file-level-cfg-other-os",
+            "#![cfg(target_os = \"windows\")]\nfn consume_fixture(relative: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "file-level-cfg-feature",
+            "#![cfg(feature = \"never\")]\nfn consume_fixture(relative: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
             "cfg-macro-condition",
             "#[test]\nfn t() { if cfg!(windows) { let d = consume_fixture(\"tests/ui\"); } }\n",
         ),
@@ -208,6 +216,10 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         );
     }
     let live = [
+        (
+            "file-level-cfg-this-host",
+            "#![cfg(all(target_os = \"linux\", target_arch = \"x86_64\", target_env = \"gnu\"))]\nfn consume_fixture(relative: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
         (
             "direct",
             "#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
