@@ -166,11 +166,15 @@ fn the_docs_build_never_uses_the_trees_target_or_an_untracked_lock() {
     );
     assert_eq!(repo.read("target/debug/planted"), "attacker\n");
 
-    // Untrack the lock (leaving the file): it may not decide the build.
+    // Untrack the lock (leaving the file): it may not decide the build, so
+    // the docs build is skipped rather than run against it.
+    repo.commit();
     repo.git_untrack("Cargo.lock");
-    let err = repo.run_simdoc(&["--rustdoc", "force"]).unwrap_err();
+    fs::remove_dir_all(repo.path().join("target")).ok();
+    repo.run_simdoc(&["--rustdoc", "force"]).unwrap();
+    assert!(!repo.path().join("target/doc").exists());
     assert!(
-        err.contains("does not own") && err.contains("Cargo.lock"),
-        "{err}"
+        !repo.path().join("target").join("debug").exists(),
+        "a build ran against an untracked lock"
     );
 }

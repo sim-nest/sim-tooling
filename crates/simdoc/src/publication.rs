@@ -59,6 +59,7 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/usr/bin/prlimit",
     "file:///source",
     "file:///etc/passwd",
+    "C:/SIM-Index",
     "C:\\SIM\\Workspace",
     "D:\\escape",
 ];

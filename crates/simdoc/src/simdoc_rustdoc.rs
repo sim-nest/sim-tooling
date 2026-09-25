@@ -43,8 +43,15 @@ pub(crate) fn run_api_docs(
     // its digest). An untracked repository lock is refused, not read.
     let lock = if resolver.is_some() {
         fs::read_to_string(lock_path).ok()
+    } else if crate::owned::is_owned_file(&lock_path) {
+        crate::owned::read_to_string(&lock_path).ok()
     } else {
-        crate::owned::read_to_string(lock_path).ok()
+        // No tracked lock (a library that ignores its own): no committed
+        // dependency graph exists to build against, and a lock that anyone
+        // may have written must not choose which registry crates run. The
+        // docs build only verifies; the repository's own CI builds it.
+        println!("simdoc: no tracked Cargo.lock; skipping cargo doc");
+        return Ok(());
     };
     // Cargo builds into a fresh private target directory: a `target` left in
     // the tree (untracked, so anyone's) is never reused, whatever it holds.
