@@ -321,7 +321,7 @@
       "executable": {
         "lock_sha256": "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678",
         "package": "simdoc",
-        "source_sha256": "fc834fd6fcbd77b380da91859f512e45969f1f98dfee02159dc829ba404d5a18",
+        "source_sha256": "4e3fc1259aa51b03501b675742873e96a2eca33fd35aa3b61befb77c84989c7e",
         "version": "0.1.0"
       },
       "operation": "repo-contract --repo .",
@@ -337,13 +337,13 @@
         }
       }
     },
-    "generation_timestamp": "2026-09-25T16:30:01Z",
+    "generation_timestamp": "2026-09-25T16:37:58Z",
     "generator": "xtask repo-contract v1",
-    "git_commit": "1ef7cd9466c7497f34214531b2de135197450b91",
+    "git_commit": "1a6c4c685286c16b9ad5339474bab3efdbbcc46d",
     "regeneration_command": "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "1ef7cd9466c7497f34214531b2de135197450b91",
+    "source_commit": "1a6c4c685286c16b9ad5339474bab3efdbbcc46d",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -359,9 +359,9 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "659062ac3ceb071f",
+    "workspace_hash": "56b7bfc430714ffa",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 194,
+    "workspace_hash_input_count": 195,
     "workspace_hash_inputs": [
       "Cargo.toml",
       "crates/Cargo.toml",
@@ -410,6 +410,7 @@
       "crates/simdoc/src/lib.rs",
       "crates/simdoc/src/main.rs",
       "crates/simdoc/src/repo_contract/package_projection.rs",
+      "crates/simdoc/src/repo_contract/path_guard.rs",
       "crates/simdoc/src/repo_contract/provenance.rs",
       "crates/simdoc/src/repo_contract/regeneration.rs",
       "crates/simdoc/src/repo_contract/regeneration_tests.rs",
