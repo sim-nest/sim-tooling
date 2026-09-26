@@ -3,16 +3,46 @@
 Status: normative. Every boundary of the documentation tooling (the simdoc
 engine in `crates/simdoc`, the xtask launcher in `src/simdoc_pin.rs` and
 `src/simdoc_route.rs`, and sim-platform's copy of the launcher) is listed here
-with its allowed set. **Everything not in an allowed set is refused.** A new
-capability is added by extending a set in code and in this note in one
-reviewed change, never by adding an exception path. Each boundary has an
-adversarial test that drives the production entrypoint; a test counts only if
-it passes with the enforcement and fails with it removed (the mutant rule).
+with its allowed set. Everything not in an allowed set is refused. A new
+capability is added by extending a set in code and in this note in one reviewed
+change, never by adding an exception path.
 
-Trust model: a dedicated guest. Same-UID check/exec races, root-owned
-libc/loader/`cc`/`git`, tracked repository content (including tracked private
-or sibling content, build scripts, and proc macros of the documented
-repository) are trusted as source. Everything else in this note is enforced.
+## Threat model (ruled by the maintainer, 2026-09-26)
+
+The doc tooling runs on a **dedicated guest**. The adversary it defends
+against controls *content that reaches it through the repository, the
+constellation checkouts, the resolver farm, the caller's environment
+variables and `PATH`, and configuration or cache files in ancestor
+directories*: not a second process running as the same user. Accepted and
+**out of scope**, with no defence built:
+
+- A same-UID local attacker, including one who plants or tampers `.sim/`
+  cache files or fingerprint files, adds executables to the accepted
+  toolchain's `bin` directory, swaps a checked file before it is executed,
+  edits `.git/index`, or rewrites the pin or the note itself. Such an actor can
+  already change everything the tool trusts, so a guard against it would be
+  theatre. (Codex R18 findings H1 "unbound executables in the toolchain
+  `bin`" and H2 "untrusted `.sim` caches" are accepted under this ruling. The
+  local card cache is still never trusted by `--check`, which re-encodes every
+  lane, but generation may reuse it.)
+- Root-owned libc, loader, `cc`, `ld`, and `git` on the system paths.
+- Tracked repository content, including its private or sibling content, and
+  the build scripts and proc macros of the documented repository.
+
+The caller's very first `cargo run -p xtask` is also outside every boundary
+below: it is compiled and started by the caller's cargo before any check can
+run, so only a fresh CI runner is trusted to have no hostile configuration.
+
+## How each boundary is covered
+
+Three kinds of evidence are named in this note, and they are not
+interchangeable. **Route**: a test that runs the production entrypoint (the
+`simdoc` task, the built engine binary, or the built xtask launcher) and would
+stay green only if the enforcement is present. **Unit**: a test of the
+enforcing function alone. **Source scan**: a structural test over the
+engine's source. Mutation testing (removing each enforcement site and
+observing a test fail) was run by hand for each change; there is no automated
+mutation harness in CI. Where a boundary has no route test, that is stated.
 
 ## B1 File reads
 
@@ -24,8 +54,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   touch of a refused file that exists refuses the whole run.
 - Existence checks that shape output count only owned files
   (`owned::is_owned_file`).
-- Test: `owned_tests::untracked_files_are_never_owned...`,
-  `simdoc_check_tests::a_file_that_is_not_tracked_does_not_exist_for_generation`.
+- Coverage: route (`simdoc_check_tests::a_file_that_is_not_tracked...`, `recipe_gate_tests` through `simdoc`); unit (`owned_tests`).
 
 ## B2 Output writes and comparison
 
@@ -33,8 +62,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   a generated file may be new (compare-only reads use `owned::read_output`).
 - Refused: any write through a symlink or outside the repository.
   `--check` never trusts the local cache; it always encodes every lane.
-- Test: `publication_tests::writes_never_follow_a_symlink`,
-  `simdoc_check_tests::check_never_trusts_the_local_cache_to_skip_a_lane`.
+- Coverage: route (`simdoc_check_tests`: `--check` never trusts the cache; a symlinked `target` refuses); source scan (`tools_tests::no_code_writes_a_file_outside_the_publication_guard`); unit (`publication_tests::writes_never_follow_a_symlink`). Out of scope: a planted `.sim` cache (see the threat model).
 
 ## B3 Path publication
 
@@ -46,9 +74,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   location wherever it occurs (repository, parent, home, working, temporary,
   Cargo home, rustup home, resolver directory).
 - No file the run read can approve a path.
-- Test: `publication_tests::only_exact_reviewed_literals_are_public`,
-  `simdoc_check_tests::a_local_path_in_tracked_text_never_reaches_a_generated_file`
-  (`/tmp/<secret>`, `/var/<runner-id>` through `simdoc`).
+- Coverage: route (`simdoc_check_tests::a_local_path_in_tracked_text_never_reaches_a_generated_file`: `/tmp/<secret>`, `/var/<id>`, `/tmp/<non-ASCII>`, `/tmp/$SECRET`, `$HOME/x` through `simdoc`); unit (`publication_tests`: the literal table, the candidate lexer).
 
 ## B4 Child processes
 
@@ -58,8 +84,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   in `tools.rs` (`tools::tests::no_code_outside_tools...`); nothing is run
   through a shell; nothing is run from a repository script.
 - Refused: `PATH` lookups, `rustup`, any other program.
-- Test: `tests/launcher_isolation.rs` (fake `rustup`, `cargo`, `rustc`,
-  `rustdoc`, `git` first on `PATH`, before and after launch).
+- Coverage: route (`tests/launcher_isolation.rs`: fake `rustup`, `cargo`, `rustc`, `rustdoc`, `git` first on `PATH`, before and after launch); source scan (`tools_tests::no_code_outside_tools...`). Out of scope: extra executables in the accepted toolchain `bin`.
 
 ## B5 Environment
 
@@ -72,9 +97,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   real Cargo home in `SIMDOC_REAL_CARGO_HOME`.
 - Refused: every other variable (the environment is cleared first). The
   caller's `CARGO_HOME`, `HOME`, and `CARGO_TARGET_DIR` never reach cargo.
-- Test: `tests/launcher_isolation.rs` (`RUSTFLAGS`, `GIT_DIR`,
-  `CARGO_BUILD_RUSTC`, `CARGO_HOME`, `CARGO_TARGET_DIR` in the caller's
-  environment).
+- Coverage: route (`tests/launcher_isolation.rs`: `RUSTFLAGS`, `GIT_DIR`, `CARGO_BUILD_RUSTC`, `CARGO_HOME`, `CARGO_TARGET_DIR` in the caller's environment); unit (`tools_tests`, `simdoc_pin_tests`).
 
 ## B6 Toolchain
 
@@ -86,9 +109,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   toolchain and embeds the digest; the engine refuses to launch any other.
 - Refused: symlinks or non-files in the closure, any digest or commit
   mismatch, `rustup`, `PATH`.
-- Test: `toolchain_identity` and `build_identity` digest tests (mutating an
-  rlib), `engine_identity::the_engine_build_refuses...`,
-  `simdoc_pin_tests::a_counterfeit_toolchain...`.
+- Coverage: route (`engine_identity::the_engine_build_refuses...`, `launcher_isolation` counterfeit toolchain); unit (digest tests, including an rlib mutation and a deep symlink). Out of scope: extra executables in the accepted toolchain `bin` (only the three tools are bound, plus everything under `lib/`).
 
 ## B7 Cargo home, target, and configuration
 
@@ -106,8 +127,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   prebuilt artifact or fingerprint is ever visible); a cached crate whose hash
   is not the locked checksum; a git dependency in a lock; a relative or empty
   real-home value; a `target` that is a symlink; any ancestor configuration.
-- Test: `cargo_home_tests`, `tools_tests`, `simdoc_pin_tests`,
-  `tests/launcher_isolation.rs::cargo_configuration_never_reaches_the_engine`.
+- Coverage: route (`launcher_isolation::cargo_configuration_never_reaches_the_engine`, sim-platform's `simdoc_launch_isolation` twin); unit (`cargo_home_tests`, `tools_tests`, `simdoc_pin_tests`). The tampered-registry-source case is covered at unit level (only verified `.crate` archives are copied), not by a route test that runs cargo against a tampered cache.
 
 ## B8 Resolver inputs (shared resolver symlink farm)
 
@@ -126,7 +146,7 @@ repository) are trusted as source. Everything else in this note is enforced.
   repository with any real file beside its links. A namesake package whose
   links all lead elsewhere is not the repository's and is not selected. A
   resolver that selects no package of the repository.
-- Test: `resolver_farm_tests`.
+- Coverage: route (`launcher_isolation::a_farm_manifest_cannot_point_cargo_outside_the_bound_closure`: the built engine with `SIMDOC_CARGO_MANIFEST_PATH`); unit (`resolver_farm_tests`, through `resolver_input::validate`, the function the engine calls, with real `cargo metadata`).
 
 ## B9 Exclusion evidence
 
@@ -145,23 +165,29 @@ repository) are trusted as source. Everything else in this note is enforced.
   prose, other TOML keys, bare-identifier merging across modules, `--no-run`,
   filters, target selection, program arguments, nested `.rs` files that are
   not targets.
-- Test: `exclusion_witness_tests`.
+- Coverage: unit (`exclusion_witness_tests`, through `contract_packages`, the function the repo-contract task calls); no route test through the built binary. **Known limitation:** the test-fixture witness is *syntactic*. It proves a live test calls a `consume_fixture("<fixture>")` helper of the reviewed shape and uses its value; it does not prove that the helper opens and reads the fixture, or that the test executed. The witness is reviewed by hand, and a product-owned API that opens and consumes the fixture (executed by the validation run) is a follow-up.
 
 ## B10 Recipe evidence
 
 - Allowed: generation runs no recipe. Recipe material must parse (`recipe_gate`)
   and stops generation otherwise. `checked` and `runnable` are claimed only
-  when an exact declared validation consumer runs the recipes: the entry
-  `cargo run -p xtask -- check-recipes` (and the xtask really has it) or
-  `sh scripts/check-recipes.sh` (and the script is tracked) in the root
-  manifest's `validation-commands`, or as the inline `run:` value of a step of
-  a tracked workflow directly in `.github/workflows` that has an `on:`
-  trigger and no `if:`, `continue-on-error:`, or `working-directory:` on the
-  step or its job.
-- Refused: a script or xtask that merely exists; near-miss commands; block
-  scalars, `with:` scripts, names, comments, nested workflows.
-- Test: `recipe_gate_tests` (through `simdoc`),
-  `index_specimen_scan::recipes_are_checked_only_by...`.
+  when an exact declared validation consumer runs the recipes, and the
+  consumer is a standard runner: `cargo run -p xtask -- check-recipes` where
+  the xtask's match arm for `"check-recipes"` calls a function or method, or
+  `sh scripts/check-recipes.sh` where the tracked script stops on error
+  (`set -e`), runs at least one uncommented `cargo test` or `cargo run`, and
+  cannot swallow a failure (`|| true`, `|| :`, `exit 0`, `set +e`). The
+  declaration is an entry of the root manifest's `validation-commands`, or the
+  single-command `run:` of a step of a workflow directly in
+  `.github/workflows`, read from a parsed YAML tree (`workflow_yaml.rs`, a
+  strict reader that refuses anchors, aliases, tags, flow maps, tabs, and
+  anything it does not understand): the workflow triggers on `push` or
+  `pull_request`, has no `defaults`, and neither the job nor the step carries
+  `if`, `continue-on-error`, `working-directory`, or `shell`.
+- Refused: a script or xtask that merely exists; a no-op or hiding script; an
+  empty arm; near-miss commands; comments and names that mention a trigger;
+  nested workflows.
+- Coverage: route (`recipe_gate_tests` through `simdoc`: malformed recipes stop generation; no-op or failure-swallowing scripts, empty xtask arms, and comment-only or `workflow_dispatch` triggers are not claimed as checks); unit (`recipe_evidence_tests`, `workflow_yaml_tests`).
 
 ## B11 Launcher identity
 
@@ -171,22 +197,31 @@ repository) are trusted as source. Everything else in this note is enforced.
   the launcher independently of engine code, and again against the built
   executable's own report. The pin changes only through `xtask simdoc-pin`.
 - Refused: everything else.
-- Test: `simdoc_pin_tests`, `tests/launcher_isolation.rs`.
+- Coverage: unit (`simdoc_pin_tests`); route (`tests/launcher_isolation.rs`, which builds and runs the engine only after the identity checks pass).
 
 ## B12 Continuous integration
 
-- Allowed: sim-tooling and sim-platform CI install exactly the pinned
-  toolchain (1.96.0) and run the simdoc `--check`; sim-platform's CI checks
-  out the sibling `sim-tooling` so its launcher can verify the engine.
+- Allowed: sim-platform's CI installs exactly the pinned toolchain (1.96.0),
+  checks out the sibling `sim-tooling`, and runs the simdoc `--check`; every
+  action in the workflows touched by this change (sim-platform and the five
+  repositories that run the recipe check) is pinned to a commit SHA.
+- Coverage: none by test. A workflow cannot be run in this sandbox.
+  **Pre-release checks, not claims:** (1) a real hosted CI run of sim-platform
+  is green; (2) the hosted runner's toolchain digest equals the committed
+  pin (the pin is the digest of the guest's `rustup` 1.96.0 toolchain, and
+  equality with the hosted runner is assumed, not verified); (3) the
+  standalone lock resolves once the sibling crates are published.
 - Outside the boundary: a person's local `cargo run -p xtask` is compiled
   and started by the caller's cargo under the caller's environment, before
   any check can run; only a fresh CI runner is trusted to have none. The CI
-  checkout of `sim-tooling` and the toolchain action are not pinned to a
-  commit (the launcher's content pin makes a wrong tooling checkout a red
-  build, not a bypass).
+  checkout of `sim-tooling` is by branch, not a commit (the launcher's
+  content pin makes a wrong tooling checkout a red build, not a bypass).
 
 ## Not defended (accepted under the trust model)
 
-Same-UID swaps between a check and an exec; root-owned libc, loader, `cc`,
+R18 H1 (executables added to the accepted toolchain `bin`) and R18 H2
+(planted or tampered `.sim` cache and fingerprint files): accepted
+out of scope by the threat model, no defence built; same-UID swaps between a
+check and an exec; root-owned libc, loader, `cc`,
 `git`; tracked private or sibling content; build scripts and proc macros of
 the documented repository.

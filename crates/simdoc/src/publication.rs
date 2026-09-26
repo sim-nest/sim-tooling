@@ -243,76 +243,81 @@ fn local_locations(repo: &Path) -> Vec<String> {
     locations
 }
 
-/// Absolute Unix paths (two or more segments), Windows drive and UNC paths,
-/// and home-relative paths embedded in `text`.
+/// Path candidates in `text`, read conservatively: from a candidate start
+/// (an absolute `/`, a home-relative `~/`, a shell variable path such as
+/// `$HOME/x` or `${X}/y`, a Windows drive or UNC path) at a word boundary, to
+/// the next whitespace or quote, closing bracket, `<`, `>`, `,`, `;` or `|`.
+/// Everything between is part of the candidate, whatever it is: Unicode,
+/// `$`, braces, `%`, `*`. A candidate is published only when it exactly equals
+/// a reviewed literal, so a private name cannot hide behind a character the
+/// scanner did not expect. An absolute candidate needs two segments
+/// (`/single` and `and/or` are prose).
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
     let mut tokens = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let boundary = index == 0 || is_boundary(bytes[index - 1]);
+    let mut previous: Option<char> = None;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        let boundary = previous.is_none_or(is_boundary);
+        previous = Some(ch);
         if !boundary {
-            index += 1;
             continue;
         }
-        let rest = &bytes[index..];
-        let length = if rest.first() == Some(&b'/') && rest.get(1).is_some_and(|b| is_path_byte(*b))
-        {
-            unix_length(rest)
-        } else if rest.starts_with(b"~/") {
-            unix_length(&rest[1..]).map(|length| length + 1)
-        } else if (rest.len() > 3
-            && rest[0].is_ascii_alphabetic()
-            && rest[1] == b':'
-            && (rest[2] == b'\\' || rest[2] == b'/')
-            && rest[3].is_ascii_alphanumeric())
-            || (rest.starts_with(b"\\\\") && rest.get(2).is_some_and(u8::is_ascii_alphanumeric))
-        {
-            Some(windows_length(rest))
-        } else {
-            None
-        };
-        match length {
-            Some(length) => {
-                let token = text[index..index + length].trim_end_matches(['.', ':', ';']);
-                if !token.is_empty() {
-                    tokens.push(token);
-                }
-                index += length.max(1);
+        let rest = &text[index..];
+        let mut next = rest.chars().skip(1);
+        let second = next.next();
+        let third = next.next();
+        let candidate = match ch {
+            '/' if second.is_some_and(|c| !is_delimiter(c) && c != '/') => Some(true),
+            '~' if second == Some('/') => Some(true),
+            '$' if second.is_some_and(|c| c == '{' || c == '_' || c.is_alphabetic()) => Some(false),
+            '\\' if second == Some('\\') && third.is_some_and(char::is_alphanumeric) => Some(false),
+            c if c.is_ascii_alphabetic()
+                && second == Some(':')
+                && third.is_some_and(|c| c == '\\' || c == '/') =>
+            {
+                Some(false)
             }
-            None => index += 1,
+            _ => None,
+        };
+        let Some(needs_segments) = candidate else {
+            continue;
+        };
+        let end = rest.find(is_delimiter).unwrap_or(rest.len());
+        // Trailing sentence punctuation and the backslashes of an escaped
+        // closing quote are not part of the path.
+        let token = rest[..end].trim_end_matches(['.', ':', ';', '?', '!', '\\']);
+        let segments = token
+            .trim_start_matches('~')
+            .split(['/', '\\'])
+            .filter(|segment| !segment.is_empty())
+            .count();
+        let keep = if needs_segments {
+            segments >= 2
+        } else if ch == '$' {
+            token.contains('/')
+        } else {
+            token.chars().nth(3).is_some()
+        };
+        if keep && !token.is_empty() {
+            tokens.push(token);
+            // Resume after the candidate so its interior is not rescanned.
+            while chars.peek().is_some_and(|(at, _)| *at < index + end) {
+                chars.next();
+            }
+            previous = Some('x');
         }
     }
     tokens
 }
 
-/// Length of an absolute Unix path at the start of `bytes`, when it has at
-/// least two non-empty segments.
-fn unix_length(bytes: &[u8]) -> Option<usize> {
-    let length = bytes
-        .iter()
-        .position(|byte| !(is_path_byte(*byte) || *byte == b'/'))
-        .unwrap_or(bytes.len());
-    let segments = bytes[..length]
-        .split(|byte| *byte == b'/')
-        .filter(|segment| !segment.is_empty())
-        .count();
-    (segments >= 2 && bytes.get(1) != Some(&b'/')).then_some(length)
+/// Whether `c` ends a path candidate.
+fn is_delimiter(c: char) -> bool {
+    c.is_whitespace() || "\"'`)]<>,;|".contains(c)
 }
 
-fn windows_length(bytes: &[u8]) -> usize {
-    bytes
-        .iter()
-        .position(|byte| byte.is_ascii_whitespace() || b"\"'`)|<>".contains(byte))
-        .unwrap_or(bytes.len())
-}
-
-fn is_path_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || b"._-~+@%".contains(&byte)
-}
-
-fn is_boundary(byte: u8) -> bool {
-    byte.is_ascii_whitespace() || b"\"'([<=,`{>|".contains(&byte)
+/// Whether a candidate may start right after `c`.
+fn is_boundary(c: char) -> bool {
+    c.is_whitespace() || "\"'([<=,`{>|".contains(c)
 }
 
 fn outside_json_path(value: &Value) -> Option<&str> {

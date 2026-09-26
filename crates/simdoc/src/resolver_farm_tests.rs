@@ -185,6 +185,73 @@ fn a_namesake_package_of_another_repository_is_not_selected_or_bound() {
     assert_eq!(farm.validate().unwrap(), input);
 }
 
+/// Rewrites the farm package manifest with extra target tables and reads the
+/// resolver through the real `cargo metadata`.
+fn validate_with_manifest(farm: &Farm, extra: &str) -> Result<ResolverInput, String> {
+    let package = farm.base.join("sim-private/.meta-workspace/packages/lib");
+    fs::write(
+        package.join("Cargo.toml"),
+        format!("[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n{extra}"),
+    )
+    .unwrap();
+    farm.validate()
+}
+
+#[test]
+fn every_cargo_target_path_must_be_in_the_bound_closure() {
+    let farm = Farm::new("farm-target-paths");
+    farm.write("sim-app/crates/lib/outside.rs", "fn main() {}\n");
+    farm.git("sim-app", &["add", "-A"]);
+    let evil = farm.base.parent().unwrap().join("evil.rs");
+    fs::write(&evil, "fn main() {}\n").unwrap();
+    let inside = "../../../../sim-app/crates/lib/src/lib.rs";
+    // A linked file, however it is spelled, is bound.
+    validate_with_manifest(&farm, &format!("[lib]\npath = \"{inside}\"\n")).unwrap();
+    validate_with_manifest(&farm, "[lib]\npath = \"src/lib.rs\"\n").unwrap();
+
+    for (label, extra) in [
+        (
+            "absolute-lib",
+            format!("[lib]\npath = \"{}\"\n", evil.display()),
+        ),
+        (
+            "absolute-bin",
+            format!("[[bin]]\nname = \"x\"\npath = \"{}\"\n", evil.display()),
+        ),
+        (
+            "absolute-build",
+            format!(
+                "build = \"{}\"\n[lib]\npath = \"src/lib.rs\"\n",
+                evil.display()
+            ),
+        ),
+        (
+            "tracked-but-unlinked",
+            "[lib]\npath = \"../../../../sim-app/crates/lib/outside.rs\"\n".to_owned(),
+        ),
+        (
+            "test-target",
+            format!(
+                "[lib]\npath = \"src/lib.rs\"\n[[test]]\nname = \"t\"\npath = \"{}\"\n",
+                evil.display()
+            ),
+        ),
+        (
+            "example-target",
+            format!(
+                "[lib]\npath = \"src/lib.rs\"\n[[example]]\nname = \"e\"\npath = \"{}\"\n",
+                evil.display()
+            ),
+        ),
+    ] {
+        let err = validate_with_manifest(&farm, &extra).expect_err(label);
+        assert!(
+            err.contains("not part of the package's bound source closure"),
+            "{label}: {err}"
+        );
+    }
+}
+
 #[test]
 fn a_package_of_the_repository_is_its_manifest_and_links_only() {
     for name in ["build.rs", "extra.rs"] {

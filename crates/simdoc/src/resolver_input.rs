@@ -302,7 +302,9 @@ fn source_closure(
         hasher.update([0]);
         hasher.update(package["version"].as_str().unwrap_or_default().as_bytes());
         hasher.update([0]);
-        for (relative, file) in package_files(&root, &mut boundary)? {
+        let bound_files = package_files(&root, &mut boundary)?;
+        require_targets_bound(package, &bound_files)?;
+        for (relative, file) in bound_files {
             let content = read_ordinary(&file, crate::owned::MAX_FILE_BYTES)
                 .map_err(|why| format!("shared resolver source {}: {why}", file.display()))?;
             files += 1;
@@ -326,6 +328,46 @@ fn source_closure(
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Ok((digest, path_packages, kept))
+}
+
+/// Every source path Cargo will read for a package (`[lib]`, `[[bin]]`,
+/// `[[test]]`, `[[example]]`, `[[bench]]` paths, and the `build` script, all
+/// of which `cargo metadata` reports as a target `src_path`) must be a file
+/// of the package's bound closure. A manifest may name any path, absolute or
+/// relative, so a path outside the bound set (private bytes, an unmeasured
+/// build script) refuses the input before anything is built.
+fn require_targets_bound(package: &Value, bound: &[(String, PathBuf)]) -> Result<(), String> {
+    let bound = bound
+        .iter()
+        .filter_map(|(_, file)| file.canonicalize().ok())
+        .collect::<BTreeSet<_>>();
+    for target in package["targets"].as_array().into_iter().flatten() {
+        let name = target["name"].as_str().unwrap_or("<unnamed>");
+        let source = target["src_path"]
+            .as_str()
+            .ok_or("shared resolver target has no src_path")?;
+        let canonical = Path::new(source).canonicalize().map_err(|err| {
+            format!(
+                "{RESOLVER_ENV} refused: target {name} of package {} reads {source}: {err}",
+                package["name"].as_str().unwrap_or("<unnamed>")
+            )
+        })?;
+        if !bound.contains(&canonical) {
+            return Err(format!(
+                "{RESOLVER_ENV} refused: target {name} ({}) of package {} reads {source}, \
+                 which is not part of the package's bound source closure",
+                target["kind"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                package["name"].as_str().unwrap_or("<unnamed>")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Whether a resolver package is this repository's. A package of the

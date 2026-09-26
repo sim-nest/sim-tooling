@@ -29,6 +29,8 @@ pub(crate) fn recipe_harness(repo: &Path) -> Option<String> {
             declared.contains(*command)
                 && if *command == "sh scripts/check-recipes.sh" {
                     crate::owned::is_owned_file(repo.join("scripts/check-recipes.sh"))
+                        && crate::owned::read_to_string(repo.join("scripts/check-recipes.sh"))
+                            .is_ok_and(|text| standard_script(&text))
                 } else {
                     // The xtask must really have the subcommand.
                     crate::owned::read_to_string(repo.join("xtask/src/main.rs"))
@@ -39,125 +41,140 @@ pub(crate) fn recipe_harness(repo: &Path) -> Option<String> {
 }
 
 /// The `run:` commands of the steps a GitHub Actions workflow really runs,
-/// read structurally (2-space indentation; anything else yields nothing):
-/// the workflow has a top-level `on:` naming `push` or `pull_request`; the
-/// step is a `- ` item of a job's `steps:` with an inline `run:` value (a
-/// block scalar, or a `run:` deeper in a `with:` script, is not a step's
-/// command); neither the job nor the step carries `if:`, `continue-on-error:`,
-/// or (step) `working-directory:` or `shell:`, in any key order; and the
-/// workflow has no `defaults:` (which can redirect every step).
+/// read from the parsed workflow tree (see [`crate::workflow_yaml`]): the
+/// workflow triggers on `push` or `pull_request`; it has no `defaults`; the job
+/// has no `if`, `continue-on-error`, or `defaults`; the step's `run` is a
+/// single command (a one-line block scalar counts) and the step has no `if`,
+/// `continue-on-error`, `working-directory`, or `shell`. A workflow the reader
+/// cannot parse yields nothing.
 fn workflow_run_steps(text: &str) -> Vec<String> {
-    #[derive(Default)]
-    struct Step {
-        run: Option<String>,
-        blocked: bool,
-    }
-    #[derive(Default)]
-    struct Job {
-        blocked: bool,
-        steps: Vec<Step>,
-    }
-    fn property(step: &mut Step, line: &str) {
-        if let Some(value) = line.strip_prefix("run:") {
-            let value = value.trim();
-            step.run = (!value.is_empty())
-                .then(|| value.trim_matches(|ch| ch == '"' || ch == '\'').to_owned());
-        } else if ["if:", "continue-on-error:", "working-directory:", "shell:"]
-            .iter()
-            .any(|key| line.starts_with(key))
-        {
-            step.blocked = true;
-        }
-    }
-    let mut commands = Vec::new();
-    let (mut has_trigger, mut in_on, mut in_jobs, mut in_steps) = (false, false, false, false);
-    let mut job: Option<Job> = None;
-    let flush_job = |job: &mut Option<Job>, commands: &mut Vec<String>| {
-        if let Some(job) = job.take()
-            && !job.blocked
-        {
-            commands.extend(
-                job.steps
-                    .into_iter()
-                    .filter(|step| !step.blocked)
-                    .filter_map(|step| step.run),
-            );
-        }
+    use crate::workflow_yaml::{Yaml, parse};
+    let Ok(workflow) = parse(text) else {
+        return Vec::new();
     };
-    for raw in text.lines() {
-        let line = raw.trim_start();
-        if line.is_empty() || line.starts_with('#') {
+    let triggers = |value: &Yaml| -> bool {
+        let names = match value {
+            Yaml::Scalar(name) => vec![name.as_str()],
+            Yaml::Seq(items) => items.iter().filter_map(Yaml::scalar).collect(),
+            Yaml::Map(entries) => entries.iter().map(|(name, _)| name.as_str()).collect(),
+        };
+        names
+            .iter()
+            .any(|name| *name == "push" || *name == "pull_request")
+    };
+    if workflow.get("defaults").is_some() || !workflow.get("on").is_some_and(triggers) {
+        return Vec::new();
+    }
+    let Some(Yaml::Map(jobs)) = workflow.get("jobs") else {
+        return Vec::new();
+    };
+    let mut commands = Vec::new();
+    for (_, job) in jobs {
+        if ["if", "continue-on-error", "defaults"]
+            .iter()
+            .any(|key| job.get(key).is_some())
+        {
             continue;
         }
-        if line.starts_with("defaults:") {
-            return Vec::new();
-        }
-        let indent = raw.len() - line.len();
-        let names_trigger = |text: &str| {
-            let text = text.trim_start_matches("- ");
-            ["push", "pull_request"]
-                .iter()
-                .any(|trigger| text.starts_with(trigger))
+        let Some(Yaml::Seq(steps)) = job.get("steps") else {
+            continue;
         };
-        match indent {
-            0 => {
-                flush_job(&mut job, &mut commands);
-                in_steps = false;
-                in_jobs = line == "jobs:";
-                in_on = line == "on:";
-                if let Some(inline) = line.strip_prefix("on:") {
-                    has_trigger |= inline.contains("push") || inline.contains("pull_request");
-                }
+        for step in steps {
+            if ["if", "continue-on-error", "working-directory", "shell"]
+                .iter()
+                .any(|key| step.get(key).is_some())
+            {
+                continue;
             }
-            _ if in_on => has_trigger |= names_trigger(line),
-            _ if !in_jobs => {}
-            2 => {
-                flush_job(&mut job, &mut commands);
-                in_steps = false;
-                job = Some(Job::default());
+            let Some(run) = step.get("run").and_then(Yaml::scalar) else {
+                continue;
+            };
+            let lines = run
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .collect::<Vec<_>>();
+            if let [only] = lines.as_slice() {
+                commands.push(only.trim().to_owned());
             }
-            4 => {
-                in_steps = line.starts_with("steps:");
-                if ["if:", "continue-on-error:", "defaults:"]
-                    .iter()
-                    .any(|key| line.starts_with(key))
-                    && let Some(job) = job.as_mut()
-                {
-                    job.blocked = true;
-                }
-            }
-            6 if in_steps && line.starts_with("- ") => {
-                let mut step = Step::default();
-                property(&mut step, line[2..].trim_start());
-                if let Some(job) = job.as_mut() {
-                    job.steps.push(step);
-                }
-            }
-            8 if in_steps => {
-                if let Some(step) = job.as_mut().and_then(|job| job.steps.last_mut()) {
-                    property(step, line);
-                }
-            }
-            _ => {}
         }
     }
-    flush_job(&mut job, &mut commands);
-    if has_trigger { commands } else { Vec::new() }
+    commands
 }
 
-/// Whether a source file dispatches the `check-recipes` subcommand: a string
-/// literal `"check-recipes"` in a match-arm pattern (`Some("check-recipes")`
-/// or `"check-recipes" =>`), parsed, not searched for.
+/// Whether a tracked recipe script is a standard runner with known
+/// semantics: a POSIX shell script that stops on error (`set -e`), runs at
+/// least one `cargo test` or `cargo run` (as a line of its own, not
+/// commented), and cannot swallow a failure (`|| true`, `|| :`, `exit 0`,
+/// `set +e`, `-e` cleared). A script that does nothing, or hides what it
+/// does, proves nothing.
+pub(crate) fn standard_script(text: &str) -> bool {
+    let code = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect::<Vec<_>>();
+    let stops_on_error = code.iter().any(|line| {
+        line.strip_prefix("set -").is_some_and(|flags| {
+            flags
+                .split_whitespace()
+                .next()
+                .is_some_and(|word| word.contains('e'))
+        })
+    });
+    let runs_cargo = code
+        .iter()
+        .any(|line| line.starts_with("cargo test") || line.starts_with("cargo run"));
+    let swallows = code.iter().any(|line| {
+        line.contains("|| true")
+            || line.contains("|| :")
+            || line.contains("||true")
+            || line.starts_with("exit 0")
+            || line.contains("; exit 0")
+            || line.contains("set +e")
+            || line.contains("> /dev/null 2>&1 ||")
+    });
+    stops_on_error && runs_cargo && !swallows
+}
+
+/// Whether a source file dispatches the `check-recipes` subcommand to code
+/// that does something: a match arm whose pattern is the string literal
+/// `"check-recipes"` and whose body calls a function or method (an empty
+/// arm, `()`, `Ok(())`, or a literal proves nothing). Parsed, not searched.
 fn dispatches_check_recipes(source: &str) -> bool {
     use syn::visit::Visit;
+    fn effective(expr: &syn::Expr) -> bool {
+        match expr {
+            syn::Expr::Call(call) => !matches!(
+                &*call.func,
+                syn::Expr::Path(path)
+                    if path.path.segments.last().is_some_and(|last| {
+                        ["Ok", "Err", "Some", "None"].contains(&last.ident.to_string().as_str())
+                    })
+            ),
+            syn::Expr::MethodCall(_) => true,
+            syn::Expr::Try(inner) => effective(&inner.expr),
+            syn::Expr::Paren(inner) => effective(&inner.expr),
+            syn::Expr::Block(block) => block.block.stmts.iter().any(|statement| match statement {
+                syn::Stmt::Expr(expr, _) => effective(expr),
+                syn::Stmt::Local(local) => local
+                    .init
+                    .as_ref()
+                    .is_some_and(|init| effective(&init.expr)),
+                _ => false,
+            }),
+            syn::Expr::Return(ret) => ret.expr.as_deref().is_some_and(effective),
+            _ => false,
+        }
+    }
     #[derive(Default)]
     struct Arms(bool);
     impl<'ast> Visit<'ast> for Arms {
         fn visit_arm(&mut self, arm: &'ast syn::Arm) {
             let pat = &arm.pat;
-            self.0 |= quote::quote!(#pat)
-                .to_string()
-                .contains("\"check-recipes\"");
+            let text = quote::quote!(#pat).to_string();
+            if text.contains("\"check-recipes\"") && effective(&arm.body) {
+                self.0 = true;
+            }
             syn::visit::visit_arm(self, arm);
         }
     }

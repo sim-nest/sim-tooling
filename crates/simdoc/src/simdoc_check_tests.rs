@@ -80,6 +80,9 @@ fn a_local_path_in_tracked_text_never_reaches_a_generated_file() {
         "/tmp/customer-secret",
         "/var/runner-4711/work",
         "/etc/private-job.conf",
+        "/tmp/\u{79d8}\u{5bc6}",
+        "/tmp/$SECRET",
+        "$HOME/secret/x",
     ] {
         let repo = FixtureRepo::nested("publish-secret");
         let manifest = repo

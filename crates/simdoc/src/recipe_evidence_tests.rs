@@ -5,6 +5,8 @@
 
 use super::*;
 
+const STANDARD: &str = "#!/bin/sh\nset -eu\ncargo test --workspace --quiet\nprintf 'ok\\n'\n";
+
 // conformance: a repository's recipes are claimed checked only by an exact
 // declared validation consumer.
 
@@ -20,10 +22,10 @@ fn recipes_are_checked_only_by_an_exact_declared_validation_consumer() {
     };
     // A tracked script (and an xtask that names the command) that nothing
     // declared runs proves nothing.
-    repo.write("scripts/check-recipes.sh", "#!/bin/sh\n");
+    repo.write("scripts/check-recipes.sh", STANDARD);
     repo.write(
         "xtask/src/main.rs",
-        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => {} _ => {} } }\n",
+        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => run(), _ => {} } }\nfn run() {}\n",
     );
     repo.commit();
     assert_eq!(harness(&repo), None);
@@ -74,10 +76,6 @@ fn recipes_are_checked_only_by_an_exact_declared_validation_consumer() {
             format!(
                 "name: {run}\n# - run: {run}\non: push\njobs:\n  t:\n    steps:\n      - run: cargo test\n"
             ),
-        ),
-        (
-            "block-scalar",
-            format!("on: push\njobs:\n  t:\n    steps:\n      - run: |\n          {run}\n"),
         ),
         (
             "with-script",
@@ -179,7 +177,7 @@ fn recipes_are_checked_only_by_an_exact_declared_validation_consumer() {
     assert_eq!(harness(&repo), None, "a mention is not a dispatch");
     repo.write(
         "xtask/src/main.rs",
-        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => {} _ => {} } }\n",
+        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => run(), _ => {} } }\nfn run() {}\n",
     );
     repo.commit();
     assert_eq!(harness(&repo).as_deref(), Some("xtask check-recipes"));
@@ -192,4 +190,70 @@ fn recipes_are_checked_only_by_an_exact_declared_validation_consumer() {
     declare(&repo, "sh scripts/check-recipes.sh");
     repo.git_remove("scripts/check-recipes.sh");
     assert_eq!(harness(&repo), None);
+}
+
+#[test]
+fn a_recipe_script_must_be_a_standard_runner_with_known_semantics() {
+    assert!(standard_script(STANDARD));
+    assert!(standard_script(
+        "#!/usr/bin/env sh\nset -eu\nfor m in a b; do\n  cargo run --quiet --manifest-path \"$m\"\ndone\ncargo test\n"
+    ));
+    for (label, script) in [
+        ("empty", ""),
+        ("exit-zero", "#!/bin/sh\nexit 0\n"),
+        (
+            "only-comments",
+            "#!/bin/sh\nset -eu\n# cargo test --workspace\n",
+        ),
+        ("no-stop-on-error", "#!/bin/sh\ncargo test --workspace\n"),
+        (
+            "swallowed",
+            "#!/bin/sh\nset -eu\ncargo test --workspace || true\n",
+        ),
+        (
+            "swallowed-colon",
+            "#!/bin/sh\nset -eu\ncargo test --workspace || :\n",
+        ),
+        (
+            "exit-early",
+            "#!/bin/sh\nset -eu\nexit 0\ncargo test --workspace\n",
+        ),
+        (
+            "error-off",
+            "#!/bin/sh\nset -eu\nset +e\ncargo test --workspace\n",
+        ),
+        ("echo-only", "#!/bin/sh\nset -eu\necho cargo test\n"),
+    ] {
+        assert!(!standard_script(script), "{label}");
+    }
+}
+
+#[test]
+fn an_xtask_arm_must_do_something() {
+    let arm = |body: &str| {
+        format!(
+            "fn main() {{ match std::env::args().nth(1).as_deref() {{ Some(\"check-recipes\") => {body} _ => {{}} }} }}\n"
+        )
+    };
+    for (label, body) in [
+        ("empty-block", "{}"),
+        ("unit", "()"),
+        ("ok-unit", "Ok(())"),
+        ("literal", "1"),
+        ("only-a-binding", "{ let _x = 1; }"),
+    ] {
+        assert!(!dispatches_check_recipes(&arm(body)), "{label}");
+    }
+    for (label, body) in [
+        ("call", "recipe_policy::run(&args),"),
+        ("try", "run()?,"),
+        ("block-call", "{ run(); }"),
+        ("method", "checker.run(),"),
+    ] {
+        assert!(dispatches_check_recipes(&arm(body)), "{label}");
+    }
+    // A mention outside a match arm is not a dispatch.
+    assert!(!dispatches_check_recipes(
+        "fn main() { let _ = \"check-recipes\"; }\n"
+    ));
 }

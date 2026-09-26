@@ -49,6 +49,7 @@ mod simdoc_rustdoc;
 mod test_fixture;
 mod tools;
 mod validation_matrix;
+mod workflow_yaml;
 mod worktree;
 
 pub use cardspine::{CARD_CONTENT_ID_ALGORITHM, Card, CardSpine, card_content_id};

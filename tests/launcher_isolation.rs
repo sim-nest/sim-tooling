@@ -378,3 +378,73 @@ fn cargo_configuration_never_reaches_the_engine() {
         "{stderr}"
     );
 }
+
+/// The shared resolver is a symlink farm beside the repository. Its generated
+/// manifest may name any source path, so the engine, run as a person or CI
+/// runs it with `SIMDOC_CARGO_MANIFEST_PATH`, refuses every target path
+/// outside the package's bound closure before anything is built or read.
+#[test]
+fn a_farm_manifest_cannot_point_cargo_outside_the_bound_closure() {
+    let real_cargo = PathBuf::from(env!("CARGO"));
+    let repo = fixture("isolation-farm");
+    let farm = repo.parent().unwrap().join("sim-private/.meta-workspace");
+    let package = farm.join("packages/app");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(
+        farm.join("Cargo.toml"),
+        "[workspace]\nresolver = \"3\"\nmembers = [\"packages/app\"]\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(repo.join("src"), package.join("src")).unwrap();
+    let evil = repo.parent().unwrap().join("evil.rs");
+    fs::write(&evil, "fn main() {}\n").unwrap();
+    let manifest = |extra: &str| {
+        fs::write(
+            package.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n{extra}"
+            ),
+        )
+        .unwrap();
+        let status = Command::new(&real_cargo)
+            .args(["generate-lockfile", "--offline", "--manifest-path"])
+            .arg(farm.join("Cargo.toml"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    let run = || {
+        Command::new(engine_binary())
+            .env_clear()
+            .env("HOME", home())
+            .env("CARGO", &real_cargo)
+            .env("SIMDOC_CARGO_MANIFEST_PATH", farm.join("Cargo.toml"))
+            .current_dir(&repo)
+            .args(["simdoc", "--repo-root", ".", "--rustdoc", "skip"])
+            .output()
+            .unwrap()
+    };
+    manifest("");
+    let honest = run();
+    assert!(
+        honest.status.success(),
+        "{}",
+        String::from_utf8_lossy(&honest.stderr)
+    );
+    for extra in [
+        format!("[lib]\npath = \"{}\"\n", evil.display()),
+        format!("build = \"{}\"\n", evil.display()),
+        format!("[[bin]]\nname = \"x\"\npath = \"{}\"\n", evil.display()),
+    ] {
+        manifest(&extra);
+        let refused = run();
+        assert!(!refused.status.success(), "{extra}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains("not part of the package's bound source closure"),
+            "{extra}: {stderr}"
+        );
+    }
+}

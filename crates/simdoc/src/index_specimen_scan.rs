@@ -333,7 +333,7 @@ mod tests {
         fs::write(root.join("recipes/book.toml"), "book = \"sim-demo\"\n").unwrap();
         fs::write(
             xtask_dir.join("main.rs"),
-            "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => {} _ => {} } }\n",
+            "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => run(), _ => {} } }\nfn run() {}\n",
         )
         .unwrap();
         fs::write(

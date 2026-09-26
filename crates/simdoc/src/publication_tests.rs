@@ -261,3 +261,46 @@ fn path_tokens_find_unix_windows_and_home_paths_but_not_urls() {
     );
     assert!(path_tokens("src/lib.rs a/b /single // x").is_empty());
 }
+
+/// A candidate runs through every character up to a delimiter, so a private
+/// path cannot hide behind Unicode, a shell variable, or punctuation, and it
+/// is published only when the whole candidate is a reviewed literal.
+#[test]
+fn a_candidate_is_the_whole_run_through_unicode_and_shell_punctuation() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    for (text, whole) in [
+        ("see /tmp/\u{79d8}\u{5bc6} here", "/tmp/\u{79d8}\u{5bc6}"),
+        ("`/tmp/$SECRET`", "/tmp/$SECRET"),
+        ("in /tmp/${SECRET}/x now", "/tmp/${SECRET}/x"),
+        ("at /var/run/\u{1f512}/k.", "/var/run/\u{1f512}/k"),
+        ("cd $HOME/secret/x", "$HOME/secret/x"),
+        ("cd ${SECRET_DIR}/x", "${SECRET_DIR}/x"),
+        ("at ~/\u{79d8}/x", "~/\u{79d8}/x"),
+        ("at /\u{79d8}/x", "/\u{79d8}/x"),
+        ("=/opt/caf\u{e9}/bin/x", "/opt/caf\u{e9}/bin/x"),
+        ("/tmp/a%20b/c*d", "/tmp/a%20b/c*d"),
+        ("C:\\Users\\\u{79d8}\\x", "C:\\Users\\\u{79d8}\\x"),
+    ] {
+        assert_eq!(path_tokens(text), [whole], "{text}");
+        assert!(guard(repo, "README.md", text).is_err(), "{text}");
+    }
+    // A reviewed literal followed by more is a different, unreviewed path.
+    for text in ["/proc/cpuinfo\u{79d8}", "/proc/cpuinfo$X", "/proc/cpuinfo*"] {
+        assert!(guard(repo, "README.md", text).is_err(), "{text}");
+    }
+    guard(
+        repo,
+        "README.md",
+        "reads `/proc/cpuinfo`, then /proc/meminfo.",
+    )
+    .unwrap();
+    // The escaped quotes of a rendered string literal are not part of the path.
+    guard(repo, "README.md", "(x \"\\\"/etc/os-release\\\"\")").unwrap();
+    assert!(guard(repo, "README.md", "/proc/cpuinfo\\secret").is_err());
+    guard(
+        repo,
+        "README.md",
+        "plain prose, a/b, and/or, 50/50, https://x.io/a/b",
+    )
+    .unwrap();
+}
