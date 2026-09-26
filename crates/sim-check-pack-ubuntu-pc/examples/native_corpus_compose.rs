@@ -6,7 +6,15 @@
 //! Read-only composition of the Ubuntu C-OP evidence from copied native
 //! specimen evidence.
 //!
-//! usage: `native_corpus_compose EVIDENCE_ROOT [--expect-corpus ALGORITHM:HEX]`
+//! usage: `native_corpus_compose EVIDENCE_ROOT --expect-sim-sha256 HEX
+//! --expect-runtime-rid HEX16 [--expect-corpus ALGORITHM:HEX]`
+//!
+//! `--expect-sim-sha256` and `--expect-runtime-rid` are the sealed MANIFEST's
+//! `sim` digest and the runtime identifier derived from its four sealed runtime
+//! member digests. Every specimen's recorded `entry-runtime` must be the pinned
+//! runtime with exactly that `RID` and that `sim` digest; a specimen recorded as
+//! plain, or with another runtime or image, refuses the composition. Both flags
+//! are required: a batch of the pinned `sim` has no plain role.
 //!
 //! `EVIDENCE_ROOT` holds one directory per specimen role, each in the fixed
 //! layout its class owner reads (`sim_platform_ubuntu_pc::native_evidence`):
@@ -36,18 +44,21 @@
 use sim_check_pack_ubuntu_pc::compose_operation_local;
 use sim_kernel::ContentId;
 use sim_platform_ubuntu_pc::{
-    NATIVE_POST_GATE_SITES, NativeAcceptanceClass, OperationLocalCorpusDefinition,
+    ExpectedBatchRuntime, NATIVE_POST_GATE_SITES, NativeAcceptanceClass,
+    OperationLocalCorpusDefinition,
     OperationLocalFormatterDefinition, OperationLocalOwnerCommandDefinition,
     OperationLocalPostGateDefinition, OperationLocalRefusalDefinition,
     OperationLocalSpecimenExpectation, OperationLocalStopDefinition, VerifiedNativeAcceptance,
-    verify_native_specimen_directory, verify_operation_local_corpus_with_recorded_provider_bound,
+    RecordedEntryRuntime, RecordedProviderBoundAttestation, recorded_entry_runtime,
+    verify_native_specimen_directory,
+    verify_operation_local_corpus_with_recorded_provider_bound,
     verify_recorded_provider_bound_specimen_directory,
 };
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const USAGE: &str = "usage: native_corpus_compose EVIDENCE_ROOT [--expect-corpus ALGORITHM:HEX]";
+const USAGE: &str = "usage: native_corpus_compose EVIDENCE_ROOT --expect-sim-sha256 HEX --expect-runtime-rid HEX16 [--expect-corpus ALGORITHM:HEX]";
 
 fn content_text(id: &ContentId) -> String {
     format!(
@@ -57,18 +68,35 @@ fn content_text(id: &ContentId) -> String {
     )
 }
 
-/// The parsed invocation: an absolute evidence root and an optional pin.
+/// The parsed invocation: an absolute evidence root, the batch's expected
+/// runtime identity, and an optional corpus pin.
 #[derive(Debug, Eq, PartialEq)]
 struct Invocation {
     root: PathBuf,
+    runtime: ExpectedBatchRuntime,
     expect_corpus: Option<String>,
 }
 
 fn parse(arguments: &[String]) -> Result<Invocation> {
-    let (root, expect_corpus) = match arguments {
-        [root] => (root, None),
-        [root, flag, expected] if flag == "--expect-corpus" => (root, Some(expected.clone())),
-        _ => return Err(USAGE.into()),
+    let [root, flags @ ..] = arguments else {
+        return Err(USAGE.into());
+    };
+    let (mut sim, mut rid, mut expect_corpus) = (None, None, None);
+    let mut rest = flags.iter();
+    while let Some(flag) = rest.next() {
+        let slot = match flag.as_str() {
+            "--expect-sim-sha256" => &mut sim,
+            "--expect-runtime-rid" => &mut rid,
+            "--expect-corpus" => &mut expect_corpus,
+            _ => return Err(USAGE.into()),
+        };
+        match (rest.next(), slot.is_some()) {
+            (Some(value), false) => *slot = Some(value.clone()),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let (Some(sim), Some(rid)) = (sim, rid) else {
+        return Err(USAGE.into());
     };
     let root = PathBuf::from(root);
     if !root.is_absolute() {
@@ -82,6 +110,7 @@ fn parse(arguments: &[String]) -> Result<Invocation> {
     }
     Ok(Invocation {
         root,
+        runtime: ExpectedBatchRuntime::parse(&sim, &rid)?,
         expect_corpus,
     })
 }
@@ -90,31 +119,59 @@ fn specimen(
     root: &Path,
     role: &str,
     class: NativeAcceptanceClass,
+    runtime: &ExpectedBatchRuntime,
 ) -> Result<VerifiedNativeAcceptance> {
-    verify_native_specimen_directory(&root.join(role), class)
-        .map_err(|error| format!("specimen {role}: {error}").into())
+    bound(
+        role,
+        verify_native_specimen_directory(&root.join(role), class),
+        runtime,
+        recorded_entry_runtime,
+    )
+}
+
+/// Binds one verified role to the batch's runtime and sim image: a role
+/// recorded as plain, or as another runtime or image, refuses composition. The
+/// one path every role takes, so no role is composed unbound.
+fn bound<T>(
+    role: &str,
+    verified: std::io::Result<T>,
+    runtime: &ExpectedBatchRuntime,
+    recorded: impl FnOnce(&T) -> std::io::Result<RecordedEntryRuntime>,
+) -> Result<T> {
+    let verified = verified.map_err(|error| format!("specimen {role}: {error}"))?;
+    recorded(&verified)
+        .and_then(|entry| runtime.require(&entry))
+        .map_err(|error| format!("specimen {role}: {error}"))?;
+    Ok(verified)
 }
 
 fn run(invocation: &Invocation) -> Result<()> {
     let root = invocation.root.as_path();
+    let runtime = &invocation.runtime;
     let success = specimen(
         root,
         "completed-success",
         NativeAcceptanceClass::CompletedSuccess,
+        runtime,
     )?;
     let diverged = specimen(
         root,
         "completed-diverged",
         NativeAcceptanceClass::CompletedDiverged,
+        runtime,
     )?;
     let before_cas = specimen(
         root,
         "before-cas",
         NativeAcceptanceClass::IncompleteBeforeFinalBeforeCas,
+        runtime,
     )?;
-    let before_acknowledgement =
-        verify_recorded_provider_bound_specimen_directory(&root.join("before-acknowledgement"))
-            .map_err(|error| format!("specimen before-acknowledgement: {error}"))?;
+    let before_acknowledgement = bound(
+        "before-acknowledgement",
+        verify_recorded_provider_bound_specimen_directory(&root.join("before-acknowledgement")),
+        runtime,
+        RecordedProviderBoundAttestation::entry_runtime,
+    )?;
     let definition = OperationLocalCorpusDefinition::new([
         OperationLocalSpecimenExpectation::from_verified(&success)?,
         OperationLocalSpecimenExpectation::from_verified(&diverged)?,
@@ -127,25 +184,51 @@ fn run(invocation: &Invocation) -> Result<()> {
         before_acknowledgement,
     )?;
 
-    let timeout = specimen(root, "timeout", NativeAcceptanceClass::StoppedAfterTimeout)?;
+    let timeout = specimen(
+        root,
+        "timeout",
+        NativeAcceptanceClass::StoppedAfterTimeout,
+        runtime,
+    )?;
     let cancellation = specimen(
         root,
         "cancellation",
         NativeAcceptanceClass::StoppedAfterCancellation,
+        runtime,
     )?;
     let stops = OperationLocalStopDefinition::from_verified([&timeout, &cancellation])?;
     corpus.admit_stop_specimens(&stops, [timeout, cancellation])?;
 
-    let formatter = specimen(root, "formatter", NativeAcceptanceClass::CompletedSuccess)?;
+    let formatter = specimen(
+        root,
+        "formatter",
+        NativeAcceptanceClass::CompletedSuccess,
+        runtime,
+    )?;
     let formatter_definition = OperationLocalFormatterDefinition::from_verified(&formatter)?;
     corpus.admit_formatter_specimen(&formatter_definition, formatter)?;
 
-    let validation = specimen(root, "validation", NativeAcceptanceClass::CompletedSuccess)?;
-    let docs = specimen(root, "docs", NativeAcceptanceClass::CompletedSuccess)?;
+    let validation = specimen(
+        root,
+        "validation",
+        NativeAcceptanceClass::CompletedSuccess,
+        runtime,
+    )?;
+    let docs = specimen(
+        root,
+        "docs",
+        NativeAcceptanceClass::CompletedSuccess,
+        runtime,
+    )?;
     let owners = OperationLocalOwnerCommandDefinition::from_verified(&validation, &docs)?;
     corpus.admit_owner_command_specimens(&owners, validation, docs)?;
 
-    let refusal = specimen(root, "refusal", NativeAcceptanceClass::RefusedBeforeRelease)?;
+    let refusal = specimen(
+        root,
+        "refusal",
+        NativeAcceptanceClass::RefusedBeforeRelease,
+        runtime,
+    )?;
     let refusal_definition = OperationLocalRefusalDefinition::from_verified(&refusal)?;
     corpus.admit_refusal_specimen(&refusal_definition, refusal)?;
 
@@ -158,6 +241,7 @@ fn run(invocation: &Invocation) -> Result<()> {
                 root,
                 &format!("post-gate-{site}"),
                 NativeAcceptanceClass::ReleasedErrorDisposed,
+                runtime,
             )
         })
         .collect::<Result<Vec<_>>>()?;
@@ -293,36 +377,69 @@ mod tests {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
 
+    const SIM: &str = "0707070707070707070707070707070707070707070707070707070707070707";
+    const RID: &str = "9c967476576e63f1";
+
+    fn full(extra: &[&str]) -> Vec<String> {
+        let mut values = vec![
+            "/evidence",
+            "--expect-sim-sha256",
+            SIM,
+            "--expect-runtime-rid",
+            RID,
+        ];
+        values.extend_from_slice(extra);
+        arguments(&values)
+    }
+
     #[test]
-    fn invocations_are_exactly_a_root_and_an_optional_pin() {
+    fn invocations_are_a_root_the_batch_runtime_and_an_optional_pin() {
+        let parsed = parse(&full(&[])).unwrap();
+        assert_eq!(parsed.root, PathBuf::from("/evidence"));
+        assert_eq!(parsed.expect_corpus, None);
+        assert_eq!(parsed.runtime, ExpectedBatchRuntime::parse(SIM, RID).unwrap());
         assert_eq!(
-            parse(&arguments(&["/evidence"])).unwrap(),
-            Invocation {
-                root: PathBuf::from("/evidence"),
-                expect_corpus: None
-            }
-        );
-        assert_eq!(
-            parse(&arguments(&[
-                "/evidence",
-                "--expect-corpus",
-                "core/sha256:ab"
-            ]))
-            .unwrap()
-            .expect_corpus
-            .as_deref(),
+            parse(&full(&["--expect-corpus", "core/sha256:ab"]))
+                .unwrap()
+                .expect_corpus
+                .as_deref(),
             Some("core/sha256:ab")
         );
-        for refused in [
-            &[][..],
-            &["relative"][..],
-            &["/evidence", "--expect-corpus"][..],
-            &["/evidence", "--other", "x:y"][..],
-            &["/evidence", "--expect-corpus", "nocolon"][..],
-            &["/evidence", "--expect-corpus", "x:"][..],
-            &["/evidence", "extra", "more", "args"][..],
+        // The flags may come in any order.
+        parse(&arguments(&[
+            "/evidence",
+            "--expect-runtime-rid",
+            RID,
+            "--expect-sim-sha256",
+            SIM,
+        ]))
+        .unwrap();
+        let no_runtime = arguments(&["/evidence"]);
+        let only_sim = arguments(&["/evidence", "--expect-sim-sha256", SIM]);
+        let only_rid = arguments(&["/evidence", "--expect-runtime-rid", RID]);
+        let old_form = arguments(&["/evidence", "--expect-corpus", "core/sha256:ab"]);
+        let mut duplicate = full(&[]);
+        duplicate.extend(arguments(&["--expect-runtime-rid", RID]));
+        let mut bad_rid = full(&[]);
+        bad_rid[4] = "9C967476576E63F1".to_owned();
+        let mut bad_sim = full(&[]);
+        bad_sim[2] = "07".to_owned();
+        for (label, refused) in [
+            ("empty", vec![]),
+            ("no runtime", no_runtime),
+            ("only sim", only_sim),
+            ("only rid", only_rid),
+            ("old form without the runtime", old_form),
+            ("duplicate flag", duplicate),
+            ("uppercase rid", bad_rid),
+            ("short sim", bad_sim),
+            ("relative root", arguments(&["relative", "--expect-sim-sha256", SIM, "--expect-runtime-rid", RID])),
+            ("dangling flag", full(&["--expect-corpus"])),
+            ("unknown flag", full(&["--other", "x:y"])),
+            ("corpus without colon", full(&["--expect-corpus", "nocolon"])),
+            ("corpus without value", full(&["--expect-corpus", "x:"])),
         ] {
-            assert!(parse(&arguments(refused)).is_err(), "{refused:?}");
+            assert!(parse(&refused).is_err(), "{label}");
         }
     }
 
@@ -335,11 +452,70 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let error = run(&Invocation {
             root: root.clone(),
+            runtime: ExpectedBatchRuntime::parse(SIM, RID).unwrap(),
             expect_corpus: None,
         })
         .unwrap_err()
         .to_string();
         std::fs::remove_dir_all(&root).unwrap();
         assert!(error.contains("specimen completed-success"), "{error}");
+    }
+
+    fn recorded(rid: &str, image: [u8; 32]) -> std::io::Result<RecordedEntryRuntime> {
+        Ok(RecordedEntryRuntime {
+            rid: rid.to_owned(),
+            image_sha256: image,
+            directory_device: 1,
+            directory_inode: 2,
+        })
+    }
+
+    /// Every role goes through `bound`: only the batch's pinned runtime and
+    /// `sim` image composes; a plain (relabelled) record, another `RID`, another
+    /// image and an unverifiable specimen each refuse, naming the role.
+    #[test]
+    fn a_role_composes_only_as_the_batch_runtime() {
+        let runtime = ExpectedBatchRuntime::parse(SIM, RID).unwrap();
+        let sim = [7_u8; 32];
+        assert_eq!(
+            bound("timeout", Ok(11), &runtime, |_| recorded(RID, sim)).unwrap(),
+            11
+        );
+        let refused = |verified: std::io::Result<i32>,
+                       entry: std::io::Result<RecordedEntryRuntime>| {
+            bound("timeout", verified, &runtime, |_| entry)
+                .unwrap_err()
+                .to_string()
+        };
+        let plain = Err(std::io::Error::other(
+            "the specimen recorded a plain entry image, not the pinned runtime",
+        ));
+        assert!(refused(Ok(1), plain).contains("specimen timeout: the specimen recorded a plain"));
+        assert!(refused(Ok(1), recorded("0000000000000000", sim)).contains("specimen timeout"));
+        assert!(refused(Ok(1), recorded(RID, [8; 32])).contains("specimen timeout"));
+        let unverified = Err(std::io::Error::other("not verified"));
+        assert!(
+            refused(unverified, recorded(RID, sim)).contains("specimen timeout: not verified")
+        );
+    }
+
+    /// No role is read except through `bound`: the only specimen reads are the
+    /// two helpers, and both wrap their result in it.
+    #[test]
+    fn no_role_is_read_outside_the_binding_path() {
+        let source = include_str!("native_corpus_compose.rs");
+        let production = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let run = production.split("fn run(").nth(1).unwrap();
+        assert!(!run.contains("verify_native_specimen_directory("));
+        assert_eq!(run.matches("verify_recorded_provider_bound_specimen_directory(").count(), 1);
+        assert!(run.contains("bound(\n        \"before-acknowledgement\""));
+        let reader = production
+            .split("fn specimen(")
+            .nth(1)
+            .unwrap()
+            .split("fn bound<")
+            .next()
+            .unwrap();
+        assert!(reader.contains("recorded_entry_runtime,"));
     }
 }
