@@ -189,3 +189,118 @@ fn the_engine_build_refuses_a_toolchain_that_is_not_the_pinned_content() {
     );
     assert!(stderr.contains("pins no toolchain digest"), "{stderr}");
 }
+
+/// The engine digest as the launcher frames it, computed here independently of
+/// the launcher: `Cargo.toml`, `Cargo.lock`, `build.rs`, `build_identity.rs`
+/// and every file under `src`, sorted by path COMPONENTS (so `src/a/b.rs`
+/// sorts before `src/a.rs`, as `Path` ordering does), each as the
+/// slash-separated path, a NUL, the u64 little-endian length, and the bytes.
+fn independent_source_digest(engine: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    fn walk(root: &std::path::Path, relative: &std::path::Path, out: &mut Vec<Vec<String>>) {
+        for entry in fs::read_dir(root.join(relative)).unwrap() {
+            let entry = entry.unwrap();
+            let path = relative.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                walk(root, &path, out);
+            } else {
+                out.push(
+                    path.components()
+                        .map(|part| part.as_os_str().to_str().unwrap().to_owned())
+                        .collect(),
+                );
+            }
+        }
+    }
+    let mut files: Vec<Vec<String>> = ["Cargo.toml", "Cargo.lock", "build.rs", "build_identity.rs"]
+        .iter()
+        .map(|name| vec![(*name).to_owned()])
+        .collect();
+    walk(engine, std::path::Path::new("src"), &mut files);
+    files.sort();
+    let mut hasher = Sha256::new();
+    for parts in files {
+        let name = parts.join("/");
+        let bytes = fs::read(engine.join(&name)).unwrap();
+        hasher.update(name.as_bytes());
+        hasher.update([0]);
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(&bytes);
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The pin committed at `HEAD` is the digest of the engine committed at
+/// `HEAD`, recomputed from `git archive HEAD` (a clean export: no working
+/// tree, no ignored or untracked file, no editor state) by an implementation
+/// independent of the launcher. A stale pin (an engine or lock changed after
+/// `simdoc-pin`, or a covered file regenerated) fails here, in CI and in the
+/// local gate. Before the commit that carries the change the test judges the
+/// previous commit; run it again after committing.
+#[test]
+fn the_pin_at_head_is_the_digest_of_the_engine_at_head() {
+    let head = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .current_dir(tooling_root())
+        .output();
+    if !head.is_ok_and(|output| output.status.success()) {
+        return; // not a git checkout: nothing to export
+    }
+    let archive = Command::new("git")
+        .args([
+            "archive",
+            "--format=tar",
+            "HEAD",
+            "Cargo.toml",
+            "crates/simdoc",
+        ])
+        .current_dir(tooling_root())
+        .output()
+        .unwrap();
+    assert!(archive.status.success(), "git archive HEAD");
+    let dir = scratch("pin-at-head");
+    let mut untar = Command::new("tar")
+        .args(["xf", "-", "-C"])
+        .arg(&dir)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut untar.stdin.take().unwrap(), &archive.stdout).unwrap();
+    assert!(untar.wait().unwrap().success(), "extract the archive");
+    let manifest = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    let committed = |key: &str| {
+        manifest
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(key)?
+                    .trim_start()
+                    .strip_prefix('=')
+                    .map(|value| value.trim().trim_matches('"').to_owned())
+            })
+            .unwrap_or_else(|| panic!("no {key} in the committed manifest"))
+    };
+    let engine = dir.join("crates/simdoc");
+    assert_eq!(
+        independent_source_digest(&engine),
+        committed("source_sha256"),
+        "the committed engine source pin is stale at HEAD; run `cargo run -p xtask -- simdoc-pin`, then commit"
+    );
+    let lock = fs::read(engine.join("Cargo.lock")).unwrap();
+    let lock_digest: String = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&lock)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    assert_eq!(
+        lock_digest,
+        committed("lock_sha256"),
+        "lock pin is stale at HEAD"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}

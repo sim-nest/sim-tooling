@@ -493,6 +493,22 @@ fn a_launcher_refuses_an_engine_whose_source_or_lock_changed_after_the_pin() {
         .unwrap();
     assert!(build.success(), "build the copied xtask");
     let xtask = dir.join("target/debug/xtask");
+    // The copied tree passes the launcher's identity check BEFORE any
+    // mutation, so the refusals below can only come from the mutations.
+    let baseline = Command::new(&xtask)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &dir)
+        .env("CARGO", env!("CARGO"))
+        .current_dir(&root)
+        .args(["simdoc-pin", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        baseline.status.success(),
+        "the unmutated copy is not the committed engine: {}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
     let repo = fixture("isolation-mutated-engine-repo");
     let refused = |what: &str| {
         let out = scratch("isolation-mutated-engine-out");

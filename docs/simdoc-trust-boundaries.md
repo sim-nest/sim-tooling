@@ -206,8 +206,8 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   near-miss commands, comments and names that mention a trigger, jobs without
   `runs-on`, and nested workflows.
 - Coverage: route (`recipe_gate_tests` through `simdoc`: a no-op, swallowed,
-  comment-only or help-only script and an empty xtask arm are recorded as
-  declared and never as runnable or checked; a comment-only trigger, a
+  comment-only or help-only script and a literally empty xtask arm, and an arm that
+  calls an empty function, are recorded as declared and never as runnable or checked; a comment-only trigger, a
   `workflow_dispatch` trigger and a job without `runs-on` are not a
   declaration); unit (`recipe_evidence_tests`, `workflow_yaml_tests`).
 
@@ -219,7 +219,7 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   the launcher independently of engine code, and again against the built
   executable's own report. The pin changes only through `xtask simdoc-pin`.
 - Refused: everything else.
-- Coverage: unit (`simdoc_pin_tests`); route (`tests/launcher_isolation.rs::a_launcher_refuses_an_engine_whose_source_or_lock_changed_after_the_pin`: a copied tree is built into its own xtask, then its engine source and its engine lock are changed one at a time, and the launcher refuses each with the pin's message before any engine runs). The launcher's comparison of the built executable's own report is unit-covered only.
+- Coverage: unit (`simdoc_pin_tests`); route (`tests/launcher_isolation.rs::a_launcher_refuses_an_engine_whose_source_or_lock_changed_after_the_pin`: a copied tree is built into its own xtask and must first pass `simdoc-pin --check` unmutated, then its engine source and its engine lock are changed one at a time, and the launcher refuses each with the pin's message before any engine runs). The launcher's comparison of the built executable's own report is unit-covered only. Staleness of the committed pin is guarded by `tests/engine_identity.rs::the_pin_at_head_is_the_digest_of_the_engine_at_head`, which recomputes the engine digest from `git archive HEAD` with an implementation independent of the launcher (path-component order, as `Path` sorts) and fails when the pin differs; it runs in CI and in the local gate, and before a commit it judges the previous commit.
 
 ## B12 Continuous integration
 

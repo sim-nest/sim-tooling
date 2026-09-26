@@ -269,6 +269,19 @@ fn an_empty_xtask_arm_or_comment_trigger_claims_no_more_than_a_declaration() {
         "{text}"
     );
     assert_no_stronger_claim(&text, "noop-arm");
+    // A literally empty arm claims no more either.
+    repo.write(
+        "xtask/src/main.rs",
+        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => {} _ => {} } }\n",
+    );
+    repo.commit();
+    repo.run_simdoc(&[]).unwrap();
+    let text = repo.read(fragment);
+    assert!(
+        text.contains("declared consumer, not validated by simdoc"),
+        "{text}"
+    );
+    assert_no_stronger_claim(&text, "empty-arm");
 
     // A workflow whose trigger appears only in a comment never runs, and one
     // job without `runs-on` is not a declaration.

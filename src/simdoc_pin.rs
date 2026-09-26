@@ -162,7 +162,8 @@ impl EncoderPin {
 
 /// SHA-256 over the engine's `Cargo.toml`, `Cargo.lock`, `build.rs`,
 /// `build_identity.rs`, and `src` tree: each file's slash-separated relative
-/// path, a NUL, its length (u64 little-endian), and its bytes, in path order.
+/// path, a NUL, its length (u64 little-endian), and its bytes, in `Path` order (component-wise, so `src/a/b.rs` sorts before
+/// `src/a.rs`; not the byte order of the joined strings).
 /// Any symlink refuses the digest. This is computed here, not by the engine,
 /// so a modified engine cannot vouch for itself.
 pub(crate) fn source_digest(simdoc_dir: &Path) -> Result<String, String> {
