@@ -448,3 +448,92 @@ fn a_farm_manifest_cannot_point_cargo_outside_the_bound_closure() {
         );
     }
 }
+
+fn copy_tooling(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name == "target" || name == ".git" {
+            continue;
+        }
+        let target = to.join(&name);
+        if entry.file_type().unwrap().is_dir() {
+            copy_tooling(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The launcher refuses an engine whose source or lock is not the committed
+/// one. A copy of the tree is built into its own xtask (which bakes its own
+/// root), then the copy's engine source and the copy's engine lock are
+/// changed one at a time after the pin: each is refused with the pin's own
+/// message before any engine runs. Removing `verify_source` from the launcher
+/// makes this test fail.
+#[test]
+fn a_launcher_refuses_an_engine_whose_source_or_lock_changed_after_the_pin() {
+    let dir = scratch("isolation-mutated-engine");
+    let root = dir.join("tooling");
+    copy_tooling(&tooling_root(), &root);
+    let build = Command::new(env!("CARGO"))
+        .current_dir(&root)
+        .args([
+            "build",
+            "--quiet",
+            "--locked",
+            "--offline",
+            "--bin",
+            "xtask",
+        ])
+        .arg("--target-dir")
+        .arg(dir.join("target"))
+        .status()
+        .unwrap();
+    assert!(build.success(), "build the copied xtask");
+    let xtask = dir.join("target/debug/xtask");
+    let repo = fixture("isolation-mutated-engine-repo");
+    let refused = |what: &str| {
+        let out = scratch("isolation-mutated-engine-out");
+        let output = Command::new(&xtask)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &dir)
+            .current_dir(&repo)
+            .args([
+                "repo-contract",
+                "--repo",
+                ".",
+                "--emit",
+                "repo-contract.json",
+                "--out-dir",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{what}: launched");
+        assert!(
+            stderr.contains("is not the committed one"),
+            "{what}: {stderr}"
+        );
+        assert!(!out.join("repo-contract.json").exists(), "{what}");
+    };
+    let source = root.join("crates/simdoc/src/lib.rs");
+    let original = fs::read(&source).unwrap();
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"\n// changed after the pin\n");
+    fs::write(&source, changed).unwrap();
+    refused("source");
+    fs::write(&source, original).unwrap();
+
+    let lock = root.join("crates/simdoc/Cargo.lock");
+    let original = fs::read(&lock).unwrap();
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"\n# changed after the pin\n");
+    fs::write(&lock, changed).unwrap();
+    refused("lock");
+    fs::write(&lock, original).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}

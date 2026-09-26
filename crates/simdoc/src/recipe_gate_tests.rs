@@ -182,11 +182,11 @@ fn a_malformed_recipe_stops_generation_through_the_public_route() {
     assert!(err.contains("recipe validation failed"), "{err}");
 }
 
-/// A tracked recipe script is not evidence that recipes run: the generated
-/// index claims a check only for a declared consumer whose script is a
-/// standard runner (a no-op script, or one that swallows failure, is not).
+/// A declared consumer is reported as a declared consumer and nothing
+/// stronger: whatever the script or xtask does (a no-op, a swallowed failure,
+/// an empty arm), the index never marks a recipe runnable or checked.
 #[test]
-fn generated_recipe_evidence_names_only_a_declared_standard_consumer() {
+fn generated_recipe_evidence_claims_a_declaration_never_a_validation() {
     let repo = recipes_repo("recipe-gate-evidence");
     repo.write(
         "recipes/book.toml",
@@ -212,31 +212,39 @@ fn generated_recipe_evidence_names_only_a_declared_standard_consumer() {
         ("no-op", "#!/bin/sh\nexit 0\n"),
         ("swallowed", "#!/bin/sh\nset -eu\ncargo test || true\n"),
         ("comment-only", "#!/bin/sh\nset -eu\n# cargo test\n"),
+        ("help-only", "#!/bin/sh\nset -eu\ncargo test --help\n"),
     ] {
         repo.write("scripts/check-recipes.sh", script);
         repo.commit();
         repo.run_simdoc(&[]).unwrap();
+        let text = repo.read(fragment);
         assert!(
-            !repo.read(fragment).contains("check-recipes"),
-            "{label}: a declared no-op script was claimed as a check"
+            text.contains(
+                "declared consumer, not validated by simdoc: sh scripts/check-recipes.sh"
+            ),
+            "{label}: the declaration is recorded as a declaration"
         );
+        assert_no_stronger_claim(&text, label);
     }
-    repo.write(
-        "scripts/check-recipes.sh",
-        "#!/bin/sh\nset -eu\ncargo test --workspace --quiet\n",
-    );
-    repo.commit();
-    repo.run_simdoc(&[]).unwrap();
-    assert!(
-        repo.read(fragment).contains("check-recipes"),
-        "standard consumer declared"
-    );
 }
 
-/// The same holds for a declared xtask consumer with an empty arm, and for a
-/// workflow whose only mention of a trigger is a comment.
+fn assert_no_stronger_claim(fragment: &str, label: &str) {
+    // The recipe specimens of these fixtures are the only specimens.
+    for claim in ["[runnable true]", "[checked true]"] {
+        assert!(!fragment.contains(claim), "{label}: {claim}");
+    }
+    for bare in [
+        "[checked-by \"xtask check-recipes\"]",
+        "[checked-by \"sh scripts/check-recipes.sh\"]",
+    ] {
+        assert!(!fragment.contains(bare), "{label}: {bare}");
+    }
+}
+
+/// An empty xtask arm or a comment-only trigger cannot produce anything
+/// stronger than a declaration either; a comment-only trigger produces none.
 #[test]
-fn generated_recipe_evidence_ignores_an_empty_xtask_arm_and_a_comment_trigger() {
+fn an_empty_xtask_arm_or_comment_trigger_claims_no_more_than_a_declaration() {
     let repo = recipes_repo("recipe-gate-evidence-xtask");
     repo.write(
         "recipes/book.toml",
@@ -244,7 +252,7 @@ fn generated_recipe_evidence_ignores_an_empty_xtask_arm_and_a_comment_trigger() 
     );
     repo.write(
         "xtask/src/main.rs",
-        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => {} _ => {} } }\n",
+        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => noop(), _ => {} } }\nfn noop() {}\n",
     );
     let manifest = repo.read("Cargo.toml").replace(
         "docs-command = \"cargo run -p xtask -- simdoc\"",
@@ -255,12 +263,15 @@ fn generated_recipe_evidence_ignores_an_empty_xtask_arm_and_a_comment_trigger() 
     repo.commit();
     let fragment = "docs/generated/sim-index-fragment.sx";
     repo.run_simdoc(&[]).unwrap();
+    let text = repo.read(fragment);
     assert!(
-        !repo.read(fragment).contains("check-recipes"),
-        "an empty arm was claimed"
+        text.contains("declared consumer, not validated by simdoc"),
+        "{text}"
     );
+    assert_no_stronger_claim(&text, "noop-arm");
 
-    // A workflow whose trigger appears only in a comment never runs.
+    // A workflow whose trigger appears only in a comment never runs, and one
+    // job without `runs-on` is not a declaration.
     repo.write(
         "Cargo.toml",
         &manifest.replace(
@@ -269,18 +280,14 @@ fn generated_recipe_evidence_ignores_an_empty_xtask_arm_and_a_comment_trigger() 
         ),
     );
     repo.write(
-        "xtask/src/main.rs",
-        "fn main() { match std::env::args().nth(1).as_deref() { Some(\"check-recipes\") => real(), _ => {} } }\nfn real() {}\n",
-    );
-    repo.write(
         ".github/workflows/ci.yml",
-        "# on: push\nname: x\non: workflow_dispatch\njobs:\n  t:\n    steps:\n      - run: cargo run -p xtask -- check-recipes\n",
+        "# on: push\nname: x\non: workflow_dispatch\njobs:\n  t:\n    runs-on: x\n    steps:\n      - run: cargo run -p xtask -- check-recipes\n",
     );
     repo.commit();
     repo.run_simdoc(&[]).unwrap();
     assert!(
         !repo.read(fragment).contains("check-recipes"),
-        "a comment trigger was claimed"
+        "a comment trigger was recorded"
     );
     repo.write(
         ".github/workflows/ci.yml",
@@ -289,7 +296,16 @@ fn generated_recipe_evidence_ignores_an_empty_xtask_arm_and_a_comment_trigger() 
     repo.commit();
     repo.run_simdoc(&[]).unwrap();
     assert!(
-        repo.read(fragment).contains("check-recipes"),
-        "a real trigger and arm"
+        !repo.read(fragment).contains("check-recipes"),
+        "a job without runs-on was recorded"
     );
+    repo.write(
+        ".github/workflows/ci.yml",
+        "on: push\njobs:\n  t:\n    runs-on: x\n    steps:\n      - run: cargo run -p xtask -- check-recipes\n",
+    );
+    repo.commit();
+    repo.run_simdoc(&[]).unwrap();
+    let text = repo.read(fragment);
+    assert!(text.contains("declared consumer, not validated by simdoc"));
+    assert_no_stronger_claim(&text, "real-trigger");
 }

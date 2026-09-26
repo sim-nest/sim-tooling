@@ -30,7 +30,7 @@ pub(crate) fn discovered(repo: &Path, packages: &[PackageContract]) -> Vec<Disco
         .collect::<BTreeSet<_>>();
     let mut specimens = BTreeMap::new();
     let mut checked_recipe_paths = BTreeSet::new();
-    let recipe_harness = crate::recipe_evidence::recipe_harness(repo);
+    let recipe_consumer = crate::recipe_evidence::declared_consumer(repo);
 
     for book in recipe_books(repo, &package_groups) {
         let Some(recipes) = book["recipes"].as_array() else {
@@ -54,9 +54,14 @@ pub(crate) fn discovered(repo: &Path, packages: &[PackageContract]) -> Vec<Disco
                     kind: "recipe".to_owned(),
                     path: path.to_owned(),
                     language,
-                    runnable: recipe_harness.is_some(),
-                    checked: recipe_harness.is_some(),
-                    checked_by: recipe_harness.clone(),
+                    // A declared consumer is not a validation: the specimen
+                    // is neither runnable nor checked, and says who is
+                    // declared to run it.
+                    runnable: false,
+                    checked: false,
+                    checked_by: recipe_consumer
+                        .as_deref()
+                        .map(crate::recipe_evidence::declared_consumer_evidence),
                     doc_anchor: None,
                 },
             );
@@ -382,9 +387,12 @@ mod tests {
         assert_eq!(checked.subject.as_str(), "crate/sim-demo");
         assert_eq!(checked.path, "recipes/01-basics/checked/recipe.toml");
         assert_eq!(checked.language.as_deref(), Some("lisp"));
-        assert!(checked.runnable);
-        assert!(checked.checked);
-        assert_eq!(checked.checked_by.as_deref(), Some("xtask check-recipes"));
+        assert!(!checked.runnable);
+        assert!(!checked.checked);
+        assert_eq!(
+            checked.checked_by.as_deref(),
+            Some("declared consumer, not validated by simdoc: xtask check-recipes")
+        );
         assert!(checked.doc_anchor.is_none());
         assert_eq!(loose.subject.as_str(), "crate/sim-loose");
         assert_eq!(loose.language.as_deref(), Some("cli-transcript"));

@@ -70,11 +70,21 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   is exactly one of the reviewed values in `PUBLIC_LITERALS`
   (`publication.rs`). There are no permitted roots, prefixes, or patterns.
 - Refused: every other path token (`/tmp/x`, `/var/x`, `/etc/x`, `~/x`,
-  Windows drive and UNC paths), any `..` segment, and every machine-local
+  Windows drive and UNC paths), including one embedded after a colon, an
+  identifier, a digit, a closing bracket or a non-ASCII character
+  (`path:/tmp/x`, `id7:/var/x`, `x$HOME/x`, `秘/etc/x`); any `..` segment, and every machine-local
   location wherever it occurs (repository, parent, home, working, temporary,
   Cargo home, rustup home, resolver directory).
 - No file the run read can approve a path.
-- Coverage: route (`simdoc_check_tests::a_local_path_in_tracked_text_never_reaches_a_generated_file`: `/tmp/<secret>`, `/var/<id>`, `/tmp/<non-ASCII>`, `/tmp/$SECRET`, `$HOME/x` through `simdoc`); unit (`publication_tests`: the literal table, the candidate lexer).
+- Narrow exclusions, stated so they are not a surprise: a `/` that continues a
+  plain relative word made only of ASCII letters, digits and `._-+@%*/`
+  (`crates/a/src`, `x9/tmp/y`), and any word containing `://` (a URL), do not
+  start an absolute path. A relative-looking word is therefore not scanned,
+  which means an absolute path written with an ASCII-only glued prefix
+  (`abc/tmp/secret`) is read as a relative path and is not refused. A bare
+  single-segment `/tmp` is prose, not a path (two segments are needed).
+  Drive-letter and UNC starts need a word boundary.
+- Coverage: route (`simdoc_check_tests::a_local_path_in_tracked_text_never_reaches_a_generated_file`: `/tmp/<secret>`, `/var/<id>`, `/tmp/<non-ASCII>`, `/tmp/$SECRET`, `$HOME/x`, and the colon-, identifier-, Unicode-, bracket- and `$VAR`-embedded forms, through `simdoc`); unit (`publication_tests`: the literal table, the candidate lexer, relative and URL exclusions).
 
 ## B4 Child processes
 
@@ -169,25 +179,37 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
 
 ## B10 Recipe evidence
 
-- Allowed: generation runs no recipe. Recipe material must parse (`recipe_gate`)
-  and stops generation otherwise. `checked` and `runnable` are claimed only
-  when an exact declared validation consumer runs the recipes, and the
-  consumer is a standard runner: `cargo run -p xtask -- check-recipes` where
-  the xtask's match arm for `"check-recipes"` calls a function or method, or
-  `sh scripts/check-recipes.sh` where the tracked script stops on error
-  (`set -e`), runs at least one uncommented `cargo test` or `cargo run`, and
-  cannot swallow a failure (`|| true`, `|| :`, `exit 0`, `set +e`). The
-  declaration is an entry of the root manifest's `validation-commands`, or the
+- Claim: **declared consumer only.** Generation runs no recipe, and simdoc
+  does not know or assert that anything validates one. A recipe specimen is
+  recorded neither runnable nor checked. When a declaration exists, the
+  specimen's evidence reads `declared consumer, not validated by simdoc:
+  <consumer>`; when none exists it carries no evidence. Recipe material must
+  still parse (`recipe_gate`) and stops generation otherwise.
+- A consumer is declared when the command is exactly `cargo run -p xtask --
+  check-recipes` or `sh scripts/check-recipes.sh`, and the file it names
+  (`xtask/src/main.rs` or `scripts/check-recipes.sh`) is tracked. The command
+  is an entry of the root manifest's `validation-commands`, or the
   single-command `run:` of a step of a workflow directly in
   `.github/workflows`, read from a parsed YAML tree (`workflow_yaml.rs`, a
   strict reader that refuses anchors, aliases, tags, flow maps, tabs, and
   anything it does not understand): the workflow triggers on `push` or
-  `pull_request`, has no `defaults`, and neither the job nor the step carries
-  `if`, `continue-on-error`, `working-directory`, or `shell`.
-- Refused: a script or xtask that merely exists; a no-op or hiding script; an
-  empty arm; near-miss commands; comments and names that mention a trigger;
-  nested workflows.
-- Coverage: route (`recipe_gate_tests` through `simdoc`: malformed recipes stop generation; no-op or failure-swallowing scripts, empty xtask arms, and comment-only or `workflow_dispatch` triggers are not claimed as checks); unit (`recipe_evidence_tests`, `workflow_yaml_tests`).
+  `pull_request`, has no `defaults`, the job has `runs-on` and `steps` and no
+  `if`, `continue-on-error` or `defaults`, and the step has no `if`,
+  `continue-on-error`, `working-directory` or `shell`.
+- Not asserted, and not read: what the script or the xtask arm does. A no-op
+  script, `cargo test --help`, a swallowed failure, or an arm that calls an
+  empty function is still a declared consumer; the wording says only that.
+  Whether the declared consumer really validates the recipes is judged by
+  review, and by a content-bound runner of known semantics, which does not
+  exist yet (a follow-up).
+- Refused as a declaration: an untracked or absent script or xtask entry,
+  near-miss commands, comments and names that mention a trigger, jobs without
+  `runs-on`, and nested workflows.
+- Coverage: route (`recipe_gate_tests` through `simdoc`: a no-op, swallowed,
+  comment-only or help-only script and an empty xtask arm are recorded as
+  declared and never as runnable or checked; a comment-only trigger, a
+  `workflow_dispatch` trigger and a job without `runs-on` are not a
+  declaration); unit (`recipe_evidence_tests`, `workflow_yaml_tests`).
 
 ## B11 Launcher identity
 
@@ -197,7 +219,7 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   the launcher independently of engine code, and again against the built
   executable's own report. The pin changes only through `xtask simdoc-pin`.
 - Refused: everything else.
-- Coverage: unit (`simdoc_pin_tests`); route (`tests/launcher_isolation.rs`, which builds and runs the engine only after the identity checks pass).
+- Coverage: unit (`simdoc_pin_tests`); route (`tests/launcher_isolation.rs::a_launcher_refuses_an_engine_whose_source_or_lock_changed_after_the_pin`: a copied tree is built into its own xtask, then its engine source and its engine lock are changed one at a time, and the launcher refuses each with the pin's message before any engine runs). The launcher's comparison of the built executable's own report is unit-covered only.
 
 ## B12 Continuous integration
 

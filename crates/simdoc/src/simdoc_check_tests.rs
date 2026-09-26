@@ -83,6 +83,11 @@ fn a_local_path_in_tracked_text_never_reaches_a_generated_file() {
         "/tmp/\u{79d8}\u{5bc6}",
         "/tmp/$SECRET",
         "$HOME/secret/x",
+        "path:/tmp/customer-secret",
+        "id7:/var/runner-4711/work",
+        "x$HOME/secret/x",
+        "\u{79d8}/etc/private-job.conf",
+        "(see)/tmp/customer-secret",
     ] {
         let repo = FixtureRepo::nested("publish-secret");
         let manifest = repo
@@ -92,7 +97,8 @@ fn a_local_path_in_tracked_text_never_reaches_a_generated_file() {
         repo.commit();
         let err = repo.run_simdoc(&[]).unwrap_err();
         assert!(
-            err.contains("refused to publish") && err.contains(secret),
+            err.contains("refused to publish")
+                && err.contains(secret.trim_start_matches(|c: char| !"/$~".contains(c))),
             "{secret}: {err}"
         );
         assert!(

@@ -52,6 +52,7 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
     "/target/x86_64-unknown-linux-gnu/debug/",
     "/target/x86_64-unknown-linux-gnu/debug/{filename}",
+    "/b.rs\\0beta\\0",
     "/toolchain/bin",
     "/toolchain/bin:/usr/bin:/bin",
     "/toolchain/bin/rustc",
@@ -261,7 +262,16 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     while let Some((index, ch)) = chars.next() {
         let boundary = previous.is_none_or(is_boundary);
         previous = Some(ch);
-        if !boundary {
+        // A shell-variable start counts wherever it sits (`x$HOME/y`); an
+        // absolute or home-relative start counts after any character except
+        // inside a plain relative path or a URL (`src/a/b`, `https://h/p`).
+        // Windows drive and UNC starts need a boundary.
+        let embedded_ok = match ch {
+            '$' => true,
+            '/' | '~' => !inside_relative_path_or_url(text, index),
+            _ => false,
+        };
+        if !boundary && !embedded_ok {
             continue;
         }
         let rest = &text[index..];
@@ -315,6 +325,29 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
 /// Whether `c` ends a path candidate.
 fn is_delimiter(c: char) -> bool {
     c.is_whitespace() || "\"'`)]<>,;|".contains(c)
+}
+
+/// Whether the `/` (or `~`) at `index` continues a word that is a plain
+/// relative path (`crates/a/src`) or a URL (`https://host/path`), and so is
+/// not the start of an absolute path. Any other prefix (a colon, a Unicode
+/// letter, a closing bracket, punctuation) leaves the start a candidate.
+fn inside_relative_path_or_url(text: &str, index: usize) -> bool {
+    let before = &text[..index];
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| is_boundary(*c))
+        .map_or(0, |(at, c)| at + c.len_utf8());
+    let prefix = &before[start..];
+    if prefix.is_empty() {
+        return false;
+    }
+    if text[start..=index].contains("://") {
+        return true;
+    }
+    prefix
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._-+@%*/".contains(c))
 }
 
 /// Whether a candidate may start right after `c`.

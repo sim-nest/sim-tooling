@@ -260,6 +260,11 @@ fn path_tokens_find_unix_windows_and_home_paths_but_not_urls() {
         ["/srv/x/y", "C:\\Users\\a", "~/.cargo/x", "\\\\h\\s"]
     );
     assert!(path_tokens("src/lib.rs a/b /single // x").is_empty());
+    // Relative paths and URLs are not absolute-path starts.
+    assert!(
+        path_tokens("crates/a/src/x.rs https://example.com/a/b ../x/y ./a/b a.b-c/d_e/f")
+            .is_empty()
+    );
 }
 
 /// A candidate runs through every character up to a delimiter, so a private
@@ -280,6 +285,12 @@ fn a_candidate_is_the_whole_run_through_unicode_and_shell_punctuation() {
         ("=/opt/caf\u{e9}/bin/x", "/opt/caf\u{e9}/bin/x"),
         ("/tmp/a%20b/c*d", "/tmp/a%20b/c*d"),
         ("C:\\Users\\\u{79d8}\\x", "C:\\Users\\\u{79d8}\\x"),
+        ("path:/tmp/customer-secret", "/tmp/customer-secret"),
+        ("x$HOME/secret", "$HOME/secret"),
+        ("id42$HOME/secret", "$HOME/secret"),
+        ("\u{79d8}/tmp/secret", "/tmp/secret"),
+        ("(x)/var/runner/work", "/var/runner/work"),
+        ("dir:~/secret/x", "~/secret/x"),
     ] {
         assert_eq!(path_tokens(text), [whole], "{text}");
         assert!(guard(repo, "README.md", text).is_err(), "{text}");
