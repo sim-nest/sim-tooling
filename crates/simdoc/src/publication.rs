@@ -51,6 +51,7 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/scratch/tmp",
     "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
     "/target/x86_64-unknown-linux-gnu/debug/",
+    "/target/x86_64-unknown-linux-gnu/debug/{filename}",
     "/toolchain/bin",
     "/toolchain/bin/rustc",
     "/toolchain/bin/rustdoc",
