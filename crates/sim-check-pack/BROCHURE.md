@@ -1,7 +1,6 @@
 # sim-check-pack
 
-In one line: Invoke an exact native SIM conformance pack without serializing
-the checker owner's authority.
+In one line: Invoke an exact native SIM conformance pack without serializing the checker owner's authority.
 
 ## What it gives you
 
@@ -21,6 +20,6 @@ opaque live-owner-qualified result.
 ## Where it fits
 
 The crate owns invocation only. `sim-conformance-packs` owns checker law and
-live currentness, while the installed roadmap service owns catalog admission
-and retention. It owns no process launcher, proof database, or revocation
-service.
+live currentness, while the installed acceptance service owns catalog
+admission and retention. It owns no process launcher, proof database, or
+revocation service.
