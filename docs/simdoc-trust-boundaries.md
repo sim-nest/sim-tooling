@@ -120,6 +120,23 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
 - Refused: symlinks or non-files in the closure, any digest or commit
   mismatch, `rustup`, `PATH`.
 - Coverage: route (`engine_identity::the_engine_build_refuses...`, `launcher_isolation` counterfeit toolchain); unit (digest tests, including an rlib mutation and a deep symlink). Out of scope: extra executables in the accepted toolchain `bin` (only the three tools are bound, plus everything under `lib/`).
+- Known local-environment gap, not a release gate: the committed pin's
+  `toolchain_sha256` is the exact content digest of the guest's rustup 1.96.0
+  install, which is the source of truth for NV12.05's doc-lane regeneration. A
+  same-version rustup install with a different content digest (observed: tiger's,
+  `65dafc71...` versus the committed `31b5ac5b...`, though `rustc`/`cargo` report
+  the identical release and commit hashes) is refused by this boundary as
+  designed. This is the single root cause behind every test that must build or
+  run the real pinned engine failing on tiger: `engine_identity::
+  the_committed_engine_identity_is_current`, both `tests/dispatch.rs` route
+  tests, and three of `tests/launcher_isolation.rs`'s route tests (the fourth,
+  `a_launcher_refuses_an_engine_whose_source_or_lock_changed_after_the_pin`,
+  fails on the same digest mismatch even for the unmutated baseline copy). None
+  of these indicate a stale or incorrect pin: `engine_identity::
+  the_pin_at_head_is_the_digest_of_the_engine_at_head` (source/lock only, no
+  toolchain build) passes on tiger and proves the committed pin matches HEAD.
+  `repos.toml`'s `docs_command` for this repository is guest-scoped for the
+  same reason (see the note beside it).
 
 ## B7 Cargo home, target, and configuration
 
@@ -138,6 +155,7 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   is not the locked checksum; a git dependency in a lock; a relative or empty
   real-home value; a `target` that is a symlink; any ancestor configuration.
 - Coverage: route (`launcher_isolation::cargo_configuration_never_reaches_the_engine`, sim-platform's `simdoc_launch_isolation` twin); unit (`cargo_home_tests`, `tools_tests`, `simdoc_pin_tests`). The tampered-registry-source case is covered at unit level (only verified `.crate` archives are copied), not by a route test that runs cargo against a tampered cache.
+- Known local-environment gap, not a release gate: `simdoc_route::tests::the_engine_runs_locked_with_the_resolved_pinned_binaries` calls `command_in` against this checkout's real path, so on any machine whose real `$HOME` carries its own `.cargo/config.toml` for an unrelated reason, the ancestor walk this boundary requires finds it and the test refuses -- correctly, per this boundary's rule, not a defect. Named instance: tiger's `~/.cargo/config.toml` sets only `PKG_CONFIG_PATH` for an unrelated toolchain sysroot; it has no bearing on simdoc's identity or output, but the boundary does not (and should not) inspect a config file's contents before refusing -- any ancestor config can inject `env`, `build.rustflags`, or a source replacement, so presence alone is the refusal condition (B5, B7). The test is expected to fail on such a machine and to pass on a checkout with no such file (for example the guest, which is the source of truth for this boundary); this does not affect release correctness (see B12's "outside the boundary").
 
 ## B8 Resolver inputs (shared resolver symlink farm)
 

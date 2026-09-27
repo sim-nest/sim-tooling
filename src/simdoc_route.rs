@@ -229,6 +229,15 @@ mod tests {
 
     use super::*;
 
+    // This calls `engine_command`, which runs the real B7 ancestor-`.cargo`
+    // check (`docs/simdoc-trust-boundaries.md`) against this checkout's real
+    // path (`tooling_root()`), not a sandboxed fixture. On a machine whose
+    // real `$HOME` carries its own `.cargo/config.toml` for an unrelated
+    // reason (for example tiger's, which only sets `PKG_CONFIG_PATH` for an
+    // unrelated toolchain sysroot), that ancestor walk finds it and this test
+    // refuses -- the guard working as designed (B7/B12), not a defect in this
+    // test or in the guard. It passes on a checkout whose home has no such
+    // file (for example the guest). Not a release-correctness gate; see B7.
     #[test]
     fn the_engine_runs_locked_with_the_resolved_pinned_binaries() {
         let toolchain = Toolchain {
