@@ -29,7 +29,7 @@ pub(super) fn live_test_fixtures(source: &str) -> Result<Vec<String>, String> {
     // The consumption API must exist in the file as the reviewed shape: a
     // function `consume_fixture` that joins its argument onto the package's
     // manifest directory. A no-op stand-in proves nothing.
-    if !items.helper_is_reviewed {
+    if items.reviewed_helpers.is_empty() {
         return Ok(Vec::new());
     }
     let mut reached = BTreeSet::new();
@@ -51,17 +51,49 @@ pub(super) fn live_test_fixtures(source: &str) -> Result<Vec<String>, String> {
             pending.extend(items.resolve(module, reference));
         }
     }
-    Ok(reached
-        .iter()
-        .filter_map(|key| items.facts.get(key))
-        .flat_map(|facts| facts.consumed.iter().cloned())
-        .collect())
+    let mut consumed = Vec::new();
+    for key in &reached {
+        let Some(facts) = items.facts.get(key) else {
+            continue;
+        };
+        let module = &key[..key.len() - 1];
+        for (path, fixture) in &facts.fixture_calls {
+            // A bare, unqualified reference inside a body that locally
+            // shadows `consume_fixture` always binds to that shadow, per
+            // Rust's own scoping rules: never credited, regardless of what
+            // an outer, module-tree resolution would otherwise find.
+            if facts.shadows_consume_fixture && path.len() == 1 {
+                continue;
+            }
+            if items
+                .resolve(module, path)
+                .iter()
+                .any(|target| items.reviewed_helpers.contains(target))
+            {
+                consumed.push(fixture.clone());
+            }
+        }
+    }
+    Ok(consumed)
 }
 
 #[derive(Default)]
 struct Facts {
     is_test: bool,
-    consumed: Vec<String>,
+    /// Every syntactically `consume_fixture("...")`-shaped call this item's
+    /// body makes, as its own (unresolved) callee path and the literal
+    /// argument. Resolved against [`Items::reviewed_helpers`] once the whole
+    /// file is known (see [`live_test_fixtures`]), never credited from the
+    /// name alone: a same-named decoy elsewhere in the file, reached only
+    /// because its own final path segment matches, proves nothing.
+    fixture_calls: Vec<(Vec<String>, String)>,
+    /// Whether this item's own body locally defines (shadows) its own
+    /// nested `fn consume_fixture`. Rust's own scoping rules mean a bare,
+    /// unqualified `consume_fixture(...)` call inside such a body always
+    /// binds to that local shadow, never to any outer, reviewed helper of
+    /// the same name -- so a bare reference is never credited when this is
+    /// set, regardless of what [`Items::resolve`] would otherwise find.
+    shadows_consume_fixture: bool,
     references: Vec<Vec<String>>,
 }
 
@@ -73,7 +105,11 @@ struct Scope {
 
 #[derive(Default)]
 struct Items {
-    helper_is_reviewed: bool,
+    /// Absolute paths of every function named `consume_fixture`, of the
+    /// reviewed shape, defined anywhere in the file -- never a single
+    /// file-wide flag: a call must resolve to one of these exact items, not
+    /// merely share its final name with one.
+    reviewed_helpers: BTreeSet<Vec<String>>,
     module: Vec<String>,
     facts: BTreeMap<Vec<String>, Facts>,
     scopes: BTreeMap<Vec<String>, Scope>,
@@ -216,7 +252,8 @@ impl Items {
         key.push(name);
         let facts = self.facts.entry(key).or_default();
         facts.is_test |= is_test(attributes);
-        facts.consumed.extend(collector.consumed);
+        facts.fixture_calls.extend(collector.fixture_calls);
+        facts.shadows_consume_fixture |= collector.shadows_consume_fixture;
         facts.references.extend(collector.references);
     }
 
@@ -321,8 +358,11 @@ impl<'ast> Visit<'ast> for Items {
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
         if item.sig.ident == "consume_fixture" && !disabled(&item.attrs) {
             let body = quote::quote!(#item).to_string();
-            self.helper_is_reviewed |=
-                body.contains("CARGO_MANIFEST_DIR") && body.contains("join") && body.contains("->");
+            if body.contains("CARGO_MANIFEST_DIR") && body.contains("join") && body.contains("->") {
+                let mut key = self.module.clone();
+                key.push("consume_fixture".to_owned());
+                self.reviewed_helpers.insert(key);
+            }
         }
         self.record(item.sig.ident.to_string(), &item.attrs, |collector| {
             collector.visit_item_fn(item);
@@ -367,7 +407,8 @@ impl<'ast> Visit<'ast> for Items {
 /// and `vec` families are read).
 #[derive(Default)]
 struct Collector {
-    consumed: Vec<String>,
+    fixture_calls: Vec<(Vec<String>, String)>,
+    shadows_consume_fixture: bool,
     references: Vec<Vec<String>>,
 }
 
@@ -408,17 +449,26 @@ fn chain_root(mut expr: &Expr) -> &Expr {
     expr
 }
 
-/// The literal of a `consume_fixture("...")` call.
-fn consumption(call: &ExprCall) -> Option<String> {
+/// The callee path and literal argument of a `consume_fixture("...")`-shaped
+/// call. The path is returned unresolved: whether it actually names a
+/// reviewed helper is decided later, once the whole file's items are known
+/// (see [`live_test_fixtures`]), never from this final segment alone.
+fn consumption(call: &ExprCall) -> Option<(Vec<String>, String)> {
     let Expr::Path(path) = &*call.func else {
         return None;
     };
     if path.path.segments.last()?.ident != "consume_fixture" {
         return None;
     }
+    let segments = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
     match call.args.first() {
         Some(Expr::Lit(literal)) => match &literal.lit {
-            Lit::Str(text) => Some(text.value()),
+            Lit::Str(text) => Some((segments, text.value())),
             _ => None,
         },
         _ => None,
@@ -454,8 +504,17 @@ impl<'ast> Visit<'ast> for Collector {
     fn visit_attribute(&mut self, _: &'ast Attribute) {}
 
     // An item inside the one being collected is a separate item nothing has
-    // called: skipped.
-    fn visit_item(&mut self, _: &'ast syn::Item) {}
+    // called: skipped. A nested `fn consume_fixture` is the one exception
+    // worth noticing without descending into it: Rust's own scoping rules
+    // mean it shadows any outer same-named helper for every bare,
+    // unqualified reference inside this body, reviewed or not.
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if let syn::Item::Fn(nested) = item
+            && nested.sig.ident == "consume_fixture"
+        {
+            self.shadows_consume_fixture = true;
+        }
+    }
 
     fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
 
@@ -528,8 +587,8 @@ impl<'ast> Visit<'ast> for Collector {
     }
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
-        if let Some(fixture) = consumption(call) {
-            self.consumed.push(fixture);
+        if let Some(fixture_call) = consumption(call) {
+            self.fixture_calls.push(fixture_call);
         }
         syn::visit::visit_expr_call(self, call);
     }
