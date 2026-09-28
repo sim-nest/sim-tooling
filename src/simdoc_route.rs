@@ -236,8 +236,27 @@ mod tests {
     // reason (for example tiger's, which only sets `PKG_CONFIG_PATH` for an
     // unrelated toolchain sysroot), that ancestor walk finds it and this test
     // refuses -- the guard working as designed (B7/B12), not a defect in this
-    // test or in the guard. It passes on a checkout whose home has no such
-    // file (for example the guest). Not a release-correctness gate; see B7.
+    // test or in the guard. B7 is explicit that the guard must not inspect a
+    // config file's contents before refusing, so this is not narrowed; only
+    // this test's own control flow tells the documented exception apart from
+    // a real regression, by matching the exact refused path against the real
+    // `$HOME`, never by reading the file. It passes on a checkout whose home
+    // has no such file (for example the guest). Not a release-correctness
+    // gate; see B7.
+    fn is_documented_ambient_cargo_config_exception(err: &str) -> bool {
+        let Some(home) = env::var_os("HOME").map(PathBuf::from) else {
+            return false;
+        };
+        ["config", "config.toml"].iter().any(|name| {
+            let flagged = home.join(".cargo").join(name);
+            !flagged.starts_with(tooling_root())
+                && err.contains(&format!(
+                    "Cargo configuration {} would apply",
+                    flagged.display()
+                ))
+        })
+    }
+
     #[test]
     fn the_engine_runs_locked_with_the_resolved_pinned_binaries() {
         let toolchain = Toolchain {
@@ -247,7 +266,17 @@ mod tests {
             channel: "1.96.0".to_owned(),
             host: "x86_64-unknown-linux-gnu".to_owned(),
         };
-        let command = engine_command(&toolchain, "repo-contract", &["--check".to_owned()]).unwrap();
+        let command = match engine_command(&toolchain, "repo-contract", &["--check".to_owned()]) {
+            Ok(command) => command,
+            Err(err) if is_documented_ambient_cargo_config_exception(&err) => {
+                eprintln!(
+                    "skipping the_engine_runs_locked_with_the_resolved_pinned_binaries: {err} \
+                     (documented tiger-local exception, docs/simdoc-trust-boundaries.md B7)"
+                );
+                return;
+            }
+            Err(err) => panic!("{err}"),
+        };
         assert_eq!(command.get_program(), "/toolchains/1.96.0/bin/cargo");
         assert_eq!(command.get_current_dir(), Some(tooling_root().as_path()));
         let args = command
