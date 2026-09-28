@@ -4,9 +4,10 @@ use super::{bounded_read, canonical_directory, digest, staging_path, sync_direct
 use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::Read,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -116,6 +117,15 @@ fn parse(args: &[String]) -> Result<Options, String> {
 fn derive(options: Options) -> Result<(), String> {
     let workspace = canonical_directory(&options.workspace)?;
     let vendor = canonical_directory(&options.vendor)?;
+    // `workspace` carries its own content-bound `.cargo/config.toml`,
+    // written and verified by materialization (re-checked again below by
+    // `require_tree_matches_record`); Cargo also merges any config from
+    // every ancestor ABOVE it, which nothing checks. `invoke` already gives
+    // every cargo run a private, empty Cargo home, so this closes the
+    // remaining ambient-config surface.
+    if let Some(above) = workspace.parent() {
+        crate::toolchain_identity::require_no_cargo_config(&[above])?;
+    }
     let materialization = options
         .materialization
         .canonicalize()
@@ -138,6 +148,15 @@ fn derive(options: Options) -> Result<(), String> {
     {
         return Err("build-input derivation materialization schema differs".into());
     }
+    // The record's own digest, just checked, proves only that this exact
+    // JSON was produced by a real materialization at some point; it says
+    // nothing about whether `workspace`/`vendor` still hold what that
+    // record describes. Nothing else here re-reads them before running
+    // cargo, so re-verify both trees against the record's own per-file
+    // identities now, while there is still a trusted record to check them
+    // against.
+    require_tree_matches_record(&workspace, &materialization_value["source"], "source")?;
+    require_tree_matches_record(&vendor, &materialization_value["vendor"], "vendor")?;
     let cargo = exact_file(&options.cargo, &options.expected_cargo, "Cargo")?;
     let rustc = exact_file(&options.rustc, &options.expected_rustc, "rustc")?;
     if options.destination.exists() {
@@ -190,6 +209,99 @@ fn derive(options: Options) -> Result<(), String> {
         )
     })?;
     sync_directory(&parent)
+}
+
+/// Every file `report` (a materialization record's `TreeReport`, as JSON)
+/// names under `root` must currently have exactly the recorded bytes and
+/// executable bit, and `root` must hold no file the record does not name:
+/// a materialized tree sits on disk as ordinary files between the
+/// `materialize` step that produces it and a later `derive` step that
+/// trusts it, and nothing else re-reads it in between to notice a change.
+fn require_tree_matches_record(root: &Path, report: &Json, label: &str) -> Result<(), String> {
+    let recorded = report["files"]
+        .as_array()
+        .ok_or_else(|| format!("materialization record has no {label} files"))?;
+    let mut expected = BTreeMap::new();
+    for file in recorded {
+        let path = file["path"]
+            .as_str()
+            .ok_or_else(|| format!("materialization record {label} file has no path"))?;
+        let sha256 = file["sha256"]
+            .as_str()
+            .ok_or_else(|| format!("materialization record {label} file has no sha256"))?;
+        let executable = file["executable"].as_bool().unwrap_or(false);
+        if expected
+            .insert(path.to_owned(), (sha256.to_owned(), executable))
+            .is_some()
+        {
+            return Err(format!(
+                "materialization record repeats {label} file {path}"
+            ));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).map_err(|error| format!("{}: {error}", dir.display()))? {
+            let entry = entry.map_err(|error| format!("{}: {error}", dir.display()))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("{}: {error}", entry.path().display()))?;
+            if kind.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            if !kind.is_file() {
+                return Err(format!(
+                    "materialized {label} tree has a non-regular entry: {}",
+                    entry.path().display()
+                ));
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .map_err(|_| format!("materialized {label} file escaped its root"))?
+                .to_str()
+                .ok_or_else(|| format!("materialized {label} file path is not UTF-8"))?
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            let Some((expected_sha256, expected_executable)) = expected.get(&relative) else {
+                return Err(format!(
+                    "materialized {label} tree has an unrecorded file: {relative}"
+                ));
+            };
+            let bytes = bounded_read(&entry.path())?;
+            if digest(&bytes) != *expected_sha256 {
+                return Err(format!(
+                    "materialized {label} file changed since materialization: {relative}"
+                ));
+            }
+            let executable = entry
+                .metadata()
+                .map_err(|error| format!("{}: {error}", entry.path().display()))?
+                .permissions()
+                .mode()
+                & 0o111
+                != 0;
+            if executable != *expected_executable {
+                return Err(format!(
+                    "materialized {label} file permissions changed since materialization: {relative}"
+                ));
+            }
+            seen.insert(relative);
+        }
+    }
+    if seen.len() != expected.len() {
+        let missing = expected
+            .keys()
+            .filter(|path| !seen.contains(path.as_str()))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "materialized {label} tree is missing recorded files: {missing}"
+        ));
+    }
+    Ok(())
 }
 
 struct DeriveInputs<'a> {
