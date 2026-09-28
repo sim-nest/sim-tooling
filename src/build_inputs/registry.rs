@@ -257,20 +257,14 @@ pub(super) fn copy_resolver(
         package.name,
         package_version(&package.id)?
     ));
-    copy_manifest(vendor, &package.manifest, &destination, vendor_root)?;
-    for target in &package.target_entries {
-        let target = target
-            .canonicalize()
-            .map_err(|error| format!("{}: {error}", target.display()))?;
-        let relative = target
-            .strip_prefix(&package_root)
-            .map_err(|_| format!("registry resolver target escaped package: {}", package.id))?;
-        vendor.copy_tree(
-            &target,
-            &destination.join(relative),
-            &[vendor_root.to_owned()],
-        )?;
-    }
+    // The package's whole directory, not only its declared target entries:
+    // a target's compilation can still read content those entries never
+    // name (include_str!/include_bytes! assets, a build script's own
+    // sibling modules), matching the equivalent local-package fix. Its own
+    // `.cargo-checksum.json`, if the unpacked source already carries one
+    // (a real one does), is excluded here and freshly regenerated below
+    // instead of copied verbatim.
+    copy_tree_except_checksum(vendor, &package_root, &destination, vendor_root)?;
     write_checksum(
         vendor,
         &destination,
@@ -278,6 +272,31 @@ pub(super) fn copy_resolver(
         package_version(&package.id)?,
         lock,
     )
+}
+
+/// `vendor.copy_tree(source, destination, ...)`, except a direct
+/// `.cargo-checksum.json` entry of `source` is skipped: a real unpacked
+/// registry crate carries its own (Cargo writes one on extraction), but
+/// `write_checksum` always writes the authoritative one for this vendor
+/// output afterward, not a verbatim copy of that source file.
+fn copy_tree_except_checksum(
+    vendor: &mut TreeWriter,
+    source: &Path,
+    destination: &Path,
+    vendor_root: &Path,
+) -> Result<(), String> {
+    for entry in fs::read_dir(source).map_err(|error| format!("{}: {error}", source.display()))? {
+        let entry = entry.map_err(|error| format!("{}: {error}", source.display()))?;
+        if entry.file_name() == ".cargo-checksum.json" {
+            continue;
+        }
+        vendor.copy_tree(
+            &entry.path(),
+            &destination.join(entry.file_name()),
+            &[vendor_root.to_owned()],
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn copy_selected(
@@ -289,49 +308,15 @@ pub(super) fn copy_selected(
     let package_root = package_root(&package.manifest, vendor_root, &package.id)?;
     verify_archive_checksum(vendor_root, &package.name, &package.version, lock)?;
     let destination = PathBuf::from(format!("{}-{}", package.name, package.version));
-    copy_manifest(vendor, &package.manifest, &destination, vendor_root)?;
-    let mut copied_directories = BTreeSet::new();
-    for target in &package.targets {
-        let source = target
-            .source
-            .canonicalize()
-            .map_err(|error| format!("{}: {error}", target.source.display()))?;
-        let relative = source
-            .strip_prefix(&package_root)
-            .map_err(|_| format!("registry target escaped selected package: {}", package.id))?;
-        if target.custom_build {
-            vendor.copy_tree(
-                &source,
-                &destination.join(relative),
-                &[vendor_root.to_owned()],
-            )?;
-            continue;
-        }
-        let directory = relative
-            .parent()
-            .ok_or_else(|| format!("registry target has no source directory: {}", package.id))?;
-        if copied_directories.insert(directory.to_owned()) {
-            vendor.copy_tree(
-                &package_root.join(directory),
-                &destination.join(directory),
-                &[vendor_root.to_owned()],
-            )?;
-        }
-    }
+    // The package's whole directory, not only its declared targets' own
+    // source directories: a target's compilation can still read content
+    // those directories never name (include_str!/include_bytes! assets, a
+    // build script's own sibling modules), matching the equivalent
+    // local-package fix in build_inputs.rs. Its own `.cargo-checksum.json`
+    // is excluded and freshly regenerated below (see
+    // `copy_tree_except_checksum`).
+    copy_tree_except_checksum(vendor, &package_root, &destination, vendor_root)?;
     write_checksum(vendor, &destination, &package.name, &package.version, lock)
-}
-
-fn copy_manifest(
-    vendor: &mut TreeWriter,
-    manifest: &Path,
-    destination: &Path,
-    vendor_root: &Path,
-) -> Result<(), String> {
-    vendor.copy_tree(
-        manifest,
-        &destination.join("Cargo.toml"),
-        &[vendor_root.to_owned()],
-    )
 }
 
 fn write_checksum(
