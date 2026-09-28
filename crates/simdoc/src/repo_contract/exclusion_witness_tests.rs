@@ -256,6 +256,69 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
              #[test]\nfn t() {\n    use fake::other as consume_fixture;\n    \
              let d = consume_fixture(\"tests/ui\");\n}\n",
         ),
+        // Same shadowing rule, a local tuple-struct constructor: its own
+        // value-namespace item is callable exactly like a function.
+        (
+            "locally-shadowed-via-tuple-struct",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             #[test]\nfn t() {\n    struct consume_fixture(&'static str);\n    \
+             let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
+        // Same shadowing rule, a `for` loop's own pattern.
+        (
+            "locally-shadowed-via-for-loop-pattern",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn dir() {\n    for consume_fixture in [\"x\"] {\n        \
+             let d = consume_fixture(\"tests/ui\");\n    }\n}\n\
+             #[test]\nfn t() { dir(); }\n",
+        ),
+        // Same shadowing rule, a `match` arm's own pattern.
+        (
+            "locally-shadowed-via-match-arm-pattern",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn dir(x: u8) {\n    match x {\n        consume_fixture => {\n            \
+             let d = consume_fixture(\"tests/ui\");\n        }\n    }\n}\n\
+             #[test]\nfn t() { dir(0); }\n",
+        ),
+        // Same shadowing rule, an `if let` pattern.
+        (
+            "locally-shadowed-via-if-let-pattern",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn dir(x: Option<u8>) {\n    if let Some(consume_fixture) = x {\n        \
+             let d = consume_fixture(\"tests/ui\");\n    }\n}\n\
+             #[test]\nfn t() { dir(Some(0)); }\n",
+        ),
+        // Same shadowing rule, a `while let` pattern.
+        (
+            "locally-shadowed-via-while-let-pattern",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn dir(mut it: std::vec::IntoIter<u8>) {\n    \
+             while let Some(consume_fixture) = it.next() {\n        \
+             let d = consume_fixture(\"tests/ui\");\n    }\n}\n\
+             #[test]\nfn t() { dir(vec![0].into_iter()); }\n",
+        ),
+        // A doc attribute (or any other attribute) is not the item's body: it
+        // must never be able to forge the reviewed shape by merely quoting
+        // the three required substrings.
+        (
+            "doc-attribute-forged-reviewed-shape",
+            "#[doc = \"CARGO_MANIFEST_DIR join ->\"]\n\
+             fn consume_fixture(_: &str) -> u8 { 0 }\n\
+             #[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        // A path used as a value -- coerced to a function pointer, passed
+        // around, stored -- is never itself an invocation: `consumer`'s own
+        // body must never be credited unless something actually calls it.
+        (
+            "referenced-but-never-called",
+            "fn consumer() { let d = consume_fixture(\"tests/ui\"); }\n\
+             #[test]\nfn t() { let _f: fn() = consumer; }\n",
+        ),
     ];
     for (label, source) in dead {
         let repo = fixture_repo(

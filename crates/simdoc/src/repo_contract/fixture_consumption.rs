@@ -362,7 +362,13 @@ impl Items {
 impl<'ast> Visit<'ast> for Items {
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
         if item.sig.ident == "consume_fixture" && !disabled(&item.attrs) {
-            let body = quote::quote!(#item).to_string();
+            // The signature and body only: `item.attrs` (doc comments and
+            // other attributes are attributes) must never be able to forge
+            // this shape, or `#[doc = "CARGO_MANIFEST_DIR join ->"] fn
+            // consume_fixture(_: &str) -> u8 { 0 }` would pass as reviewed.
+            let signature = &item.sig;
+            let block = &item.block;
+            let body = quote::quote!(#signature #block).to_string();
             if body.contains("CARGO_MANIFEST_DIR") && body.contains("join") && body.contains("->") {
                 let mut key = self.module.clone();
                 key.push("consume_fixture".to_owned());
@@ -521,6 +527,13 @@ impl<'ast> Visit<'ast> for Collector {
             syn::Item::Const(item) => item.ident == "consume_fixture",
             syn::Item::Static(item) => item.ident == "consume_fixture",
             syn::Item::Use(item) => use_tree_binds_consume_fixture(&item.tree),
+            // A tuple struct's constructor is a value-namespace item, callable
+            // exactly like a function (`consume_fixture(0)`); a struct with
+            // named fields or no fields is not callable and cannot shadow a
+            // call-position reference.
+            syn::Item::Struct(item) => {
+                item.ident == "consume_fixture" && matches!(item.fields, syn::Fields::Unnamed(_))
+            }
             _ => false,
         };
         if shadows {
@@ -613,19 +626,23 @@ impl<'ast> Visit<'ast> for Collector {
         }
     }
 
-    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
-        self.references.push(
-            path.path
-                .segments
-                .iter()
-                .map(|segment| segment.ident.to_string())
-                .collect(),
-        );
-    }
+    // Reachability follows an actual invocation only (below): a path that
+    // merely appears as a value -- `let _f: fn() = consumer;`, a function
+    // passed to another function, a path used as a type -- is never itself a
+    // call, so it must never credit `consumer`'s body as reached.
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
         if let Some(fixture_call) = consumption(call) {
             self.fixture_calls.push(fixture_call);
+        }
+        if let Expr::Path(path) = &*call.func {
+            self.references.push(
+                path.path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect(),
+            );
         }
         syn::visit::visit_expr_call(self, call);
     }
@@ -663,5 +680,30 @@ impl<'ast> Visit<'ast> for Collector {
         if constant(&node.cond) != Some(false) {
             syn::visit::visit_expr_while(self, node);
         }
+    }
+
+    // A `for` loop's own pattern, a `match` arm's pattern, and the pattern of
+    // an `if let`/`while let` (both desugar to `Expr::Let`, reached through
+    // the default `if`/`while` traversal above) each bind for the rest of
+    // their own body exactly as a `let` statement's pattern does.
+    fn visit_expr_for_loop(&mut self, node: &'ast syn::ExprForLoop) {
+        if pattern_binds_consume_fixture(&node.pat) {
+            self.shadows_consume_fixture = true;
+        }
+        syn::visit::visit_expr_for_loop(self, node);
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if pattern_binds_consume_fixture(&arm.pat) {
+            self.shadows_consume_fixture = true;
+        }
+        syn::visit::visit_arm(self, arm);
+    }
+
+    fn visit_expr_let(&mut self, node: &'ast syn::ExprLet) {
+        if pattern_binds_consume_fixture(&node.pat) {
+            self.shadows_consume_fixture = true;
+        }
+        syn::visit::visit_expr_let(self, node);
     }
 }
