@@ -284,6 +284,16 @@ struct SelectionInputs<'a> {
 }
 
 fn select_into(input: SelectionInputs<'_>) -> Result<SelectionReport, String> {
+    // Cargo merges `.cargo/config.toml` from every ancestor of the working
+    // directory, not only `$CARGO_HOME`'s: a private, empty Cargo home
+    // (invoke's own guarantee) does not by itself stop an ambient config
+    // above the staging area from applying alongside the content-bound one
+    // this function writes at `staging/.cargo/config.toml`. Check everything
+    // above `staging` itself, once, before that trusted file exists, so the
+    // check can never see (and is never confused by) its own output.
+    if let Some(above) = input.staging.parent() {
+        crate::toolchain_identity::require_no_cargo_config(&[above])?;
+    }
     let view = input.staging.join("workspace");
     fs::create_dir(&view).map_err(|error| format!("{}: {error}", view.display()))?;
     let mut budget = ViewBudget::new(input.limit);
