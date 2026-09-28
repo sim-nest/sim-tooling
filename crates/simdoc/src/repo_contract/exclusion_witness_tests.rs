@@ -200,6 +200,29 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
             "not-a-test",
             "mod helpers { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\nfn main_like() {}\n",
         ),
+        // A same-named decoy elsewhere in the file, reached by its own
+        // qualified path, does not lend the reviewed helper's proof: the
+        // reviewed helper exists (so the file-wide check alone would wrongly
+        // pass) but is never actually called.
+        (
+            "decoy-consume-fixture-reached-by-qualified-path",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             mod fake {\n    pub fn consume_fixture(_: &str) -> u8 { 0 }\n}\n\
+             #[test]\nfn t() { let d = fake::consume_fixture(\"tests/ui\"); }\n",
+        ),
+        // A nested fn-local `consume_fixture` shadows the outer, reviewed
+        // one for every bare reference inside its own body, exactly as real
+        // Rust scoping requires: the call inside `t` binds to the local
+        // no-op, never to the outer helper, regardless of the outer one's
+        // own reviewed shape.
+        (
+            "locally-shadowed-no-op-helper",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             #[test]\nfn t() {\n    fn consume_fixture(_: &str) -> u8 { 0 }\n    \
+             let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
     ];
     for (label, source) in dead {
         let repo = fixture_repo(
@@ -230,7 +253,11 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         ),
         (
             "qualified-module-path",
-            "mod h { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\n\
+            // `dir` itself reaches the outer, reviewed `consume_fixture`
+            // through `super::`, exactly as real Rust name resolution
+            // requires from inside a child module (a bare, unqualified
+            // reference here would not compile, and does not resolve).
+            "mod h { pub fn dir() { let d = super::consume_fixture(\"tests/ui\"); } }\n\
              #[test]\nfn t() { h::dir(); }\n",
         ),
         (
@@ -240,7 +267,7 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         ),
         (
             "named-import",
-            "mod h { pub fn dir() { let d = consume_fixture(\"tests/ui\"); } }\n\
+            "mod h { pub fn dir() { let d = super::consume_fixture(\"tests/ui\"); } }\n\
              use h::dir;\n#[test]\nfn t() { dir(); }\n",
         ),
         (
@@ -249,7 +276,10 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         ),
         (
             "test-module",
-            "#[cfg(test)]\nmod inner {\n#[test]\nfn t() { let d = consume_fixture(\"tests/ui\"); }\n}\n",
+            // The standard `use super::*;` idiom every nested test module
+            // needs to see the outer scope at all; a bare reference here
+            // would not otherwise compile, and does not resolve.
+            "#[cfg(test)]\nmod inner {\n    use super::*;\n    #[test]\n    fn t() { let d = consume_fixture(\"tests/ui\"); }\n}\n",
         ),
         (
             "if-true",
@@ -515,6 +545,36 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     let binary = harness_repo("witness-harness-run-bin", run, &[run], false);
     binary.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     cargo_metadata(&binary.root).unwrap();
+
+    // `default-run` names a required-features-gated binary; a plain
+    // `cargo run` would try to run exactly that one and fail, even though
+    // the package's other binary is fine on its own.
+    let gated_default = harness_repo("witness-harness-gated-default-run", run, &[run], false);
+    gated_default.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\ndefault-run = \"case\"\n\n\
+         [features]\nnever = []\n\n\
+         [[bin]]\nname = \"case\"\npath = \"src/main.rs\"\nrequired-features = [\"never\"]\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    gated_default.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    gated_default.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
+    assert!(refused(&gated_default).contains("has no binary target"));
+
+    // `default-run` names the package's only runnable binary: accepted, even
+    // though it is declared with an explicit (ungated) `[[bin]]` entry.
+    let runnable_default = harness_repo("witness-harness-runnable-default-run", run, &[run], false);
+    runnable_default.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\ndefault-run = \"case\"\n\n\
+         [[bin]]\nname = \"case\"\npath = \"src/main.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    runnable_default.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    runnable_default.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
+    cargo_metadata(&runnable_default.root).unwrap();
 
     let verb = "cargo build --manifest-path tests/ui/case/Cargo.toml";
     let repo = harness_repo("witness-harness-verb", verb, &[verb], true);

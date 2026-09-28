@@ -315,7 +315,10 @@ fn cargo_invocation(command: &str) -> Option<(&'static str, String)> {
 /// `[[test]]`/`[[bin]]` whose source is an owned file. A virtual manifest has
 /// no target. A declared target with `required-features`, or a declared test
 /// with `test = false`, is not run by the plain command and does not count,
-/// and a declared target replaces the automatic one of the same name.
+/// and a declared target replaces the automatic one of the same name. With
+/// several binaries, plain `cargo run` runs exactly the one `default-run`
+/// names, so for `run` that target itself must be runnable by this same
+/// definition; some other, unrelated binary being fine is not enough.
 fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: &str) -> bool {
     let Some(package) = table.get("package").and_then(toml::Value::as_table) else {
         return false;
@@ -340,7 +343,7 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         })
         .collect::<BTreeSet<_>>();
     let mut declared_names = BTreeSet::new();
-    let mut declared_runs = false;
+    let mut runnable_names = BTreeSet::new();
     for target in table
         .get(kind)
         .and_then(toml::Value::as_array)
@@ -371,14 +374,16 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
                     || owned.contains(&format!("src/bin/{target_name}/main.rs"))
             }
         };
-        declared_runs |= runs && has_source;
+        if runs && has_source {
+            runnable_names.insert(target_name.to_owned());
+        }
     }
     let auto_enabled = package
         .get(auto_key)
         .and_then(toml::Value::as_bool)
         .unwrap_or(true);
-    let automatic = auto_enabled
-        && owned.iter().any(|path| {
+    if auto_enabled {
+        for path in &owned {
             let parts = path.split('/').collect::<Vec<_>>();
             let discovered = match (verb == "test", parts.as_slice()) {
                 (true, ["tests", file]) => file.strip_suffix(".rs"),
@@ -388,10 +393,20 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
                 (false, ["src", "bin", dir, "main.rs"]) => Some(*dir),
                 _ => None,
             };
-            discovered.is_some_and(|found| !declared_names.contains(found))
-        });
+            if let Some(found) = discovered
+                && !declared_names.contains(found)
+            {
+                runnable_names.insert(found.to_owned());
+            }
+        }
+    }
     if verb == "run" {
-        // `cargo run` in a package with several binaries needs `default-run`.
+        // `cargo run` in a package with several binaries needs `default-run`,
+        // and plain `cargo run` runs exactly the binary it names -- not just
+        // any runnable one. A `default-run` naming a target that is absent,
+        // or itself required-features-gated, is not proof that the plain
+        // command succeeds, even when some other binary in the package is
+        // fine.
         let count = |paths: &BTreeSet<String>| {
             paths
                 .iter()
@@ -404,11 +419,14 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
                 .count()
                 + declared_names.len()
         };
-        if count(&owned) > 1 && package.get("default-run").is_none() {
-            return false;
+        if count(&owned) > 1 {
+            return match package.get("default-run").and_then(toml::Value::as_str) {
+                Some(default_run) => runnable_names.contains(default_run),
+                None => false,
+            };
         }
     }
-    declared_runs || automatic
+    !runnable_names.is_empty()
 }
 
 #[cfg(test)]
