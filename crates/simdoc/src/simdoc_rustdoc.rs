@@ -405,21 +405,24 @@ fn package_name(manifest: &str) -> Option<String> {
     None
 }
 
+/// The real `[workspace] members` array, parsed as TOML rather than found by
+/// substring search: `manifest.find("members")` would match inside
+/// `default-members`, inside a comment, or inside any other key ending in
+/// that word, and take whichever `[...]` happened to follow that match --
+/// not necessarily the real members array at all.
 fn workspace_members(manifest: &str) -> Vec<String> {
-    let Some(start) = manifest.find("members") else {
+    let Ok(table) = manifest.parse::<toml::Table>() else {
         return Vec::new();
     };
-    let after = &manifest[start..];
-    let (Some(open), Some(close)) = (after.find('['), after.find(']')) else {
-        return Vec::new();
-    };
-    if close < open {
-        return Vec::new();
-    }
-    after[open + 1..close]
-        .split(',')
-        .map(|entry| entry.trim().trim_matches('"').trim().to_owned())
-        .filter(|entry| !entry.is_empty())
+    table
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .map(str::to_owned)
         .collect()
 }
 
@@ -647,6 +650,29 @@ mod tests {
     fn workspace_members_empty_when_absent_or_empty() {
         assert!(workspace_members("[package]\nname = \"x\"\n").is_empty());
         assert!(workspace_members("[workspace]\nmembers = [\n]\n").is_empty());
+    }
+
+    #[test]
+    fn workspace_members_is_never_taken_from_default_members() {
+        // `default-members` ends in the same word; a substring search for
+        // "members" starting from the front of the manifest would land
+        // inside it (it comes first here) and read its array instead.
+        let manifest = "[workspace]\ndefault-members = [\"crates/only-default\"]\n\
+             members = [\"crates/a\", \"crates/b\"]\n";
+        assert_eq!(
+            workspace_members(manifest),
+            vec!["crates/a".to_owned(), "crates/b".to_owned()]
+        );
+    }
+
+    #[test]
+    fn workspace_members_is_never_taken_from_a_comment() {
+        // A comment mentioning the word "members" before the real key, with
+        // its own bracketed text later in the file, must never be read as
+        // the array.
+        let manifest = "[workspace]\n# members of the room, alphabetically: [\"a\", \"b\"]\n\
+             members = [\"crates/a\"]\n";
+        assert_eq!(workspace_members(manifest), vec!["crates/a".to_owned()]);
     }
 
     #[test]

@@ -136,9 +136,13 @@ pub(crate) fn validate(path: &Path, repo: &Path) -> Result<ResolverInput, String
     let table = manifest_text
         .parse::<toml::Table>()
         .map_err(|err| refused(&format!("invalid TOML: {err}")))?;
-    let Some(workspace) = table.get("workspace").and_then(toml::Value::as_table) else {
+    if table
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .is_none()
+    {
         return Err(refused("not a workspace manifest"));
-    };
+    }
     let lock = manifest.with_file_name("Cargo.lock");
     if fs::symlink_metadata(&lock).is_err() {
         return Err(refused("no Cargo.lock"));
@@ -146,23 +150,16 @@ pub(crate) fn validate(path: &Path, repo: &Path) -> Result<ResolverInput, String
     let lock_bytes = read_ordinary(&lock, MAX_LOCK_BYTES)
         .map_err(|why| refused(&format!("Cargo.lock {why}")))?;
 
-    let members = workspace
-        .get("members")
-        .and_then(toml::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(toml::Value::as_str)
-        .filter_map(|member| member.rsplit('/').next().map(str::to_owned))
-        .collect::<BTreeSet<_>>();
-    let selected = if members.is_empty() {
-        Vec::new()
-    } else {
-        crate::simdoc_rustdoc::repo_packages(repo)?
-            .into_iter()
-            .filter(|package| members.contains(package))
-            .collect()
-    };
-    let (closure_sha256, closure_packages, selected) = source_closure(&manifest, &selected, repo)?;
+    // Every package this repository is known to declare is a *candidate*:
+    // `source_closure` below runs the manifest's own real `cargo metadata`
+    // and keeps only the ones that are actually, by real package name (never
+    // by workspace-member path basename, which Cargo never requires to
+    // match the package name, and which a glob member pattern such as
+    // `crates/*` has no basename for at all), a workspace member of
+    // `manifest` that belongs to this repository.
+    let candidates = crate::simdoc_rustdoc::repo_packages(repo)?;
+    let (closure_sha256, closure_packages, selected) =
+        source_closure(&manifest, &candidates, repo)?;
     Ok(ResolverInput {
         manifest,
         manifest_sha256: content_digest(&manifest_bytes),
@@ -184,9 +181,10 @@ fn read_ordinary(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|err| err.to_string())
 }
 
-/// Digest of every file of every path package reachable from `selected`
-/// (or every workspace member when `selected` is empty) in the locked
-/// resolve, and the number of those packages.
+/// Digest of every file of every path package reachable from the packages in
+/// `selected` that `manifest`'s own real `cargo metadata` names as one of
+/// its workspace members and that belongs to this repository, and the
+/// number of those packages.
 fn source_closure(
     manifest: &Path,
     selected: &[String],

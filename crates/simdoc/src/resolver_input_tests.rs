@@ -28,6 +28,14 @@ impl Layout {
     /// package is the documented repository's own selected member or a
     /// reached dependency (see `resolver_input::package_files`).
     fn new(label: &str) -> Self {
+        Self::new_with_member_dir(label, "app")
+    }
+
+    /// Same layout, except the meta-workspace's own member path for `app`
+    /// is `packages/{member_dir}` rather than `packages/app`: real Cargo
+    /// never requires a workspace member's directory name to match its
+    /// package's own `name`.
+    fn new_with_member_dir(label: &str, member_dir: &str) -> Self {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -36,10 +44,10 @@ impl Layout {
         let layout = Self { base };
         layout.write(
             "sim-private/.meta-workspace/Cargo.toml",
-            "[workspace]\nresolver = \"3\"\nmembers = [\"packages/app\"]\n",
+            &format!("[workspace]\nresolver = \"3\"\nmembers = [\"packages/{member_dir}\"]\n"),
         );
         layout.write(
-            "sim-private/.meta-workspace/packages/app/Cargo.toml",
+            &format!("sim-private/.meta-workspace/packages/{member_dir}/Cargo.toml"),
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
              [dependencies]\nhelper = { path = \"../../libs/helper\" }\n",
         );
@@ -84,9 +92,9 @@ impl Layout {
         }
         std::os::unix::fs::symlink(
             layout.base.join("sim-app/src"),
-            layout
-                .base
-                .join("sim-private/.meta-workspace/packages/app/src"),
+            layout.base.join(format!(
+                "sim-private/.meta-workspace/packages/{member_dir}/src"
+            )),
         )
         .unwrap();
         std::os::unix::fs::symlink(
@@ -157,6 +165,17 @@ fn the_selected_source_closure_is_bound_and_recorded_by_content_only() {
     assert_ne!(changed.cache_key(), input.cache_key());
     let err = input.remeasure(&layout.repo()).unwrap_err();
     assert!(err.contains("changed while simdoc was using it"), "{err}");
+}
+
+#[test]
+fn a_member_whose_directory_basename_differs_from_its_package_name_is_still_selected() {
+    // Cargo never requires a workspace member's path basename to equal its
+    // package's own `name`; a selection scheme that compared them (rather
+    // than reading the resolver's own real `cargo metadata`) would silently
+    // exclude `app` here and refuse the whole run.
+    let layout = Layout::new_with_member_dir("resolver-basename-mismatch", "application-impl");
+    let input = validate(&layout.manifest(), &layout.repo()).unwrap();
+    assert_eq!(input.selected, ["app"]);
 }
 
 #[test]
