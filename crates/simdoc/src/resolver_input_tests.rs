@@ -20,8 +20,13 @@ struct Layout {
 
 impl Layout {
     /// `sim-private/.meta-workspace` with member `packages/app`, which
-    /// path-depends on the non-member `libs/helper`; and a repository
-    /// `sim-app` whose root package is `app`.
+    /// path-depends on the non-member `libs/helper`; a repository `sim-app`
+    /// whose root package is `app`; and a sibling repository `sim-helper`
+    /// supplying `helper`'s tracked source. Both farm packages are exactly a
+    /// generated manifest plus links into their owning checkout: a bare real
+    /// directory or file beside a farm manifest is refused, whether the
+    /// package is the documented repository's own selected member or a
+    /// reached dependency (see `resolver_input::package_files`).
     fn new(label: &str) -> Self {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -38,51 +43,57 @@ impl Layout {
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
              [dependencies]\nhelper = { path = \"../../libs/helper\" }\n",
         );
-        // The repository's own package sources live in the repository; the
-        // farm package links to them.
+        // Both farm packages' real sources live in their own repositories;
+        // the farm packages only link to them.
         layout.write("sim-app/src/lib.rs", "");
         layout.write(
             "sim-private/.meta-workspace/libs/helper/Cargo.toml",
             "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         );
-        layout.write(
-            "sim-private/.meta-workspace/libs/helper/src/lib.rs",
-            "pub fn one() {}\n",
-        );
+        layout.write("sim-helper/src/lib.rs", "pub fn one() {}\n");
         layout.write(
             "sim-app/Cargo.toml",
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         );
-        for args in [
-            vec!["init", "--quiet"],
-            vec!["add", "-A"],
-            vec![
-                "-c",
-                "user.name=fixture",
-                "-c",
-                "user.email=fixture@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--quiet",
-                "--no-verify",
-                "-mfixture",
-            ],
-        ] {
-            assert!(
-                Command::new("git")
-                    .args(&args)
-                    .current_dir(layout.base.join("sim-app"))
-                    .status()
-                    .unwrap()
-                    .success()
-            );
+        for repo in ["sim-app", "sim-helper"] {
+            for args in [
+                vec!["init", "--quiet"],
+                vec!["add", "-A"],
+                vec![
+                    "-c",
+                    "user.name=fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "--no-verify",
+                    "-mfixture",
+                ],
+            ] {
+                assert!(
+                    Command::new("git")
+                        .args(&args)
+                        .current_dir(layout.base.join(repo))
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+            }
         }
         std::os::unix::fs::symlink(
             layout.base.join("sim-app/src"),
             layout
                 .base
                 .join("sim-private/.meta-workspace/packages/app/src"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            layout.base.join("sim-helper/src"),
+            layout
+                .base
+                .join("sim-private/.meta-workspace/libs/helper/src"),
         )
         .unwrap();
         let status = Command::new(env!("CARGO"))
@@ -164,9 +175,36 @@ fn a_manifest_only_change_moves_the_identity_and_the_cache_key() {
 }
 
 #[test]
-fn a_symlink_inside_a_path_package_is_refused() {
+fn a_symlink_whose_target_is_untracked_is_refused() {
     let layout = Layout::new("resolver-symlink");
     layout.write("sim-app/untracked.txt", "stray\n");
+    // A link directly beside the farm manifest (package_files's top level),
+    // not nested inside an already-followed link's subtree, so this
+    // exercises the ownership check on the link's own canonical target
+    // rather than the separate "no nested link" refusal below.
+    std::os::unix::fs::symlink(
+        layout.repo().join("untracked.txt"),
+        layout
+            .base
+            .join("sim-private/.meta-workspace/libs/helper/extra.rs"),
+    )
+    .unwrap();
+
+    // The target is a file the sibling checkout does not track.
+    let err = validate(&layout.manifest(), &layout.repo()).unwrap_err();
+    assert!(
+        err.contains("untracked.txt") && err.contains("refused"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_link_nested_inside_an_already_followed_link_is_refused() {
+    let layout = Layout::new("resolver-nested-link");
+    layout.write("sim-app/untracked.txt", "stray\n");
+    // Nested inside `libs/helper/src`, which is itself a link into
+    // `sim-helper/src` (see `Layout::new`): every entry beneath a followed
+    // link target must be an ordinary tracked file, never another link.
     std::os::unix::fs::symlink(
         layout.repo().join("untracked.txt"),
         layout
@@ -175,10 +213,36 @@ fn a_symlink_inside_a_path_package_is_refused() {
     )
     .unwrap();
 
-    // The target is a file the sibling checkout does not track.
     let err = validate(&layout.manifest(), &layout.repo()).unwrap_err();
     assert!(
-        err.contains("untracked.txt") && err.contains("refused"),
+        err.contains("extra.rs") && err.contains("not an ordinary file"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_bare_real_directory_beside_a_dependency_farm_manifest_is_refused() {
+    // A reached dependency package (not a selected repository member) whose
+    // own directory holds a real, non-symlinked subtree instead of a link
+    // into a validated sibling checkout: the farm, not a tracked worktree,
+    // would supply that content, and package_files must refuse it exactly
+    // as belongs_to_repo already refuses the same shape for a selected
+    // member -- not silently walk and accept it.
+    let layout = Layout::new("resolver-bare-dependency");
+    fs::remove_file(
+        layout
+            .base
+            .join("sim-private/.meta-workspace/libs/helper/src"),
+    )
+    .unwrap();
+    layout.write(
+        "sim-private/.meta-workspace/libs/helper/src/lib.rs",
+        "pub fn one() {}\n",
+    );
+
+    let err = validate(&layout.manifest(), &layout.repo()).unwrap_err();
+    assert!(
+        err.contains("beside its links") && err.contains("refused"),
         "{err}"
     );
 }

@@ -7,6 +7,16 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
+use crate::bounded_process::run_bounded;
+use crate::worktree::Worktree;
+
+/// Ceiling for one `cargo metadata` document as read here.
+const MAX_METADATA_BYTES: usize = 256 * 1024 * 1024;
+/// Ceiling for Cargo diagnostics.
+const MAX_DIAGNOSTIC_BYTES: usize = 1024 * 1024;
+
 pub(crate) fn run_api_docs(
     root: &Path,
     force_docbuild: bool,
@@ -53,6 +63,17 @@ pub(crate) fn run_api_docs(
         println!("simdoc: no tracked Cargo.lock; skipping cargo doc");
         return Ok(());
     };
+    // The shared resolver route validates its complete path-package closure
+    // itself (resolver_input::validate, called before this function ever
+    // runs). The standalone route has no such validation elsewhere: a
+    // tracked member manifest may still declare a path dependency reaching
+    // an untracked or out-of-repository directory, whose build script or
+    // proc macro `cargo doc` would still compile despite `--no-deps` (which
+    // only suppresses generated doc pages for non-member packages, not their
+    // compilation). Refuse before running cargo, not after.
+    if resolver.is_none() {
+        require_path_dependencies_owned(root, &root.join("Cargo.toml"), lock.as_deref())?;
+    }
     // Cargo builds into a fresh private target directory: a `target` left in
     // the tree (untracked, so anyone's) is never reused, whatever it holds.
     // `cargo doc` here only verifies the dependency graph; nothing it writes
@@ -100,6 +121,132 @@ pub(crate) fn run_api_docs(
     } else {
         Err(format!("cargo doc failed with status {status}"))
     }
+}
+
+/// Refuses `manifest`'s repository (`root`'s own workspace, no shared
+/// resolver) unless every path dependency its full dependency graph reaches
+/// -- not only its workspace members, which `--no-deps` alone would report
+/// -- lies inside `root` and is owned entirely by `root`'s own Git worktree.
+/// `cargo doc --no-deps` still compiles every dependency's build script and
+/// proc macro; it only skips generating doc pages for them. An untracked or
+/// out-of-repository path dependency would let that compilation execute code
+/// nobody reviewed, so this runs before `cargo doc`, not after.
+fn require_path_dependencies_owned(
+    root: &Path,
+    manifest: &Path,
+    lock: Option<&str>,
+) -> Result<(), String> {
+    let worktree = Worktree::open(root)?;
+    let mut command = crate::tools::tools()?.cargo_in(root, &[manifest], lock)?;
+    command
+        .args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
+        .arg(manifest);
+    let captured = run_bounded(
+        command,
+        "standalone cargo metadata",
+        MAX_METADATA_BYTES,
+        MAX_DIAGNOSTIC_BYTES,
+    )?;
+    if !captured.status.success() {
+        return Err(format!(
+            "cargo metadata failed for {}: {}",
+            manifest.display(),
+            String::from_utf8_lossy(&captured.stderr).trim()
+        ));
+    }
+    let metadata: Value = serde_json::from_slice(&captured.stdout)
+        .map_err(|err| format!("parse cargo metadata: {err}"))?;
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("cargo metadata has no packages")?
+        .iter()
+        .filter_map(|package| Some((package["id"].as_str()?, package)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let members = metadata["workspace_members"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    let edges = metadata["resolve"]["nodes"]
+        .as_array()
+        .ok_or("cargo metadata has no resolve graph")?
+        .iter()
+        .filter_map(|node| {
+            let deps = node["deps"]
+                .as_array()?
+                .iter()
+                .filter_map(|dep| dep["pkg"].as_str())
+                .collect::<Vec<_>>();
+            Some((node["id"].as_str()?, deps))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut pending = members;
+    let mut reached = std::collections::BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if reached.insert(id) {
+            pending.extend(edges.get(id).into_iter().flatten().copied());
+        }
+    }
+    for id in reached {
+        let Some(package) = packages.get(id) else {
+            continue;
+        };
+        if !package["source"].is_null() {
+            continue;
+        }
+        let manifest_path = package["manifest_path"]
+            .as_str()
+            .ok_or("cargo metadata package has no manifest_path")?;
+        let name = package["name"].as_str().unwrap_or("<unnamed>");
+        let dir = Path::new(manifest_path)
+            .parent()
+            .ok_or("cargo metadata package manifest has no parent")?;
+        require_directory_owned(&worktree, dir)
+            .map_err(|why| format!("refused: path dependency {name} ({manifest_path}): {why}"))?;
+    }
+    Ok(())
+}
+
+/// Directories Cargo never reads as compilation input from a fresh, private
+/// target directory: Git's own internal metadata (never tracked by Git
+/// itself, so it would otherwise always refuse) and stale build output.
+const IGNORED_SOURCE_DIRECTORIES: [&str; 2] = [".git", "target"];
+
+/// Every entry beneath `dir`, recursively, must be an ordinary file this
+/// repository's own worktree tracks; a symlink (to a file or a directory)
+/// refuses immediately, matching this module's deny-by-default reading of
+/// what a build may reach.
+fn require_directory_owned(worktree: &Worktree, dir: &Path) -> Result<(), String> {
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        for entry in
+            fs::read_dir(&current).map_err(|err| format!("{}: {err}", current.display()))?
+        {
+            let entry = entry.map_err(|err| format!("{}: {err}", current.display()))?;
+            let kind = entry
+                .file_type()
+                .map_err(|err| format!("{}: {err}", entry.path().display()))?;
+            if kind.is_dir() {
+                if IGNORED_SOURCE_DIRECTORIES
+                    .contains(&entry.file_name().to_string_lossy().as_ref())
+                {
+                    continue;
+                }
+                pending.push(entry.path());
+            } else {
+                worktree.owned_file(&entry.path(), "path dependency source")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn docbuild_fingerprint(
@@ -266,7 +413,116 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{package_name, workspace_members};
+    use std::{
+        fs,
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{package_name, require_path_dependencies_owned, workspace_members};
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        assert!(
+            Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    /// A workspace `repo` whose member `app` path-depends on `helper`,
+    /// placed either inside `repo` (tracked) or in a sibling directory
+    /// (untracked, outside `repo`).
+    fn layout(label: &str, helper_outside: bool) -> (std::path::PathBuf, std::path::PathBuf) {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("{label}-{}-{stamp}", std::process::id()));
+        let repo = base.join("repo");
+        let write = |relative: &str, text: &str| {
+            let path = repo.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        write(
+            "Cargo.toml",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"app\"]\n",
+        );
+        let helper_path = if helper_outside {
+            "../../outside/helper"
+        } else {
+            "../helper"
+        };
+        write(
+            "app/Cargo.toml",
+            &format!(
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                 [dependencies]\nhelper = {{ path = \"{helper_path}\" }}\n"
+            ),
+        );
+        write("app/src/lib.rs", "");
+        if helper_outside {
+            let outside = base.join("outside/helper");
+            fs::create_dir_all(outside.join("src")).unwrap();
+            fs::write(
+                outside.join("Cargo.toml"),
+                "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )
+            .unwrap();
+            fs::write(outside.join("src/lib.rs"), "pub fn one() {}\n").unwrap();
+        } else {
+            write(
+                "helper/Cargo.toml",
+                "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            );
+            write("helper/src/lib.rs", "pub fn one() {}\n");
+        }
+        git(&repo, &["init", "--quiet"]);
+        git(&repo, &["add", "-A"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--no-verify",
+                "-mfixture",
+            ],
+        );
+        let status = Command::new(env!("CARGO"))
+            .args(["generate-lockfile", "--offline", "--manifest-path"])
+            .arg(repo.join("Cargo.toml"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        (base, repo)
+    }
+
+    #[test]
+    fn a_path_dependency_outside_the_repository_is_refused() {
+        let (base, repo) = layout("rustdoc-outside-dep", true);
+        let lock = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+        let err = require_path_dependencies_owned(&repo, &repo.join("Cargo.toml"), Some(&lock))
+            .unwrap_err();
+        assert!(err.contains("helper") && err.contains("refused"), "{err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_path_dependency_tracked_inside_the_repository_is_allowed() {
+        let (base, repo) = layout("rustdoc-inside-dep", false);
+        let lock = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+        require_path_dependencies_owned(&repo, &repo.join("Cargo.toml"), Some(&lock)).unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn package_name_reads_package_section_only() {

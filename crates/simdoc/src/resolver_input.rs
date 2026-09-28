@@ -471,52 +471,55 @@ impl Boundary {
 }
 
 /// Every ordinary file a path package's cargo build can read, in path order,
-/// as `(name inside the package, file to read)`: the package's own files, and
-/// the canonical files behind each link (see the module documentation).
+/// as `(name inside the package, file to read)`: the package's own generated
+/// manifest, and the canonical files behind each link (see the module
+/// documentation).
 ///
-/// Deny by default: every entry beneath the package, and beneath every
-/// followed link target, is either bound or refuses the input. That includes
-/// ignored files, untracked files, build-output directories, and links
-/// nested inside a followed tree; nothing is skipped, because Cargo, rustc,
-/// build scripts, and proc macros can read any of it. The one typed
-/// exception is [`is_nested_lockfile`]: bound, but not required to be tracked.
+/// A package's own directory holds exactly the generated `Cargo.toml` and
+/// links (see the module documentation and [`belongs_to_repo`]); this is
+/// enforced here for every reached path package, not only the documented
+/// repository's own selected members, because the shared resolver's farm
+/// generates every package the same way. A bare real file or directory
+/// beside the manifest would mean the farm, not a validated worktree,
+/// supplied that content, so it refuses the input rather than being walked.
+/// Beneath a followed link target, every entry is either bound or refuses
+/// the input: ignored files, untracked files, build-output directories, and
+/// nested links are never skipped, because Cargo, rustc, build scripts, and
+/// proc macros can read any of it. The one typed exception is
+/// [`is_nested_lockfile`]: bound, but not required to be tracked.
 fn package_files(root: &Path, boundary: &mut Boundary) -> Result<Vec<(String, PathBuf)>, String> {
     let mut files = Vec::new();
-    let mut pending = vec![(root.to_path_buf(), String::new())];
-    while let Some((dir, prefix)) = pending.pop() {
-        for entry in fs::read_dir(&dir).map_err(|err| format!("{}: {err}", dir.display()))? {
-            let entry = entry.map_err(|err| format!("{}: {err}", dir.display()))?;
-            let kind = entry
-                .file_type()
-                .map_err(|err| format!("{}: {err}", entry.path().display()))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let relative = format!("{prefix}{name}");
-            if kind.is_symlink() {
-                let canonical = entry.path().canonicalize().map_err(|err| {
-                    format!(
-                        "{RESOLVER_ENV} refused: link {}: {err}",
-                        entry.path().display()
-                    )
-                })?;
-                let worktree = boundary.worktree(&canonical)?;
-                if canonical.is_dir() {
-                    owned_tree(worktree, &canonical, &format!("{relative}/"), &mut files)?;
-                } else {
-                    worktree
-                        .owned_file(&canonical, "resolver link target")
-                        .map_err(|why| format!("{RESOLVER_ENV} refused: {why}"))?;
-                    files.push((relative, canonical));
-                }
-            } else if kind.is_dir() {
-                pending.push((entry.path(), format!("{relative}/")));
-            } else if kind.is_file() {
-                files.push((relative, entry.path()));
-            } else {
-                return Err(format!(
-                    "{RESOLVER_ENV} refused: {} is not an ordinary file",
+    for entry in fs::read_dir(root).map_err(|err| format!("{}: {err}", root.display()))? {
+        let entry = entry.map_err(|err| format!("{}: {err}", root.display()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|err| format!("{}: {err}", entry.path().display()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if kind.is_symlink() {
+            let canonical = entry.path().canonicalize().map_err(|err| {
+                format!(
+                    "{RESOLVER_ENV} refused: link {}: {err}",
                     entry.path().display()
-                ));
+                )
+            })?;
+            let worktree = boundary.worktree(&canonical)?;
+            if canonical.is_dir() {
+                owned_tree(worktree, &canonical, &format!("{name}/"), &mut files)?;
+            } else {
+                worktree
+                    .owned_file(&canonical, "resolver link target")
+                    .map_err(|why| format!("{RESOLVER_ENV} refused: {why}"))?;
+                files.push((name, canonical));
             }
+        } else if kind.is_file() && name == "Cargo.toml" {
+            files.push((name, entry.path()));
+        } else {
+            return Err(format!(
+                "{RESOLVER_ENV} refused: package at {} has {} beside its links; a package is \
+                 its generated Cargo.toml and links into a sibling checkout only",
+                root.display(),
+                name
+            ));
         }
     }
     files.sort();
