@@ -67,11 +67,19 @@ fn hash_source_inputs(manifest_dir: &Path) -> String {
         manifest_dir.join("Cargo.toml"),
         manifest_dir.join("build.rs"),
     ];
-    // Fields such as `edition` are `.workspace = true` and actually come
-    // from here; a change to it can change compilation without changing
-    // this crate's own manifest.
-    if let Some(workspace) = manifest_dir.parent() {
-        files.push(workspace.join("Cargo.toml"));
+    // In this workspace checkout, fields such as `edition` are
+    // `.workspace = true` and actually come from here; a change to it can
+    // change compilation without changing this crate's own manifest. A
+    // packaged crate (`cargo package`/`cargo publish`, or a real dependency
+    // consumed from the registry) never carries its enclosing workspace
+    // manifest at all -- Cargo normalizes every `.workspace = true` field
+    // into its resolved literal value in the packaged Cargo.toml at package
+    // time specifically because of that, so the crate's own manifest (any
+    // build) is already a complete input without this one.
+    if let Some(workspace) = manifest_dir.parent().map(|dir| dir.join("Cargo.toml"))
+        && workspace.is_file()
+    {
+        files.push(workspace);
     }
     collect_files(&manifest_dir.join("src"), &mut files);
     files.sort();
