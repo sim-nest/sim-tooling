@@ -592,6 +592,32 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     runnable_default.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
     cargo_metadata(&runnable_default.root).unwrap();
 
+    // A declared [[bin]] replacing the automatic one of the same name is
+    // one binary, not two: no default-run needed.
+    let replaced = harness_repo("witness-harness-replaced-automatic", run, &[run], false);
+    replaced.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\n\n[[bin]]\nname = \"case\"\npath = \"src/main.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    replaced.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    cargo_metadata(&replaced.root).unwrap();
+
+    // autobins = false with only a declared binary: no default-run needed,
+    // even though there is also an (ignored) automatic-layout file.
+    let no_autobins = harness_repo("witness-harness-no-autobins", run, &[run], false);
+    no_autobins.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\nautobins = false\n\n\
+         [[bin]]\nname = \"case\"\npath = \"src/main.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    no_autobins.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    no_autobins.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
+    cargo_metadata(&no_autobins.root).unwrap();
+
     let verb = "cargo build --manifest-path tests/ui/case/Cargo.toml";
     let repo = harness_repo("witness-harness-verb", verb, &[verb], true);
     assert!(refused(&repo).contains("not a plain `cargo test` or `cargo run`"));

@@ -382,6 +382,7 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         .get(auto_key)
         .and_then(toml::Value::as_bool)
         .unwrap_or(true);
+    let mut automatic_names = BTreeSet::new();
     if auto_enabled {
         for path in &owned {
             let parts = path.split('/').collect::<Vec<_>>();
@@ -396,6 +397,7 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             if let Some(found) = discovered
                 && !declared_names.contains(found)
             {
+                automatic_names.insert(found.to_owned());
                 runnable_names.insert(found.to_owned());
             }
         }
@@ -406,20 +408,11 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         // any runnable one. A `default-run` naming a target that is absent,
         // or itself required-features-gated, is not proof that the plain
         // command succeeds, even when some other binary in the package is
-        // fine.
-        let count = |paths: &BTreeSet<String>| {
-            paths
-                .iter()
-                .filter(|path| {
-                    matches!(
-                        path.split('/').collect::<Vec<_>>().as_slice(),
-                        ["src", "main.rs"] | ["src", "bin", _] | ["src", "bin", _, "main.rs"]
-                    )
-                })
-                .count()
-                + declared_names.len()
-        };
-        if count(&owned) > 1 {
+        // fine. The count itself is every distinct target name Cargo would
+        // actually see: a declared target replacing an automatic one of the
+        // same name is one binary, not two, and disabled automatic
+        // discovery (`autobins = false`) contributes none at all.
+        if declared_names.len() + automatic_names.len() > 1 {
             return match package.get("default-run").and_then(toml::Value::as_str) {
                 Some(default_run) => runnable_names.contains(default_run),
                 None => false,
