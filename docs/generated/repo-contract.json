@@ -341,7 +341,7 @@
       "executable": {
         "lock_sha256": "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678",
         "package": "simdoc",
-        "source_sha256": "3a9222acea5f43c7f54d1a3cbc8e232fcbaca900b3debf50a8af6f23e063e7ee",
+        "source_sha256": "f79c5212ef2351ff25eed8025e9c260df80af8f7d2dba4c72fe855f2a0b7d82f",
         "version": "0.1.0"
       },
       "operation": "repo-contract --repo .",
@@ -357,13 +357,13 @@
         }
       }
     },
-    "generation_timestamp": "2026-09-28T23:37:56+02:00",
+    "generation_timestamp": "2026-09-29T00:43:20+02:00",
     "generator": "xtask repo-contract v1",
-    "git_commit": "b36f2faf87017c18378dd11ea77575247974d84e",
+    "git_commit": "434f452d663772911736cb24ef73411c516f2552",
     "regeneration_command": "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "b36f2faf87017c18378dd11ea77575247974d84e",
+    "source_commit": "434f452d663772911736cb24ef73411c516f2552",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -379,9 +379,9 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "f296193ae5bad170",
+    "workspace_hash": "4cc0dea8c7efa8e2",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 229,
+    "workspace_hash_input_count": 232,
     "workspace_hash_inputs": [
       ".github/workflows/authorship.yml",
       ".github/workflows/ci.yml",
@@ -442,8 +442,10 @@
       "crates/simdoc/src/recipe_gate.rs",
       "crates/simdoc/src/recipe_gate_tests.rs",
       "crates/simdoc/src/repo_contract/exclusion_witness.rs",
+      "crates/simdoc/src/repo_contract/exclusion_witness_harness_tests.rs",
       "crates/simdoc/src/repo_contract/exclusion_witness_tests.rs",
       "crates/simdoc/src/repo_contract/fixture_consumption.rs",
+      "crates/simdoc/src/repo_contract/fixture_consumption_cfg.rs",
       "crates/simdoc/src/repo_contract/fixture_consumption_shadow.rs",
       "crates/simdoc/src/repo_contract/package_projection.rs",
       "crates/simdoc/src/repo_contract/policy_fixture.rs",
@@ -469,6 +471,7 @@
       "crates/simdoc/src/simdoc_check_tests.rs",
       "crates/simdoc/src/simdoc_index.rs",
       "crates/simdoc/src/simdoc_rustdoc.rs",
+      "crates/simdoc/src/simdoc_rustdoc_tests.rs",
       "crates/simdoc/src/test_fixture.rs",
       "crates/simdoc/src/tools.rs",
       "crates/simdoc/src/tools_tests.rs",
