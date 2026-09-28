@@ -19,7 +19,7 @@ pub(super) fn provenance(
     resolver: Option<&crate::resolver_input::ResolverInput>,
 ) -> Result<Value, String> {
     let preserved = preserved_provenance(repo);
-    let (input_paths, workspace_hash) = measure_inputs(repo)?;
+    let (input_paths, workspace_hash) = measure_inputs(repo, metadata)?;
     let source_commit = preserved_source_commit(&preserved, &workspace_hash)
         .or_else(|| git_output(repo, &["rev-parse", "HEAD"]))
         .ok_or_else(|| "git rev-parse HEAD did not return a commit".to_owned())?;
@@ -48,8 +48,11 @@ pub(super) fn provenance(
 
 /// The repository-relative input paths and their stable hash: exactly what
 /// the provenance workspace hash binds.
-pub(super) fn measure_inputs(repo: &Path) -> Result<(Vec<String>, String), String> {
-    let inputs = input_files(repo);
+pub(super) fn measure_inputs(
+    repo: &Path,
+    metadata: &Value,
+) -> Result<(Vec<String>, String), String> {
+    let inputs = input_files(repo, metadata);
     let paths = inputs
         .iter()
         .map(|path| rel_path(repo, path))

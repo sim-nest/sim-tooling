@@ -182,7 +182,7 @@ fn contract_artifacts_observed(
         fragment_certificate_artifact(&index_fragment)?,
     );
     after_projections();
-    ensure_inputs_unchanged(repo, &provenance)?;
+    ensure_inputs_unchanged(repo, metadata, &provenance)?;
     if let Some(resolver) = resolver {
         resolver.remeasure(repo)?;
     }
@@ -197,8 +197,12 @@ fn contract_artifacts_observed(
 
 /// Refuses the run when the inputs bound by the provenance workspace hash
 /// changed while the projections were reading them.
-fn ensure_inputs_unchanged(repo: &Path, provenance: &Value) -> Result<(), String> {
-    let (paths, hash) = measure_inputs(repo)?;
+fn ensure_inputs_unchanged(
+    repo: &Path,
+    metadata: &Value,
+    provenance: &Value,
+) -> Result<(), String> {
+    let (paths, hash) = measure_inputs(repo, metadata)?;
     if provenance["workspace_hash"].as_str() != Some(hash.as_str())
         || provenance["workspace_hash_inputs"] != json!(paths)
     {

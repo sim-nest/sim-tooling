@@ -6,7 +6,7 @@
 //! Package and browse-card scanning for the repo-contract task.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -187,14 +187,40 @@ fn recipe_book_entry(
 
 /// The inputs the provenance workspace hash binds: every owned contract
 /// input of the worktree (see [`crate::owned`]).
-pub(crate) fn input_files(repo: &Path) -> Vec<PathBuf> {
+pub(crate) fn input_files(repo: &Path, metadata: &Value) -> Vec<PathBuf> {
+    let target_paths = metadata_target_paths(repo, metadata);
     let mut files = crate::owned::files_under(repo)
         .into_iter()
-        .filter(|path| path.strip_prefix(repo).is_ok_and(is_contract_input))
+        .filter(|path| {
+            path.strip_prefix(repo).is_ok_and(|relative| {
+                is_contract_input(relative) || target_paths.contains(relative)
+            })
+        })
         .collect::<Vec<_>>();
     files.sort();
     files.dedup();
     files
+}
+
+/// Every Cargo target's `src_path`, repo-relative, from `cargo metadata`:
+/// the exact source a build actually reads, at whatever `path =` a manifest
+/// declares. `is_contract_input`'s own conventional-layout patterns cover
+/// the common case without depending on metadata at all, but a target at
+/// a non-conventional path (`[lib] path = "code/lib.rs"`) is otherwise
+/// invisible to the workspace-hash input set even though the projections
+/// that read `metadata` elsewhere plainly see it.
+fn metadata_target_paths(repo: &Path, metadata: &Value) -> BTreeSet<PathBuf> {
+    metadata["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|package| package["targets"].as_array().into_iter().flatten())
+        .filter_map(|target| target["src_path"].as_str())
+        .filter_map(|src_path| {
+            let path = Path::new(src_path).canonicalize().ok()?;
+            path.strip_prefix(repo).ok().map(Path::to_path_buf)
+        })
+        .collect()
 }
 
 fn is_contract_input(path: &Path) -> bool {
@@ -565,7 +591,7 @@ mod tests {
                 .success()
         );
         let scope = crate::owned::enter(&root).unwrap();
-        let paths = input_files(&root.canonicalize().unwrap())
+        let paths = input_files(&root.canonicalize().unwrap(), &json!({}))
             .into_iter()
             .map(|path| {
                 path.strip_prefix(&root)
@@ -631,7 +657,7 @@ mod tests {
                 .success()
         );
         let scope = crate::owned::enter(&root).unwrap();
-        let paths = input_files(&root.canonicalize().unwrap())
+        let paths = input_files(&root.canonicalize().unwrap(), &json!({}))
             .into_iter()
             .map(|path| {
                 path.strip_prefix(&root)
@@ -647,6 +673,61 @@ mod tests {
         assert!(paths.contains(&"tests/harness/main.rs".to_owned()));
         assert!(!paths.contains(&".github/workflows/readme.md".to_owned()));
         assert!(!paths.contains(&".github/workflows/sub/nested.yml".to_owned()));
+        scope.finish().unwrap();
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn input_files_cover_a_target_at_a_non_conventional_path_named_by_metadata() {
+        // [lib] path = "code/lib.rs" is invisible to is_contract_input's own
+        // src/crates-prefixed patterns; only cargo metadata's own src_path
+        // for the target names it.
+        let root = temp_root("sim-tooling-input-files-metadata-target");
+        fs::create_dir_all(root.join("code")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\n\n[lib]\npath = \"code/lib.rs\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("code/lib.rs"), "").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let canonical = root.canonicalize().unwrap();
+        let metadata = json!({
+            "packages": [{
+                "name": "fixture",
+                "targets": [{
+                    "name": "fixture",
+                    "src_path": canonical.join("code/lib.rs").to_string_lossy(),
+                }]
+            }]
+        });
+        let scope = crate::owned::enter(&canonical).unwrap();
+        let paths = input_files(&canonical, &metadata)
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(&canonical)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"code/lib.rs".to_owned()), "{paths:?}");
         scope.finish().unwrap();
 
         fs::remove_dir_all(root).unwrap();
