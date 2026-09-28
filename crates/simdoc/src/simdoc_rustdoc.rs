@@ -387,22 +387,19 @@ pub(crate) fn repo_packages(root: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// The real `[package] name`, parsed as TOML rather than found by a line
+/// scanner: a line scanner's own quote-stripping only ever strips a double
+/// quote, so a single-quoted name (`name = 'x'`, valid TOML) reads back with
+/// its quotes still attached, and any inline comment on the name line reads
+/// straight into the value.
 fn package_name(manifest: &str) -> Option<String> {
-    let mut in_package = false;
-    for line in manifest.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_package = trimmed == "[package]";
-            continue;
-        }
-        if in_package
-            && let Some(rest) = trimmed.strip_prefix("name")
-            && let Some(value) = rest.trim_start().strip_prefix('=')
-        {
-            return Some(value.trim().trim_matches('"').to_owned());
-        }
-    }
-    None
+    let table = manifest.parse::<toml::Table>().ok()?;
+    table
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned)
 }
 
 /// The real `[workspace] members` array, parsed as TOML rather than found by
@@ -426,27 +423,74 @@ fn workspace_members(manifest: &str) -> Vec<String> {
         .collect()
 }
 
+/// The directories a workspace-member entry names: a literal path (no `*`
+/// anywhere in it), or -- Cargo allows a `*` glob only in the entry's own
+/// final path segment, never earlier -- every immediate subdirectory of the
+/// entry's parent, holding a `Cargo.toml`, whose own name matches that final
+/// segment's glob pattern.
 fn expand_member(root: &Path, member: &str) -> Vec<PathBuf> {
-    match member.strip_suffix("/*") {
-        Some(prefix) => {
-            let base = root.join(prefix);
-            let mut dirs = crate::owned::files_under(&base)
-                .into_iter()
-                .filter(|path| {
-                    path.strip_prefix(&base).is_ok_and(|relative| {
-                        relative.components().count() == 2
-                            && relative
-                                .file_name()
-                                .is_some_and(|name| name == "Cargo.toml")
-                    })
-                })
-                .filter_map(|path| path.parent().map(Path::to_path_buf))
-                .collect::<Vec<_>>();
-            dirs.sort();
-            dirs
-        }
-        None => vec![root.join(member)],
+    let Some((prefix, last)) = member.rsplit_once('/') else {
+        return expand_glob_segment(root, "", member);
+    };
+    if last.contains('*') {
+        expand_glob_segment(root, prefix, last)
+    } else {
+        vec![root.join(member)]
     }
+}
+
+fn expand_glob_segment(root: &Path, prefix: &str, pattern: &str) -> Vec<PathBuf> {
+    if !pattern.contains('*') {
+        return vec![root.join(prefix).join(pattern)];
+    }
+    let base = root.join(prefix);
+    let mut dirs = crate::owned::files_under(&base)
+        .into_iter()
+        .filter(|path| {
+            path.strip_prefix(&base).is_ok_and(|relative| {
+                relative.components().count() == 2
+                    && relative
+                        .file_name()
+                        .is_some_and(|name| name == "Cargo.toml")
+            })
+        })
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .filter(|dir| {
+            dir.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| segment_matches_glob(name, pattern))
+        })
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs
+}
+
+/// Whether `name` matches `pattern`, a single path segment whose `*`
+/// wildcards each match zero or more characters (Cargo's own glob support
+/// for a workspace member's trailing segment; no `**`, since Cargo does not
+/// support it there either).
+fn segment_matches_glob(name: &str, pattern: &str) -> bool {
+    if !pattern.contains('*') {
+        return name == pattern;
+    }
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    let (Some(first), Some(last)) = (parts.first(), parts.last()) else {
+        return false;
+    };
+    if !name.starts_with(first) || !name.ends_with(last) || first.len() + last.len() > name.len() {
+        return false;
+    }
+    let mut remaining = &name[first.len()..name.len() - last.len()];
+    for part in &parts[1..parts.len().saturating_sub(1)] {
+        if part.is_empty() {
+            continue;
+        }
+        match remaining.find(part) {
+            Some(index) => remaining = &remaining[index + part.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 fn relative_slash(root: &Path, path: &Path) -> Result<String, String> {

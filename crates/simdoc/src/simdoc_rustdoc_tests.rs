@@ -9,7 +9,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{collect_doc_inputs, package_name, require_path_dependencies_owned, workspace_members};
+use super::{
+    collect_doc_inputs, expand_member, package_name, require_path_dependencies_owned,
+    segment_matches_glob, workspace_members,
+};
 
 fn git(dir: &std::path::Path, args: &[&str]) {
     assert!(
@@ -171,6 +174,25 @@ fn package_name_absent_for_virtual_manifest() {
 }
 
 #[test]
+fn package_name_reads_a_single_quoted_name() {
+    // TOML allows a literal (single-quoted) string equally to a basic
+    // (double-quoted) one; a line scanner that only strips double quotes
+    // reads the quotes themselves back as part of the name.
+    assert_eq!(
+        package_name("[package]\nname = 'sim-shape'\n"),
+        Some("sim-shape".to_owned())
+    );
+}
+
+#[test]
+fn package_name_ignores_an_inline_comment() {
+    assert_eq!(
+        package_name("[package]\nname = \"sim-shape\" # not \"ignored\"\n"),
+        Some("sim-shape".to_owned())
+    );
+}
+
+#[test]
 fn workspace_members_parses_multiline_array() {
     let manifest =
         "[workspace]\nmembers = [\n    \"crates/a\",\n    \"crates/b\",\n    \"xtask\",\n]\n";
@@ -211,6 +233,49 @@ fn workspace_members_is_never_taken_from_a_comment() {
     let manifest = "[workspace]\n# members of the room, alphabetically: [\"a\", \"b\"]\n\
          members = [\"crates/a\"]\n";
     assert_eq!(workspace_members(manifest), vec!["crates/a".to_owned()]);
+}
+
+#[test]
+fn segment_matches_glob_supports_a_wildcard_anywhere_in_one_segment() {
+    // Cargo allows `*` anywhere in a workspace member's own trailing path
+    // segment, not only as the whole segment.
+    assert!(segment_matches_glob("app-service", "app-*"));
+    assert!(segment_matches_glob("app-service", "*-service"));
+    assert!(segment_matches_glob("app-service", "app-service"));
+    assert!(segment_matches_glob("anything", "*"));
+    assert!(!segment_matches_glob("app-service", "app-web"));
+    assert!(!segment_matches_glob("app", "app-*"));
+    assert!(segment_matches_glob("aXbYc", "a*b*c"));
+    assert!(!segment_matches_glob("aXbYc", "a*Z*c"));
+}
+
+#[test]
+fn expand_member_matches_a_partial_segment_glob() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "simdoc-expand-member-{}-{stamp}",
+        std::process::id()
+    ));
+    for name in ["app-web", "app-api", "lib-shared"] {
+        fs::create_dir_all(root.join("crates").join(name)).unwrap();
+        fs::write(
+            root.join("crates").join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\n"),
+        )
+        .unwrap();
+    }
+
+    let mut matched = expand_member(&root, "crates/app-*")
+        .into_iter()
+        .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    matched.sort();
+    assert_eq!(matched, vec!["app-api".to_owned(), "app-web".to_owned()]);
+
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
