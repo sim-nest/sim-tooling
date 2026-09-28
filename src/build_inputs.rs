@@ -360,27 +360,16 @@ fn materialize_into(input: MaterializeInputs<'_>) -> Result<Report, String> {
             let relative = package_root
                 .strip_prefix(input.workspace)
                 .map_err(|_| format!("local package escaped selected workspace: {}", package.id))?;
-            source.copy_tree(&package.manifest, &relative.join("Cargo.toml"), &allowed)?;
-            let mut copied_directories = BTreeSet::new();
-            for target in &package.targets {
-                let target_relative = target.source.strip_prefix(package_root).map_err(|_| {
-                    format!("local target escaped selected package: {}", package.id)
-                })?;
-                if target.custom_build {
-                    source.copy_tree(&target.source, &relative.join(target_relative), &allowed)?;
-                    continue;
-                }
-                let directory = target_relative.parent().ok_or_else(|| {
-                    format!("local target has no source directory: {}", package.id)
-                })?;
-                if copied_directories.insert(directory.to_owned()) {
-                    source.copy_tree(
-                        &package_root.join(directory),
-                        &relative.join(directory),
-                        &allowed,
-                    )?;
-                }
-            }
+            // The whole package directory, not just each declared target's
+            // own source directory: a target's compilation can still read
+            // `include_str!`/`include_bytes!` assets or a build script's own
+            // sibling modules outside that directory, and cargo metadata
+            // names neither. Nothing here compiles to catch an incomplete
+            // tree, so the safe input closure is the package's own directory
+            // (bounded by the owner roots and the tree limits exactly as
+            // before; `copy_tree` already excludes `.git`, `.sim`, and
+            // `target`).
+            source.copy_tree(package_root, relative, &allowed)?;
             local_packages.push(package.id.clone());
         }
     }
