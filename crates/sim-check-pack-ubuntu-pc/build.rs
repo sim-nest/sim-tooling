@@ -65,13 +65,21 @@ fn hash_source_inputs(manifest_dir: &Path) -> String {
         manifest_dir.join("Cargo.toml"),
         manifest_dir.join("build.rs"),
     ];
+    // Fields such as `edition` are `.workspace = true` and actually come
+    // from here; a change to it can change compilation without changing
+    // this crate's own manifest.
+    if let Some(workspace) = manifest_dir.parent() {
+        files.push(workspace.join("Cargo.toml"));
+    }
     collect_files(&manifest_dir.join("src"), &mut files);
     files.sort();
     let mut hasher = Sha256::new();
     for path in files {
         println!("cargo:rerun-if-changed={}", path.display());
-        let relative = path.strip_prefix(manifest_dir).expect("owned source path");
-        let name = relative.to_string_lossy();
+        let name = match path.strip_prefix(manifest_dir) {
+            Ok(relative) => relative.to_string_lossy().into_owned(),
+            Err(_) => format!("../{}", path.file_name().expect("named path").to_string_lossy()),
+        };
         let bytes = fs::read(&path).expect("read producer source input");
         hasher.update((name.len() as u64).to_be_bytes());
         hasher.update(name.as_bytes());
