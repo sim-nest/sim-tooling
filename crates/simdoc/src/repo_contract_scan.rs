@@ -222,13 +222,35 @@ fn is_contract_input(path: &Path) -> bool {
     ) {
         return true;
     }
-    path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+    if path.extension().and_then(|extension| extension.to_str()) == Some("rs")
         && matches!(
             path.components()
                 .next()
                 .and_then(|component| component.as_os_str().to_str()),
             Some("src" | "crates")
         )
+    {
+        return true;
+    }
+
+    let components = path
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>();
+    match components.as_deref() {
+        // Read for recipe evidence (recipe_evidence::workflow_commands): a
+        // direct entry of .github/workflows, never a nested one.
+        Some([".github", "workflows", file])
+            if file.ends_with(".yml") || file.ends_with(".yaml") =>
+        {
+            true
+        }
+        // Read for exclusion witnesses (exclusion_witness::focused_test_run,
+        // the root package's own layout): tests/*.rs, tests/*/main.rs.
+        Some(["tests", file]) if file.ends_with(".rs") => true,
+        Some(["tests", _, "main.rs"]) => true,
+        _ => false,
+    }
 }
 
 fn scan_reflection_cards(repo: &Path, cards: &mut BTreeMap<String, Value>) {
@@ -564,6 +586,67 @@ mod tests {
         assert!(!paths.contains(&"sim-tooling/Cargo.toml".to_owned()));
         assert!(!paths.contains(&"sim-tooling/src/lib.rs".to_owned()));
         assert!(!paths.contains(&"ignored-helper/Cargo.toml".to_owned()));
+        scope.finish().unwrap();
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn input_files_cover_what_recipe_evidence_and_exclusion_witnesses_actually_read() {
+        // recipe_evidence::workflow_commands reads every direct entry of
+        // .github/workflows; exclusion_witness reads the root package's own
+        // tests/*.rs and tests/*/main.rs. Neither was previously in the
+        // workspace-hash input set, so a change to either could move a
+        // generated claim without moving workspace_hash, defeating
+        // ensure_inputs_unchanged's staleness check.
+        let root = temp_root("sim-tooling-input-files-workflows-tests");
+        fs::create_dir_all(root.join(".github/workflows/sub")).unwrap();
+        fs::create_dir_all(root.join("tests/harness")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
+        fs::write(root.join(".github/workflows/ci.yml"), "name: ci\n").unwrap();
+        fs::write(root.join(".github/workflows/other.yaml"), "name: other\n").unwrap();
+        fs::write(root.join(".github/workflows/readme.md"), "not a workflow\n").unwrap();
+        // Nested one level deeper: recipe_evidence only reads direct entries.
+        fs::write(
+            root.join(".github/workflows/sub/nested.yml"),
+            "name: nested\n",
+        )
+        .unwrap();
+        fs::write(root.join("tests/dispatch.rs"), "").unwrap();
+        fs::write(root.join("tests/harness/main.rs"), "").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let scope = crate::owned::enter(&root).unwrap();
+        let paths = input_files(&root.canonicalize().unwrap())
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&".github/workflows/ci.yml".to_owned()));
+        assert!(paths.contains(&".github/workflows/other.yaml".to_owned()));
+        assert!(paths.contains(&"tests/dispatch.rs".to_owned()));
+        assert!(paths.contains(&"tests/harness/main.rs".to_owned()));
+        assert!(!paths.contains(&".github/workflows/readme.md".to_owned()));
+        assert!(!paths.contains(&".github/workflows/sub/nested.yml".to_owned()));
         scope.finish().unwrap();
 
         fs::remove_dir_all(root).unwrap();
