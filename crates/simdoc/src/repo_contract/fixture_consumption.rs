@@ -14,7 +14,7 @@ use syn::{
 
 #[path = "fixture_consumption_shadow.rs"]
 mod fixture_consumption_shadow;
-use fixture_consumption_shadow::{pattern_binds_consume_fixture, use_tree_binds_consume_fixture};
+use fixture_consumption_shadow::{item_bound_names, pattern_bound_names};
 
 #[path = "fixture_consumption_cfg.rs"]
 mod fixture_consumption_cfg;
@@ -24,7 +24,9 @@ use fixture_consumption_cfg::attribute_disabled;
 /// every `consume_fixture("...")` call in a live `#[test]` function or in a
 /// live function, constant, or static such a function reaches by qualified
 /// path (resolved through the module tree, `use` items, and glob imports;
-/// never by bare identifier across modules).
+/// never by bare identifier across modules) and actually invokes -- a
+/// reference to an item as a value, an unawaited call to an `async fn`, or
+/// an unpolled `async` block never counts.
 pub(super) fn live_test_fixtures(source: &str) -> Result<Vec<String>, String> {
     let file = syn::parse_file(source).map_err(|err| err.to_string())?;
     // A file-level `#![cfg(...)]` (other than `test`) or `#![cfg_attr(...)]`
@@ -55,8 +57,20 @@ pub(super) fn live_test_fixtures(source: &str) -> Result<Vec<String>, String> {
             continue;
         };
         let module = &key[..key.len() - 1];
-        for reference in &facts.references {
-            pending.extend(items.resolve(module, reference));
+        for (reference, awaited) in &facts.references {
+            for target in items.resolve(module, reference) {
+                // An `async fn`'s body never runs until its call is polled;
+                // a call this collector did not see directly `.await`ed
+                // never reaches it.
+                let unpolled = !awaited
+                    && items
+                        .facts
+                        .get(&target)
+                        .is_some_and(|target_facts| target_facts.is_async);
+                if !unpolled {
+                    pending.push(target);
+                }
+            }
         }
     }
     let mut consumed = Vec::new();
@@ -66,13 +80,6 @@ pub(super) fn live_test_fixtures(source: &str) -> Result<Vec<String>, String> {
         };
         let module = &key[..key.len() - 1];
         for (path, fixture) in &facts.fixture_calls {
-            // A bare, unqualified reference inside a body that locally
-            // shadows `consume_fixture` always binds to that shadow, per
-            // Rust's own scoping rules: never credited, regardless of what
-            // an outer, module-tree resolution would otherwise find.
-            if facts.shadows_consume_fixture && path.len() == 1 {
-                continue;
-            }
             if items
                 .resolve(module, path)
                 .iter()
@@ -88,22 +95,25 @@ pub(super) fn live_test_fixtures(source: &str) -> Result<Vec<String>, String> {
 #[derive(Default)]
 struct Facts {
     is_test: bool,
+    /// Whether this item is an `async fn`: its body never runs until a call
+    /// to it is polled, so a reference this collector did not see directly
+    /// `.await`ed must never credit it as reached.
+    is_async: bool,
     /// Every syntactically `consume_fixture("...")`-shaped call this item's
     /// body makes, as its own (unresolved) callee path and the literal
     /// argument. Resolved against [`Items::reviewed_helpers`] once the whole
     /// file is known (see [`live_test_fixtures`]), never credited from the
     /// name alone: a same-named decoy elsewhere in the file, reached only
-    /// because its own final path segment matches, proves nothing.
+    /// because its own final path segment matches, proves nothing. A call
+    /// whose bare callee name resolves to a local shadow (a nested item, a
+    /// `let`/parameter/pattern binding of that same name, in scope at the
+    /// call site) is never recorded here at all, regardless of what that
+    /// name would otherwise resolve to.
     fixture_calls: Vec<(Vec<String>, String)>,
-    /// Whether this item's own body (or its own signature) locally binds
-    /// the name `consume_fixture`: a nested `fn`, a `let` binding, or a
-    /// parameter. Rust's own scoping rules mean a bare, unqualified
-    /// `consume_fixture(...)` call inside such a body always binds to that
-    /// local shadow, never to any outer, reviewed helper of the same name
-    /// -- so a bare reference is never credited when this is set,
-    /// regardless of what [`Items::resolve`] would otherwise find.
-    shadows_consume_fixture: bool,
-    references: Vec<Vec<String>>,
+    /// Every call this item's body actually makes (the callee's own
+    /// unresolved path, and whether the call was directly `.await`ed),
+    /// subject to the same local-shadow exclusion as `fixture_calls`.
+    references: Vec<(Vec<String>, bool)>,
 }
 
 #[derive(Default)]
@@ -159,123 +169,8 @@ fn is_test(attributes: &[Attribute]) -> bool {
         .any(|attribute| quote::quote!(#attribute).to_string().replace(' ', "") == "#[test]")
 }
 
-impl Items {
-    fn record(
-        &mut self,
-        name: String,
-        attributes: &[Attribute],
-        visit: impl FnOnce(&mut Collector),
-    ) {
-        if disabled(attributes) {
-            return;
-        }
-        let mut collector = Collector::default();
-        visit(&mut collector);
-        let mut key = self.module.clone();
-        key.push(name);
-        let facts = self.facts.entry(key).or_default();
-        facts.is_test |= is_test(attributes);
-        facts.fixture_calls.extend(collector.fixture_calls);
-        facts.shadows_consume_fixture |= collector.shadows_consume_fixture;
-        facts.references.extend(collector.references);
-    }
-
-    /// The items a path written in `module` may name.
-    fn resolve(&self, module: &[String], path: &[String]) -> Vec<Vec<String>> {
-        let join =
-            |base: &[String], rest: &[String]| base.iter().chain(rest).cloned().collect::<Vec<_>>();
-        let parent = || module[..module.len().saturating_sub(1)].to_vec();
-        let candidates = match path.first().map(String::as_str) {
-            None => Vec::new(),
-            Some("crate") => vec![path[1..].to_vec()],
-            Some("self") => vec![join(module, &path[1..])],
-            Some("super") => vec![join(&parent(), &path[1..])],
-            Some(first) => {
-                // Rust's precedence: what the module itself defines shadows
-                // an import, which shadows a glob import.
-                let local = join(module, path);
-                let scope = self.scopes.get(module);
-                let imported = scope
-                    .and_then(|scope| scope.aliases.get(first))
-                    .map(|alias| join(alias, &path[1..]));
-                if self.facts.contains_key(&local) {
-                    vec![local]
-                } else if imported
-                    .as_ref()
-                    .is_some_and(|found| self.facts.contains_key(found))
-                {
-                    imported.into_iter().collect()
-                } else {
-                    scope
-                        .map(|scope| scope.globs.as_slice())
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|glob| join(glob, path))
-                        .collect()
-                }
-            }
-        };
-        candidates
-            .into_iter()
-            .filter(|candidate| self.facts.contains_key(candidate))
-            .collect()
-    }
-
-    fn absolute(&self, path: &[String]) -> Vec<String> {
-        let mut module = self.module.clone();
-        let mut index = 0;
-        match path.first().map(String::as_str) {
-            Some("crate") => {
-                module.clear();
-                index = 1;
-            }
-            Some("self") => index = 1,
-            Some("super") => {
-                while path.get(index).map(String::as_str) == Some("super") {
-                    module.pop();
-                    index += 1;
-                }
-            }
-            _ => {}
-        }
-        module.extend(path[index..].iter().cloned());
-        module
-    }
-
-    fn use_tree(&mut self, tree: &syn::UseTree, prefix: &mut Vec<String>) {
-        match tree {
-            syn::UseTree::Path(path) => {
-                prefix.push(path.ident.to_string());
-                self.use_tree(&path.tree, prefix);
-                prefix.pop();
-            }
-            syn::UseTree::Name(name) => {
-                let mut full = prefix.clone();
-                full.push(name.ident.to_string());
-                let target = self.absolute(&full);
-                let scope = self.scopes.entry(self.module.clone()).or_default();
-                scope.aliases.insert(name.ident.to_string(), target);
-            }
-            syn::UseTree::Rename(rename) => {
-                let mut full = prefix.clone();
-                full.push(rename.ident.to_string());
-                let target = self.absolute(&full);
-                let scope = self.scopes.entry(self.module.clone()).or_default();
-                scope.aliases.insert(rename.rename.to_string(), target);
-            }
-            syn::UseTree::Glob(_) => {
-                let target = self.absolute(prefix);
-                let scope = self.scopes.entry(self.module.clone()).or_default();
-                scope.globs.push(target);
-            }
-            syn::UseTree::Group(group) => {
-                for item in &group.items {
-                    self.use_tree(item, prefix);
-                }
-            }
-        }
-    }
-}
+#[path = "fixture_consumption_resolve.rs"]
+mod fixture_consumption_resolve;
 
 impl<'ast> Visit<'ast> for Items {
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
@@ -293,19 +188,25 @@ impl<'ast> Visit<'ast> for Items {
                 self.reviewed_helpers.insert(key);
             }
         }
-        self.record(item.sig.ident.to_string(), &item.attrs, |collector| {
-            collector.visit_item_fn(item);
-        });
+        let is_async = item.sig.asyncness.is_some();
+        self.record(
+            item.sig.ident.to_string(),
+            &item.attrs,
+            is_async,
+            |collector| {
+                collector.visit_item_fn(item);
+            },
+        );
     }
 
     fn visit_item_const(&mut self, item: &'ast ItemConst) {
-        self.record(item.ident.to_string(), &item.attrs, |collector| {
+        self.record(item.ident.to_string(), &item.attrs, false, |collector| {
             collector.visit_item_const(item);
         });
     }
 
     fn visit_item_static(&mut self, item: &'ast ItemStatic) {
-        self.record(item.ident.to_string(), &item.attrs, |collector| {
+        self.record(item.ident.to_string(), &item.attrs, false, |collector| {
             collector.visit_item_static(item);
         });
     }
@@ -328,17 +229,28 @@ impl<'ast> Visit<'ast> for Items {
 }
 
 /// Collects, from one item, the `consume_fixture("...")` calls whose value is
-/// used and the paths it references. Skipped: attributes (doc comments are
-/// attributes), nested items, closures, statements and expressions carrying a
-/// disabling attribute, statically dead branches (`if false`, `if !true`,
-/// `cfg!(any())`, `while false`), code after `return`, and every macro whose
-/// arguments are not evaluated in place (only the `assert`, `format`, `print`,
-/// and `vec` families are read).
+/// used and the calls it actually makes. Skipped: attributes (doc comments
+/// are attributes), nested items (their own names are still hoisted into
+/// scope, see [`Collector::scopes`]), closures, `async` blocks (never polled
+/// here), statements and expressions carrying a disabling attribute,
+/// statically dead branches (`if false`, `if !true`, `cfg!(any())`, `while
+/// false`), any code that can never run because everything reachable before
+/// it in the same block always diverges (a `return`, or nested blocks/`if`
+/// that always return), and every macro whose arguments are not evaluated in
+/// place (only the `assert`, `format`, `print`, and `vec` families are
+/// read).
 #[derive(Default)]
 struct Collector {
     fixture_calls: Vec<(Vec<String>, String)>,
-    shadows_consume_fixture: bool,
-    references: Vec<Vec<String>>,
+    references: Vec<(Vec<String>, bool)>,
+    /// A stack of lexical scopes, innermost last, each holding the names it
+    /// locally binds (an item hoisted across its whole enclosing block, a
+    /// function parameter, or a `let`/`for`/`match`-arm/`if let`/`while
+    /// let` pattern). A bare, single-segment call whose name appears in any
+    /// active frame binds to that local shadow, per Rust's own scoping
+    /// rules, never to any outer, same-named item -- regardless of what
+    /// module-tree resolution would otherwise find.
+    scopes: Vec<Vec<String>>,
 }
 
 /// Macros whose arguments are evaluated where they are written.
@@ -429,75 +341,140 @@ fn constant(expr: &Expr) -> Option<bool> {
     }
 }
 
+/// Whether `stmt` always diverges: nothing textually after it in the same
+/// block can ever run.
+fn diverges(stmt: &syn::Stmt) -> bool {
+    match stmt {
+        syn::Stmt::Expr(expr, _) => expr_diverges(expr),
+        _ => false,
+    }
+}
+
+/// Whether evaluating `expr` always diverges: a bare `return`, a nested
+/// block whose own contents always diverge, or an `if`/`else` where the
+/// branch a statically decidable condition takes (or, when undecidable,
+/// every branch) always diverges.
+fn expr_diverges(expr: &Expr) -> bool {
+    match expr {
+        Expr::Return(_) => true,
+        Expr::Block(block) => block_diverges(&block.block),
+        Expr::If(if_expr) => match constant(&if_expr.cond) {
+            Some(true) => block_diverges(&if_expr.then_branch),
+            Some(false) => if_expr
+                .else_branch
+                .as_ref()
+                .is_some_and(|(_, otherwise)| expr_diverges(otherwise)),
+            None => {
+                block_diverges(&if_expr.then_branch)
+                    && if_expr
+                        .else_branch
+                        .as_ref()
+                        .is_some_and(|(_, otherwise)| expr_diverges(otherwise))
+            }
+        },
+        _ => false,
+    }
+}
+
+fn block_diverges(block: &syn::Block) -> bool {
+    block.stmts.iter().any(diverges)
+}
+
+impl Collector {
+    fn is_shadowed(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .any(|frame| frame.iter().any(|bound| bound == name))
+    }
+
+    /// Records `call` as an actual invocation (`awaited` says whether this
+    /// collector saw it directly `.await`ed): a bare, single-segment callee
+    /// currently shadowed by a local binding of that name is never
+    /// recorded at all, since it can bind only to that local decoy, never
+    /// to any outer item -- reviewed helper or otherwise.
+    fn record_call(&mut self, call: &ExprCall, awaited: bool) {
+        let Expr::Path(path) = &*call.func else {
+            return;
+        };
+        let segments = path
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>();
+        if segments.len() == 1 && self.is_shadowed(&segments[0]) {
+            return;
+        }
+        if let Some(fixture_call) = consumption(call) {
+            self.fixture_calls.push(fixture_call);
+        }
+        self.references.push((segments, awaited));
+    }
+}
+
 impl<'ast> Visit<'ast> for Collector {
     fn visit_attribute(&mut self, _: &'ast Attribute) {}
 
-    // An item inside the one being collected is a separate item nothing has
-    // called: skipped without descending into it. A local item that itself
-    // binds the name `consume_fixture` -- a nested `fn`, a `const`, a
-    // `static`, or a `use` that imports or renames something to that name
-    // -- is the one exception worth noticing: Rust's own scoping rules mean
-    // it shadows any outer same-named helper for every bare, unqualified
-    // reference in the rest of this body, reviewed or not.
-    fn visit_item(&mut self, item: &'ast syn::Item) {
-        let shadows = match item {
-            syn::Item::Fn(nested) => nested.sig.ident == "consume_fixture",
-            syn::Item::Const(item) => item.ident == "consume_fixture",
-            syn::Item::Static(item) => item.ident == "consume_fixture",
-            syn::Item::Use(item) => use_tree_binds_consume_fixture(&item.tree),
-            // A tuple struct's constructor is a value-namespace item, callable
-            // exactly like a function (`consume_fixture(0)`); a struct with
-            // named fields or no fields is not callable and cannot shadow a
-            // call-position reference.
-            syn::Item::Struct(item) => {
-                item.ident == "consume_fixture" && matches!(item.fields, syn::Fields::Unnamed(_))
-            }
-            _ => false,
-        };
-        if shadows {
-            self.shadows_consume_fixture = true;
-        }
-    }
+    // A local item's own name is hoisted into the enclosing block's scope
+    // by `visit_block` below, before any of the block's statements are
+    // visited (matching Rust's own item-hoisting rule); this collector
+    // never descends into the item's own separate, unreached body.
+    fn visit_item(&mut self, _: &'ast syn::Item) {}
 
-    // A parameter named (or destructuring a binding named) `consume_fixture`
-    // shadows any outer helper of that name for every bare reference in
-    // this function's own body, the same as a local binding or a nested
-    // item of that name.
+    // A parameter (or a pattern destructuring one) locally binds for the
+    // whole function body, exactly as a nested item or a `let` does.
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        let mut names = Vec::new();
         for input in &item.sig.inputs {
-            if let syn::FnArg::Typed(typed) = input
-                && pattern_binds_consume_fixture(&typed.pat)
-            {
-                self.shadows_consume_fixture = true;
+            if let syn::FnArg::Typed(typed) = input {
+                pattern_bound_names(&typed.pat, &mut names);
             }
         }
+        self.scopes.push(names);
         syn::visit::visit_item_fn(self, item);
+        self.scopes.pop();
     }
 
     fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
 
+    // An `async` block's contents never run until it is polled; nothing
+    // here proves that ever happens (an immediately `.await`ed async block
+    // is a legal but unusual pattern this analysis does not special-case,
+    // the same conservative stance it already takes for a closure that is
+    // called immediately at its own definition site).
+    fn visit_expr_async(&mut self, _: &'ast syn::ExprAsync) {}
+
     fn visit_block(&mut self, block: &'ast syn::Block) {
+        let mut hoisted = Vec::new();
+        for statement in &block.stmts {
+            if let syn::Stmt::Item(item) = statement {
+                item_bound_names(item, &mut hoisted);
+            }
+        }
+        self.scopes.push(hoisted);
         for statement in &block.stmts {
             self.visit_stmt(statement);
-            if matches!(statement, syn::Stmt::Expr(Expr::Return(_), _)) {
+            if diverges(statement) {
                 break;
             }
         }
+        self.scopes.pop();
     }
 
     fn visit_stmt(&mut self, statement: &'ast syn::Stmt) {
         if leading_attributes_disable(statement) {
             return;
         }
-        // A local binding named `consume_fixture` shadows any outer helper
-        // of that name for every bare reference in the rest of this body,
-        // exactly as a nested fn of that name does -- including one bound
-        // through a destructuring pattern (a tuple, a struct, a slice, an
-        // or-pattern, ...), not only a bare identifier.
-        if let syn::Stmt::Local(local) = statement
-            && pattern_binds_consume_fixture(&local.pat)
-        {
-            self.shadows_consume_fixture = true;
+        // A local binding shadows any outer item of the same name for the
+        // rest of this block, including one bound through a destructuring
+        // pattern (a tuple, a struct, a slice, an or-pattern, ...), not
+        // only a bare identifier.
+        if let syn::Stmt::Local(local) = statement {
+            let mut names = Vec::new();
+            pattern_bound_names(&local.pat, &mut names);
+            if let Some(frame) = self.scopes.last_mut() {
+                frame.extend(names);
+            }
         }
         // A consumption whose value is dropped on the spot consumes nothing.
         // (an expression statement, a `let _`/`let _name`, or `drop(...)`).
@@ -544,25 +521,27 @@ impl<'ast> Visit<'ast> for Collector {
         }
     }
 
-    // Reachability follows an actual invocation only (below): a path that
-    // merely appears as a value -- `let _f: fn() = consumer;`, a function
-    // passed to another function, a path used as a type -- is never itself a
-    // call, so it must never credit `consumer`'s body as reached.
-
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
-        if let Some(fixture_call) = consumption(call) {
-            self.fixture_calls.push(fixture_call);
-        }
-        if let Expr::Path(path) = &*call.func {
-            self.references.push(
-                path.path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect(),
-            );
-        }
+        self.record_call(call, false);
         syn::visit::visit_expr_call(self, call);
+    }
+
+    // A call that is the direct base of `.await` is a real invocation of an
+    // `async fn`'s body (or a poll of an `async` block, though that is
+    // never traversed into regardless -- see `visit_expr_async`); anything
+    // else awaited is not itself a call and is walked normally.
+    fn visit_expr_await(&mut self, expr: &'ast syn::ExprAwait) {
+        if leading_attributes_disable(expr) {
+            return;
+        }
+        if let Expr::Call(call) = &*expr.base {
+            self.record_call(call, true);
+            for argument in &call.args {
+                self.visit_expr(argument);
+            }
+        } else {
+            self.visit_expr(&expr.base);
+        }
     }
 
     fn visit_macro(&mut self, node: &'ast Macro) {
@@ -587,41 +566,64 @@ impl<'ast> Visit<'ast> for Collector {
                 if let Some((_, otherwise)) = &node.else_branch {
                     self.visit_expr(otherwise);
                 }
+                return;
             }
-            Some(true) => self.visit_block(&node.then_branch),
-            None if mentions_cfg(&node.cond) => {}
-            None => syn::visit::visit_expr_if(self, node),
+            Some(true) => {
+                self.visit_block(&node.then_branch);
+                return;
+            }
+            None if mentions_cfg(&node.cond) => return,
+            None => {}
+        }
+        self.visit_expr(&node.cond);
+        // An `if let PAT = ...` binds PAT for the then-branch only (an
+        // `Expr::Let` reached here as `node.cond`, never visited generically
+        // since this override does not delegate to the default `if`
+        // traversal).
+        let mut names = Vec::new();
+        if let Expr::Let(let_expr) = &*node.cond {
+            pattern_bound_names(&let_expr.pat, &mut names);
+        }
+        self.scopes.push(names);
+        self.visit_block(&node.then_branch);
+        self.scopes.pop();
+        if let Some((_, otherwise)) = &node.else_branch {
+            self.visit_expr(otherwise);
         }
     }
 
     fn visit_expr_while(&mut self, node: &'ast syn::ExprWhile) {
-        if constant(&node.cond) != Some(false) {
-            syn::visit::visit_expr_while(self, node);
+        if constant(&node.cond) == Some(false) {
+            return;
         }
+        self.visit_expr(&node.cond);
+        // A `while let PAT = ...` binds PAT for the body only, the same as
+        // `if let` above.
+        let mut names = Vec::new();
+        if let Expr::Let(let_expr) = &*node.cond {
+            pattern_bound_names(&let_expr.pat, &mut names);
+        }
+        self.scopes.push(names);
+        self.visit_block(&node.body);
+        self.scopes.pop();
     }
 
-    // A `for` loop's own pattern, a `match` arm's pattern, and the pattern of
-    // an `if let`/`while let` (both desugar to `Expr::Let`, reached through
-    // the default `if`/`while` traversal above) each bind for the rest of
-    // their own body exactly as a `let` statement's pattern does.
+    // A `for` loop's own pattern binds for its body only.
     fn visit_expr_for_loop(&mut self, node: &'ast syn::ExprForLoop) {
-        if pattern_binds_consume_fixture(&node.pat) {
-            self.shadows_consume_fixture = true;
-        }
-        syn::visit::visit_expr_for_loop(self, node);
+        let mut names = Vec::new();
+        pattern_bound_names(&node.pat, &mut names);
+        self.scopes.push(names);
+        self.visit_expr(&node.expr);
+        self.visit_block(&node.body);
+        self.scopes.pop();
     }
 
+    // A `match` arm's own pattern binds for its body only.
     fn visit_arm(&mut self, arm: &'ast syn::Arm) {
-        if pattern_binds_consume_fixture(&arm.pat) {
-            self.shadows_consume_fixture = true;
-        }
+        let mut names = Vec::new();
+        pattern_bound_names(&arm.pat, &mut names);
+        self.scopes.push(names);
         syn::visit::visit_arm(self, arm);
-    }
-
-    fn visit_expr_let(&mut self, node: &'ast syn::ExprLet) {
-        if pattern_binds_consume_fixture(&node.pat) {
-            self.shadows_consume_fixture = true;
-        }
-        syn::visit::visit_expr_let(self, node);
+        self.scopes.pop();
     }
 }

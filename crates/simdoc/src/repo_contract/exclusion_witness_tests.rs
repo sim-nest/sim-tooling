@@ -319,6 +319,47 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
             "fn consumer() { let d = consume_fixture(\"tests/ui\"); }\n\
              #[test]\nfn t() { let _f: fn() = consumer; }\n",
         ),
+        // A local no-op of the SAME name as a real, module-level
+        // intermediate callee shadows it too, exactly as a local shadow of
+        // `consume_fixture` itself does: the call inside `t` binds to the
+        // local no-op `consumer`, never reaching the outer one that
+        // actually consumes the fixture.
+        (
+            "local-shadow-of-an-intermediate-callee",
+            "fn consumer() { let d = consume_fixture(\"tests/ui\"); }\n\
+             #[test]\nfn t() {\n    fn consumer() {}\n    consumer();\n}\n",
+        ),
+        // Code after an unconditional return nested in a block or an
+        // `if true` is exactly as unreachable as code directly after a
+        // bare `return;` statement.
+        (
+            "after-return-nested-in-a-block",
+            "#[test]\nfn t() { { return; } let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "after-return-nested-in-an-if-true",
+            "#[test]\nfn t() { if true { return; } let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        (
+            "after-return-in-both-if-and-else",
+            "fn flag() -> bool { true }\n\
+             #[test]\nfn t() { if flag() { return; } else { return; } \
+             let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        // An `async fn`'s body never runs until a call to it is polled; a
+        // call this analysis does not see directly `.await`ed proves
+        // nothing.
+        (
+            "async-fn-called-without-await",
+            "async fn consumer() { let d = consume_fixture(\"tests/ui\"); }\n\
+             #[test]\nfn t() { let _f = consumer(); }\n",
+        ),
+        // An `async` block is exactly as unpolled as an async fn call that
+        // is never awaited.
+        (
+            "async-block-never-polled",
+            "#[test]\nfn t() { let _f = async { let d = consume_fixture(\"tests/ui\"); }; }\n",
+        ),
     ];
     for (label, source) in dead {
         let repo = fixture_repo(
@@ -380,6 +421,21 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         (
             "if-true",
             "#[test]\nfn t() { if true { let d = consume_fixture(\"tests/ui\"); } }\n",
+        ),
+        // An `async fn`'s body IS reached once a call to it is actually
+        // `.await`ed.
+        (
+            "async-fn-called-and-awaited",
+            "async fn consumer() { let d = consume_fixture(\"tests/ui\"); }\n\
+             #[test]\nfn t() { consumer().await; }\n",
+        ),
+        // A `for` loop's own pattern shadows `consume_fixture` only for its
+        // own body, not for the rest of the enclosing function: a real
+        // consumption written before the loop is still credited.
+        (
+            "shadow-scope-limited-to-its-own-for-loop",
+            "#[test]\nfn t() {\n    let d = consume_fixture(\"tests/ui\");\n    \
+             for consume_fixture in [\"x\"] {\n        let _ = consume_fixture;\n    }\n}\n",
         ),
     ];
     for (label, source) in live {
