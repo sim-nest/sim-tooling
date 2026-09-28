@@ -299,15 +299,17 @@ fn owned_files_outside_skipped(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Every owned file outside the skipped directories, not only `.rs`,
+/// `Cargo.toml`, and `Cargo.lock`: a source file's `include_str!` or
+/// `include_bytes!` can name any other tracked file (a README, a data
+/// asset), and cargo doc actually recompiles it whenever such an asset
+/// changes, so a fingerprint that ignores it would reuse a stale cache
+/// against docs that no longer match the source. Fingerprinting too much
+/// only costs a rebuild that was not strictly needed; fingerprinting too
+/// little reuses docs that are wrong.
 fn collect_doc_inputs(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), String> {
     for path in owned_files_outside_skipped(dir) {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if name.ends_with(".rs") || name == "Cargo.toml" || name == "Cargo.lock" {
-            files.push(relative_slash(root, &path)?);
-        }
+        files.push(relative_slash(root, &path)?);
     }
     Ok(())
 }
@@ -419,7 +421,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{package_name, require_path_dependencies_owned, workspace_members};
+    use super::{
+        collect_doc_inputs, package_name, require_path_dependencies_owned, workspace_members,
+    };
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         assert!(
@@ -557,5 +561,39 @@ mod tests {
     fn workspace_members_empty_when_absent_or_empty() {
         assert!(workspace_members("[package]\nname = \"x\"\n").is_empty());
         assert!(workspace_members("[workspace]\nmembers = [\n]\n").is_empty());
+    }
+
+    #[test]
+    fn collect_doc_inputs_covers_assets_not_only_rs_and_manifests() {
+        // A source file's include_str!/include_bytes! can name any tracked
+        // file, and cargo doc actually recompiles when that asset changes;
+        // the fingerprint must move too, or a stale cache would be reused.
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("simdoc-doc-inputs-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n").unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub const README: &str = include_str!(\"../README.md\");\n",
+        )
+        .unwrap();
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+        git(&root, &["init", "--quiet"]);
+        git(&root, &["add", "-A"]);
+
+        let scope = crate::owned::enter(&root).unwrap();
+        let mut inputs = Vec::new();
+        collect_doc_inputs(&root, &root, &mut inputs).unwrap();
+        scope.finish().unwrap();
+
+        assert!(inputs.contains(&"README.md".to_owned()), "{inputs:?}");
+        assert!(inputs.contains(&"src/lib.rs".to_owned()), "{inputs:?}");
+        assert!(inputs.contains(&"Cargo.toml".to_owned()), "{inputs:?}");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
