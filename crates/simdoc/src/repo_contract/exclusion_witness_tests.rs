@@ -239,6 +239,23 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
              fn dir(consume_fixture: u8) {\n    let d = consume_fixture(\"tests/ui\");\n}\n\
              #[test]\nfn t() { dir(0); }\n",
         ),
+        // Same shadowing rule, bound through a destructuring pattern.
+        (
+            "locally-shadowed-via-destructuring",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             #[test]\nfn t() {\n    let (consume_fixture,) = (|_: &str| 0u8,);\n    \
+             let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
+        // Same shadowing rule, a block-local `use` renaming onto the name.
+        (
+            "locally-shadowed-via-use-rename",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             mod fake {\n    pub fn other(_: &str) -> u8 { 0 }\n}\n\
+             #[test]\nfn t() {\n    use fake::other as consume_fixture;\n    \
+             let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
     ];
     for (label, source) in dead {
         let repo = fixture_repo(
@@ -617,6 +634,22 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     no_autobins.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     no_autobins.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
     cargo_metadata(&no_autobins.root).unwrap();
+
+    // Two declared [[bin]] entries of the same name: real Cargo refuses
+    // this manifest outright, so the witness must too, not silently
+    // deduplicate them into one name and undercount.
+    let duplicate_bin = harness_repo("witness-harness-duplicate-bin-name", run, &[run], false);
+    duplicate_bin.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\ndefault-run = \"case\"\n\n\
+         [[bin]]\nname = \"case\"\npath = \"src/main.rs\"\n\n\
+         [[bin]]\nname = \"case\"\npath = \"src/bin/other.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    duplicate_bin.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    duplicate_bin.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
+    assert!(refused(&duplicate_bin).contains("has no binary target"));
 
     let verb = "cargo build --manifest-path tests/ui/case/Cargo.toml";
     let repo = harness_repo("witness-harness-verb", verb, &[verb], true);

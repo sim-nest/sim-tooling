@@ -355,7 +355,15 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             .get("name")
             .and_then(toml::Value::as_str)
             .unwrap_or_default();
-        declared_names.insert(target_name.to_owned());
+        // Two declared targets of the same name is a manifest real Cargo
+        // itself refuses outright (binary/test names must be unique); a
+        // plain command against it never succeeds, so this is not "no
+        // target" but is just as much a refusal. Caught here, not by
+        // silently deduplicating into one name and undercounting how many
+        // targets a `default-run` would need to disambiguate between.
+        if !declared_names.insert(target_name.to_owned()) {
+            return false;
+        }
         let runs = target
             .get("required-features")
             .and_then(toml::Value::as_array)

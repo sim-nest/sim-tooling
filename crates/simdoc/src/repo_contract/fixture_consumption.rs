@@ -476,6 +476,48 @@ fn consumption(call: &ExprCall) -> Option<(Vec<String>, String)> {
     }
 }
 
+/// Whether `pattern` binds the identifier `consume_fixture` anywhere within
+/// it: a bare identifier, or that identifier nested inside a tuple, tuple
+/// struct, struct, slice, reference, parenthesized, typed, or or-pattern.
+/// Every one of these compiles as a real local binding that shadows an
+/// outer item of the same name for the rest of the enclosing body.
+fn pattern_binds_consume_fixture(pattern: &syn::Pat) -> bool {
+    match pattern {
+        syn::Pat::Ident(ident) => ident.ident == "consume_fixture",
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().any(pattern_binds_consume_fixture),
+        syn::Pat::TupleStruct(tuple_struct) => {
+            tuple_struct.elems.iter().any(pattern_binds_consume_fixture)
+        }
+        syn::Pat::Struct(structure) => structure
+            .fields
+            .iter()
+            .any(|field| pattern_binds_consume_fixture(&field.pat)),
+        syn::Pat::Slice(slice) => slice.elems.iter().any(pattern_binds_consume_fixture),
+        syn::Pat::Reference(reference) => pattern_binds_consume_fixture(&reference.pat),
+        syn::Pat::Paren(paren) => pattern_binds_consume_fixture(&paren.pat),
+        syn::Pat::Type(typed) => pattern_binds_consume_fixture(&typed.pat),
+        syn::Pat::Or(or) => or.cases.iter().any(pattern_binds_consume_fixture),
+        _ => false,
+    }
+}
+
+/// Whether `tree` (a `use` item's tree) brings something into scope under
+/// the name `consume_fixture`, whether that is its own name (`use
+/// a::consume_fixture;`) or a rename onto it (`use a::b as
+/// consume_fixture;`). A glob (`use a::*;`) cannot be decided statically
+/// without knowing `a`'s own exports, so it is not treated as a shadow;
+/// analysis elsewhere in this file never trusts a bare, unqualified
+/// reference across a module boundary regardless.
+fn use_tree_binds_consume_fixture(tree: &syn::UseTree) -> bool {
+    match tree {
+        syn::UseTree::Name(name) => name.ident == "consume_fixture",
+        syn::UseTree::Rename(rename) => rename.rename == "consume_fixture",
+        syn::UseTree::Path(path) => use_tree_binds_consume_fixture(&path.tree),
+        syn::UseTree::Group(group) => group.items.iter().any(use_tree_binds_consume_fixture),
+        syn::UseTree::Glob(_) => false,
+    }
+}
+
 /// The value of a condition that is statically a boolean.
 fn constant(expr: &Expr) -> Option<bool> {
     match expr {
@@ -505,26 +547,33 @@ impl<'ast> Visit<'ast> for Collector {
     fn visit_attribute(&mut self, _: &'ast Attribute) {}
 
     // An item inside the one being collected is a separate item nothing has
-    // called: skipped. A nested `fn consume_fixture` is the one exception
-    // worth noticing without descending into it: Rust's own scoping rules
-    // mean it shadows any outer same-named helper for every bare,
-    // unqualified reference inside this body, reviewed or not.
+    // called: skipped without descending into it. A local item that itself
+    // binds the name `consume_fixture` -- a nested `fn`, a `const`, a
+    // `static`, or a `use` that imports or renames something to that name
+    // -- is the one exception worth noticing: Rust's own scoping rules mean
+    // it shadows any outer same-named helper for every bare, unqualified
+    // reference in the rest of this body, reviewed or not.
     fn visit_item(&mut self, item: &'ast syn::Item) {
-        if let syn::Item::Fn(nested) = item
-            && nested.sig.ident == "consume_fixture"
-        {
+        let shadows = match item {
+            syn::Item::Fn(nested) => nested.sig.ident == "consume_fixture",
+            syn::Item::Const(item) => item.ident == "consume_fixture",
+            syn::Item::Static(item) => item.ident == "consume_fixture",
+            syn::Item::Use(item) => use_tree_binds_consume_fixture(&item.tree),
+            _ => false,
+        };
+        if shadows {
             self.shadows_consume_fixture = true;
         }
     }
 
-    // A parameter named `consume_fixture` shadows any outer helper of that
-    // name for every bare reference in this function's own body, the same
-    // as a local binding or a nested fn of that name.
+    // A parameter named (or destructuring a binding named) `consume_fixture`
+    // shadows any outer helper of that name for every bare reference in
+    // this function's own body, the same as a local binding or a nested
+    // item of that name.
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
         for input in &item.sig.inputs {
             if let syn::FnArg::Typed(typed) = input
-                && let syn::Pat::Ident(ident) = &*typed.pat
-                && ident.ident == "consume_fixture"
+                && pattern_binds_consume_fixture(&typed.pat)
             {
                 self.shadows_consume_fixture = true;
             }
@@ -549,10 +598,11 @@ impl<'ast> Visit<'ast> for Collector {
         }
         // A local binding named `consume_fixture` shadows any outer helper
         // of that name for every bare reference in the rest of this body,
-        // exactly as a nested fn of that name does.
+        // exactly as a nested fn of that name does -- including one bound
+        // through a destructuring pattern (a tuple, a struct, a slice, an
+        // or-pattern, ...), not only a bare identifier.
         if let syn::Stmt::Local(local) = statement
-            && let syn::Pat::Ident(ident) = &local.pat
-            && ident.ident == "consume_fixture"
+            && pattern_binds_consume_fixture(&local.pat)
         {
             self.shadows_consume_fixture = true;
         }
