@@ -225,7 +225,6 @@ fn select(options: Options) -> Result<SelectionReport, String> {
     let result = select_into(SelectionInputs {
         staging: &options.destination,
         workspace: &workspace,
-        cargo_home: &cargo_home,
         cargo: &cargo,
         cargo_version: &cargo_version,
         rustc: &rustc,
@@ -261,7 +260,6 @@ fn select(options: Options) -> Result<SelectionReport, String> {
 struct SelectionInputs<'a> {
     staging: &'a Path,
     workspace: &'a Path,
-    cargo_home: &'a Path,
     cargo: &'a Path,
     cargo_version: &'a str,
     rustc: &'a Path,
@@ -312,7 +310,14 @@ fn select_into(input: SelectionInputs<'_>) -> Result<SelectionReport, String> {
             &mut budget,
         )?);
     }
-    write_new(&input.staging.join("config.toml"), input.config, false)?;
+    // Cargo reads a project's config from `.cargo/config.toml` in the
+    // working directory or any ancestor, never from a bare `config.toml`.
+    // `view` (the cargo invocations' cwd) is `staging/workspace`, so
+    // `staging/.cargo/config.toml` is the one place this content-bound,
+    // digest-checked config actually takes effect.
+    let dot_cargo = input.staging.join(".cargo");
+    fs::create_dir(&dot_cargo).map_err(|error| error.to_string())?;
+    write_new(&dot_cargo.join("config.toml"), input.config, false)?;
     write_new(
         &input.staging.join("retained-metadata.json"),
         input.metadata_bytes,
@@ -325,7 +330,11 @@ fn select_into(input: SelectionInputs<'_>) -> Result<SelectionReport, String> {
     )?;
     let work = input.staging.join("work");
     fs::create_dir(&work).map_err(|error| error.to_string())?;
-    for path in [work.join("target"), work.join("tmp")] {
+    for path in [
+        work.join("target"),
+        work.join("tmp"),
+        work.join("cargo-home"),
+    ] {
         fs::create_dir(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     }
     let resolver = invoke(
@@ -499,11 +508,16 @@ fn invoke(
     role: &str,
     args: &[&str],
 ) -> Result<Output, String> {
+    // Never the caller-provided real Cargo home: its own config.toml would
+    // apply unconditionally alongside (not instead of) the content-bound
+    // config above, and could inject `env`, `build.rustflags`, or a source
+    // replacement of its own. This private, freshly created, still-empty
+    // directory has no config.toml at all.
     let output = Command::new(input.cargo)
         .args(args)
         .current_dir(view)
         .env_clear()
-        .env("CARGO_HOME", input.cargo_home)
+        .env("CARGO_HOME", work.join("cargo-home"))
         .env("CARGO_TARGET_DIR", work.join("target"))
         .env("CARGO_INCREMENTAL", "0")
         .env("CARGO_NET_OFFLINE", "true")

@@ -158,6 +158,10 @@ optional-local = { path = "packages/optional-local" }
         "workspace/packages/optional-local/tests/not-a-production-target.rs",
         b"must not enter the resolver input\n",
     );
+    // Flat, matching how locked_resolver_packages locates every registry
+    // package directly at vendor_root.join("<name>-<version>"):
+    // verify_archive_checksum derives the sibling cache/<name>-<version>.crate
+    // from that same shape.
     let registry_manifest = fixture.file(
         "registry/dep-1.2.3/Cargo.toml",
         b"[package]\nname = \"dep\"\nversion = \"1.2.3\"\n",
@@ -167,6 +171,7 @@ optional-local = { path = "packages/optional-local" }
         b"{\"files\":{},\"package\":null}\n",
     );
     fixture.file("registry/dep-1.2.3/src/lib.rs", b"pub fn dependency() {}\n");
+    fixture.file("cache/dep-1.2.3.crate", b"dep-archive-bytes\n");
     let resolver_manifest = fixture.file(
         "registry/resolver-3.0.0/Cargo.toml",
         b"[package]\nname = \"resolver\"\nversion = \"3.0.0\"\n",
@@ -179,6 +184,7 @@ optional-local = { path = "packages/optional-local" }
         "registry/resolver-3.0.0/src/lib.rs",
         b"pub fn resolver() {}\n",
     );
+    fixture.file("cache/resolver-3.0.0.crate", b"resolver-archive-bytes\n");
     fixture.file(
         "registry/unused-9.0.0/Cargo.toml",
         b"[package]\nname = \"unused\"\nversion = \"9.0.0\"\n",
@@ -192,6 +198,7 @@ optional-local = { path = "packages/optional-local" }
         "registry/patch-dep-8.0.0/src/lib.rs",
         b"pub fn patch_dependency() {}\n",
     );
+    fixture.file("cache/patch-dep-8.0.0.crate", b"patch-dep-archive-bytes\n");
     let local_id = "path+file:///fixture/local#0.1.0";
     let resolver_local_id = "path+file:///fixture/not-selected#0.1.0";
     let registry_id = "registry+https://example.invalid/index#dep@1.2.3";
@@ -273,7 +280,7 @@ optional-local = { path = "packages/optional-local" }
     let graph_path = fixture.file("graph.json", &serde_json::to_vec(&graph).expect("graph"));
     let lock = fixture.file(
         "Cargo.lock",
-        b"version = 3\n\n[[package]]\nname = \"dep\"\nversion = \"1.2.3\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"1111111111111111111111111111111111111111111111111111111111111111\"\n\n[[package]]\nname = \"not-selected\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"optional-local\"\nversion = \"0.2.0\"\ndependencies = [\"patch-dep\"]\n\n[[package]]\nname = \"patch-dep\"\nversion = \"8.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"8888888888888888888888888888888888888888888888888888888888888888\"\n\n[[package]]\nname = \"resolver\"\nversion = \"3.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"3333333333333333333333333333333333333333333333333333333333333333\"\n\n[[package]]\nname = \"unused\"\nversion = \"9.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"9999999999999999999999999999999999999999999999999999999999999999\"\n",
+        b"version = 3\n\n[[package]]\nname = \"dep\"\nversion = \"1.2.3\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"aedff91a6006659dd23e9c657f2e3f5d5d189e64f8cd7cf63a571b4870f5305c\"\n\n[[package]]\nname = \"not-selected\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"optional-local\"\nversion = \"0.2.0\"\ndependencies = [\"patch-dep\"]\n\n[[package]]\nname = \"patch-dep\"\nversion = \"8.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"2e43da6fbedf42d0cf9652768e274f7d1a16b7cdf258f48ab1db3bcab829df69\"\n\n[[package]]\nname = \"resolver\"\nversion = \"3.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"e22eebe0823c18486897a87550d2ef08f5fb3b25b1dd3df341ef9a2f9577fc1f\"\n\n[[package]]\nname = \"unused\"\nversion = \"9.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"9999999999999999999999999999999999999999999999999999999999999999\"\n",
     );
     let config = fixture.file(
         "config.toml",

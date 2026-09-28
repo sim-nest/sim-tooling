@@ -246,6 +246,12 @@ pub(super) fn copy_resolver(
     lock: &[u8],
 ) -> Result<(), String> {
     let package_root = package_root(&package.manifest, vendor_root, &package.id)?;
+    verify_archive_checksum(
+        vendor_root,
+        &package.name,
+        package_version(&package.id)?,
+        lock,
+    )?;
     let destination = PathBuf::from(format!(
         "{}-{}",
         package.name,
@@ -281,6 +287,7 @@ pub(super) fn copy_selected(
     lock: &[u8],
 ) -> Result<(), String> {
     let package_root = package_root(&package.manifest, vendor_root, &package.id)?;
+    verify_archive_checksum(vendor_root, &package.name, &package.version, lock)?;
     let destination = PathBuf::from(format!("{}-{}", package.name, package.version));
     copy_manifest(vendor, &package.manifest, &destination, vendor_root)?;
     let mut copied_directories = BTreeSet::new();
@@ -394,6 +401,41 @@ fn package_root(manifest: &Path, vendor_root: &Path, id: &str) -> Result<PathBuf
     Ok(root)
 }
 
+/// Verifies the registry cache's packed `.crate` archive for `name`
+/// `version` -- beside `vendor_root`'s own unpacked package directories, in
+/// a sibling `cache` directory at the same flat layout (matching how every
+/// other caller here locates a registry package: directly at
+/// `vendor_root.join("<name>-<version>")`, see `locked_resolver_packages`) --
+/// against the lock's checksum, before anything under `package_root` (an
+/// unpacked directory Cargo itself never re-verifies once extracted, and
+/// that anyone with local write access could have modified since) is
+/// trusted and copied. Without this, `write_checksum` would compute digests
+/// over the copied bytes themselves and pair them with the lock's checksum
+/// regardless of whether those bytes still matched it, blessing a tampered
+/// source as if verified.
+fn verify_archive_checksum(
+    vendor_root: &Path,
+    name: &str,
+    version: &str,
+    lock: &[u8],
+) -> Result<(), String> {
+    let cache_root = vendor_root
+        .parent()
+        .ok_or("registry vendor root has no parent")?
+        .join("cache");
+    let archive = cache_root.join(format!("{name}-{version}.crate"));
+    let bytes = bounded_read(&archive)
+        .map_err(|error| format!("registry archive for {name} {version}: {error}"))?;
+    let expected = lock_checksum(lock, name, version)?;
+    if digest(&bytes) != expected {
+        return Err(format!(
+            "{} does not match the checksum {expected} in Cargo.lock",
+            archive.display()
+        ));
+    }
+    Ok(())
+}
+
 fn package_version(id: &str) -> Result<&str, String> {
     id.rsplit_once('@')
         .map(|(_, version)| version)
@@ -403,7 +445,11 @@ fn package_version(id: &str) -> Result<&str, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::uniquely_unused_patch;
+    use super::{uniquely_unused_patch, verify_archive_checksum};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn unused_patch_identity_must_be_exact_and_unique() {
@@ -422,5 +468,71 @@ mod tests {
 
         let duplicate = vec![rows[0].clone(), rows[0].clone()];
         assert!(!uniquely_unused_patch(&duplicate, "support", "1.2.3"));
+    }
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("{label}-{}-{stamp}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    fn lock_with_checksum(checksum: &str) -> Vec<u8> {
+        format!(
+            "version = 3\n\n[[package]]\nname = \"dep\"\nversion = \"1.2.3\"\n\
+             source = \"registry+https://example.invalid/index\"\nchecksum = \"{checksum}\"\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_registry_package_whose_archive_matches_the_lock_checksum_is_accepted() {
+        let base = temp_dir("registry-archive-match");
+        let vendor_root = base.join("registry");
+        fs::create_dir(&vendor_root).unwrap();
+        fs::create_dir(base.join("cache")).unwrap();
+        fs::write(base.join("cache/dep-1.2.3.crate"), b"real archive bytes\n").unwrap();
+        let checksum = super::digest(b"real archive bytes\n");
+        verify_archive_checksum(&vendor_root, "dep", "1.2.3", &lock_with_checksum(&checksum))
+            .unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_registry_archive_that_does_not_match_the_lock_checksum_is_refused() {
+        let base = temp_dir("registry-archive-mismatch");
+        let vendor_root = base.join("registry");
+        fs::create_dir(&vendor_root).unwrap();
+        fs::create_dir(base.join("cache")).unwrap();
+        // Tampered: the bytes on disk no longer match what the lock recorded
+        // when the archive was originally fetched and verified.
+        fs::write(base.join("cache/dep-1.2.3.crate"), b"tampered bytes\n").unwrap();
+        let original_checksum = super::digest(b"real archive bytes\n");
+        let err = verify_archive_checksum(
+            &vendor_root,
+            "dep",
+            "1.2.3",
+            &lock_with_checksum(&original_checksum),
+        )
+        .unwrap_err();
+        assert!(err.contains("does not match the checksum"), "{err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_missing_registry_archive_is_refused() {
+        let base = temp_dir("registry-archive-missing");
+        let vendor_root = base.join("registry");
+        fs::create_dir(&vendor_root).unwrap();
+        fs::create_dir(base.join("cache")).unwrap();
+        let checksum = super::digest(b"whatever\n");
+        let err =
+            verify_archive_checksum(&vendor_root, "dep", "1.2.3", &lock_with_checksum(&checksum))
+                .unwrap_err();
+        assert!(err.contains("registry archive for dep 1.2.3"), "{err}");
+        let _ = fs::remove_dir_all(&base);
     }
 }
