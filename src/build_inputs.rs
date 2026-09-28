@@ -30,8 +30,8 @@ mod selected_view;
 mod tree;
 
 pub(crate) use self::tree::{
-    FileRecord, TreeLimit, TreeReport, TreeWriter, bounded_read, canonical_directory, digest,
-    staging_path, sync_directory, write_new,
+    FileRecord, TreeLimit, TreeReport, TreeWriter, bounded_read, bounded_read_allow_empty,
+    canonical_directory, digest, staging_path, sync_directory, write_new,
 };
 
 struct Options {

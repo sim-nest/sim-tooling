@@ -1,4 +1,4 @@
-use super::{Package, ResolverPackage, TreeWriter, bounded_read, digest};
+use super::{Package, ResolverPackage, TreeWriter, bounded_read, bounded_read_allow_empty, digest};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -347,7 +347,7 @@ fn write_checksum(
                 .to_str()
                 .ok_or("registry checksum path is not UTF-8")?
                 .replace('\\', "/");
-            files.insert(relative, digest(&bounded_read(&entry.path())?));
+            files.insert(relative, digest(&bounded_read_allow_empty(&entry.path())?));
         }
     }
     let package = lock_checksum(lock, name, version)?;

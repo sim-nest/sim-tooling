@@ -171,6 +171,11 @@ optional-local = { path = "packages/optional-local" }
         b"{\"files\":{},\"package\":null}\n",
     );
     fixture.file("registry/dep-1.2.3/src/lib.rs", b"pub fn dependency() {}\n");
+    // A real published crate can ship a zero-length file (an empty `build.rs`
+    // companion module, a marker file); the whole-package copy and its fresh
+    // checksum manifest must both still materialize it, not refuse the
+    // package.
+    fixture.file("registry/dep-1.2.3/build.rs", b"");
     fixture.file("cache/dep-1.2.3.crate", b"dep-archive-bytes\n");
     let resolver_manifest = fixture.file(
         "registry/resolver-3.0.0/Cargo.toml",
@@ -350,6 +355,12 @@ optional-local = { path = "packages/optional-local" }
     );
     assert!(!destination.join("source/secret.rs").exists());
     assert!(destination.join("vendor/dep-1.2.3/src/lib.rs").is_file());
+    let empty_copy = destination.join("vendor/dep-1.2.3/build.rs");
+    assert!(
+        empty_copy.is_file(),
+        "a zero-length package file must still be materialized"
+    );
+    assert!(fs::read(&empty_copy).expect("copied empty file").is_empty());
     assert!(
         destination
             .join("vendor/resolver-3.0.0/src/lib.rs")
@@ -434,6 +445,31 @@ fn copied_tree_refuses_symlink_outside_selected_owners() {
         .copy_tree(&source, Path::new("package"), &[allowed])
         .expect_err("escape must be refused");
     assert!(error.contains("escaped selected owners"));
+}
+
+#[test]
+fn a_zero_length_file_in_a_copied_tree_is_not_refused() {
+    // A real published crate can legitimately ship an empty file (an empty
+    // `build.rs` companion module, a marker file); whole-package copies (see
+    // `build_inputs/registry.rs::copy_selected`) must materialize it, not
+    // refuse the whole package.
+    let fixture = Fixture::new("empty-file");
+    let source = fixture.directory("source");
+    fixture.file("source/build.rs", b"");
+    fixture.file("source/src/lib.rs", b"pub fn present() {}\n");
+    let mut writer = TreeWriter::create(
+        fixture.root.join("output"),
+        TreeLimit {
+            entries: 16,
+            bytes: 1024,
+        },
+    )
+    .expect("writer");
+    writer
+        .copy_tree(&source, Path::new("package"), &[])
+        .expect("a zero-length file must copy, not refuse the package");
+    let copied = fs::read(fixture.root.join("output/package/build.rs")).expect("copied file");
+    assert!(copied.is_empty());
 }
 
 #[test]

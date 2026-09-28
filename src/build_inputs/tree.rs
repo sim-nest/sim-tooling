@@ -127,7 +127,9 @@ impl TreeWriter {
                 selected.display()
             ));
         }
-        let bytes = bounded_read_with_limit(&selected, self.limit.bytes)?;
+        // A copied package's own file content, unlike a control or record
+        // file: a real, legitimately empty file must still copy.
+        let bytes = bounded_read_with_limit(&selected, self.limit.bytes, true)?;
         let executable = metadata.permissions().mode() & 0o111 != 0;
         self.write_file(destination, &bytes, executable)
     }
@@ -253,14 +255,27 @@ pub(crate) fn sync_directory(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn bounded_read(path: &Path) -> Result<Vec<u8>, String> {
-    bounded_read_with_limit(path, MAX_INPUT_BYTES)
+    bounded_read_with_limit(path, MAX_INPUT_BYTES, false)
 }
 
-fn bounded_read_with_limit(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
+/// Like [`bounded_read`], except a zero-length file is not refused: real
+/// Cargo package content (unlike the control and record files `bounded_read`
+/// is normally used for -- a manifest, a lock, `cargo metadata`'s own
+/// output -- can legitimately be empty, e.g. an empty `build.rs` companion
+/// module or marker file shipped in a real published crate).
+pub(crate) fn bounded_read_allow_empty(path: &Path) -> Result<Vec<u8>, String> {
+    bounded_read_with_limit(path, MAX_INPUT_BYTES, true)
+}
+
+fn bounded_read_with_limit(
+    path: &Path,
+    limit: usize,
+    allow_empty: bool,
+) -> Result<Vec<u8>, String> {
     let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let length = usize::try_from(file.metadata().map_err(|error| error.to_string())?.len())
         .map_err(|_| "selected input length exceeds address space")?;
-    if length == 0 || length > limit {
+    if (length == 0 && !allow_empty) || length > limit {
         return Err(format!(
             "selected input length is outside bounds: {}",
             path.display()
