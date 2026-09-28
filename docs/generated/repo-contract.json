@@ -341,7 +341,7 @@
       "executable": {
         "lock_sha256": "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678",
         "package": "simdoc",
-        "source_sha256": "95eb6b508037276427bfb2744f57d92da4d041a68483d4d35392c0fb865d489c",
+        "source_sha256": "651396ec22a9bdf2dc72bde2594acc2ba2293ed2307099873f3e5fc3c70b8b2f",
         "version": "0.1.0"
       },
       "operation": "repo-contract --repo .",
@@ -357,13 +357,13 @@
         }
       }
     },
-    "generation_timestamp": "2026-09-26T16:36:49Z",
+    "generation_timestamp": "2026-09-28T22:54:19+02:00",
     "generator": "xtask repo-contract v1",
-    "git_commit": "8a0071cfcbd339a020039b00363f686084410171",
+    "git_commit": "96a045377b76404288803963654c3f368c156ff6",
     "regeneration_command": "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "8a0071cfcbd339a020039b00363f686084410171",
+    "source_commit": "96a045377b76404288803963654c3f368c156ff6",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -379,10 +379,12 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "ca615ca68d12dbda",
+    "workspace_hash": "2ffbe992ea08c13a",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 220,
+    "workspace_hash_input_count": 227,
     "workspace_hash_inputs": [
+      ".github/workflows/authorship.yml",
+      ".github/workflows/ci.yml",
       "Cargo.toml",
       "crates/Cargo.toml",
       "crates/sim-check-pack/Cargo.toml",
@@ -472,6 +474,7 @@
       "crates/simdoc/src/workflow_yaml.rs",
       "crates/simdoc/src/workflow_yaml_tests.rs",
       "crates/simdoc/src/worktree.rs",
+      "examples/jvm_baseline_request.rs",
       "features.toml",
       "src/atelier/capsule.rs",
       "src/atelier/capsule_tests.rs",
@@ -525,6 +528,7 @@
       "src/bench/report.rs",
       "src/bench/run.rs",
       "src/bench.rs",
+      "src/build_inputs/bounded_process.rs",
       "src/build_inputs/derive.rs",
       "src/build_inputs/finalize.rs",
       "src/build_inputs/graph.rs",
@@ -602,7 +606,10 @@
       "src/simdoc_pin.rs",
       "src/simdoc_pin_tests.rs",
       "src/simdoc_route.rs",
-      "src/toolchain_identity.rs"
+      "src/toolchain_identity.rs",
+      "tests/dispatch.rs",
+      "tests/engine_identity.rs",
+      "tests/launcher_isolation.rs"
     ]
   },
   "recipe_book_count": 2,
