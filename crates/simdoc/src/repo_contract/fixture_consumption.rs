@@ -87,12 +87,13 @@ struct Facts {
     /// name alone: a same-named decoy elsewhere in the file, reached only
     /// because its own final path segment matches, proves nothing.
     fixture_calls: Vec<(Vec<String>, String)>,
-    /// Whether this item's own body locally defines (shadows) its own
-    /// nested `fn consume_fixture`. Rust's own scoping rules mean a bare,
-    /// unqualified `consume_fixture(...)` call inside such a body always
-    /// binds to that local shadow, never to any outer, reviewed helper of
-    /// the same name -- so a bare reference is never credited when this is
-    /// set, regardless of what [`Items::resolve`] would otherwise find.
+    /// Whether this item's own body (or its own signature) locally binds
+    /// the name `consume_fixture`: a nested `fn`, a `let` binding, or a
+    /// parameter. Rust's own scoping rules mean a bare, unqualified
+    /// `consume_fixture(...)` call inside such a body always binds to that
+    /// local shadow, never to any outer, reviewed helper of the same name
+    /// -- so a bare reference is never credited when this is set,
+    /// regardless of what [`Items::resolve`] would otherwise find.
     shadows_consume_fixture: bool,
     references: Vec<Vec<String>>,
 }
@@ -516,6 +517,21 @@ impl<'ast> Visit<'ast> for Collector {
         }
     }
 
+    // A parameter named `consume_fixture` shadows any outer helper of that
+    // name for every bare reference in this function's own body, the same
+    // as a local binding or a nested fn of that name.
+    fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        for input in &item.sig.inputs {
+            if let syn::FnArg::Typed(typed) = input
+                && let syn::Pat::Ident(ident) = &*typed.pat
+                && ident.ident == "consume_fixture"
+            {
+                self.shadows_consume_fixture = true;
+            }
+        }
+        syn::visit::visit_item_fn(self, item);
+    }
+
     fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
 
     fn visit_block(&mut self, block: &'ast syn::Block) {
@@ -530,6 +546,15 @@ impl<'ast> Visit<'ast> for Collector {
     fn visit_stmt(&mut self, statement: &'ast syn::Stmt) {
         if leading_attributes_disable(statement) {
             return;
+        }
+        // A local binding named `consume_fixture` shadows any outer helper
+        // of that name for every bare reference in the rest of this body,
+        // exactly as a nested fn of that name does.
+        if let syn::Stmt::Local(local) = statement
+            && let syn::Pat::Ident(ident) = &local.pat
+            && ident.ident == "consume_fixture"
+        {
+            self.shadows_consume_fixture = true;
         }
         // A consumption whose value is dropped on the spot consumes nothing.
         // (an expression statement, a `let _`/`let _name`, or `drop(...)`).

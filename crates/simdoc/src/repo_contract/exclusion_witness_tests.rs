@@ -223,6 +223,22 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
              #[test]\nfn t() {\n    fn consume_fixture(_: &str) -> u8 { 0 }\n    \
              let d = consume_fixture(\"tests/ui\");\n}\n",
         ),
+        // Same shadowing rule, a `let` binding instead of a nested fn.
+        (
+            "locally-shadowed-via-let-binding",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             #[test]\nfn t() {\n    let consume_fixture = |_: &str| 0u8;\n    \
+             let d = consume_fixture(\"tests/ui\");\n}\n",
+        ),
+        // Same shadowing rule, a function parameter instead of a nested fn.
+        (
+            "locally-shadowed-via-parameter",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn dir(consume_fixture: u8) {\n    let d = consume_fixture(\"tests/ui\");\n}\n\
+             #[test]\nfn t() { dir(0); }\n",
+        ),
     ];
     for (label, source) in dead {
         let repo = fixture_repo(
