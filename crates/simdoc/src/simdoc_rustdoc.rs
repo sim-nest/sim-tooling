@@ -22,6 +22,16 @@ pub(crate) fn run_api_docs(
     force_docbuild: bool,
     resolver: Option<&crate::resolver_input::ResolverInput>,
 ) -> Result<(), String> {
+    // Checked before the fingerprint cache below, not after: a `target`
+    // that is a link would send Cargo's writes elsewhere, and a link whose
+    // target happens to already hold a matching fingerprint file would
+    // otherwise let the cache-hit return skip this refusal entirely.
+    if fs::symlink_metadata(root.join("target")).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(format!(
+            "refused: {} is a symlink; cargo doc would write through it",
+            root.join("target").display()
+        ));
+    }
     let fingerprint = docbuild_fingerprint(root, resolver);
     let cache = root.join("target").join(".simdoc-docbuild-fingerprint");
     let force = force_docbuild || env::var("SIMDOC_FORCE_DOCS").is_ok();
@@ -37,13 +47,6 @@ pub(crate) fn run_api_docs(
         .map(|input| input.manifest.as_path())
         .into_iter()
         .collect::<Vec<_>>();
-    // A `target` that is a link would send Cargo's writes elsewhere.
-    if fs::symlink_metadata(root.join("target")).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        return Err(format!(
-            "refused: {} is a symlink; cargo doc would write through it",
-            root.join("target").display()
-        ));
-    }
     let lock_path = resolver.map_or_else(
         || root.join("Cargo.lock"),
         |input| input.manifest.with_file_name("Cargo.lock"),

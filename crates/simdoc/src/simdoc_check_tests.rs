@@ -152,6 +152,42 @@ fn a_target_that_is_a_symlink_refuses_the_docs_build() {
     assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
 }
 
+/// The symlink refusal above must hold even when a docs-cache fingerprint
+/// happens to already match: the fingerprint cache-hit check must never run
+/// before the symlink check, or a `target` link to a location that already
+/// holds a matching fingerprint file would return success without ever
+/// refusing (or running `cargo doc` at all).
+#[test]
+fn a_target_symlink_refuses_even_with_a_matching_docs_cache_fingerprint() {
+    let repo = FixtureRepo::nested("target-link-cache-hit");
+    // A tracked lock, or the docs build is skipped entirely (never writing
+    // any fingerprint) rather than actually running cargo doc.
+    let status = std::process::Command::new(env!("CARGO"))
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(repo.path().join("Cargo.toml"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    repo.commit();
+    // A real, unforced run: builds real docs and writes a real fingerprint
+    // that matches this repository's current inputs.
+    repo.run_simdoc(&["--rustdoc", "auto"]).unwrap();
+    let fingerprint =
+        fs::read_to_string(repo.path().join("target/.simdoc-docbuild-fingerprint")).unwrap();
+    fs::remove_dir_all(repo.path().join("target")).unwrap();
+    let elsewhere = repo.path().parent().unwrap().join("elsewhere-cache-hit");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join(".simdoc-docbuild-fingerprint"), &fingerprint).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, repo.path().join("target")).unwrap();
+    let err = repo.run_simdoc(&["--rustdoc", "auto"]).unwrap_err();
+    assert!(
+        err.contains("is a symlink") && err.contains("cargo doc"),
+        "{err}"
+    );
+}
+
 /// `cargo doc` builds into a private target directory and reads only a
 /// tracked lock: a `target` left in the tree is never reused or written, and
 /// an untracked `Cargo.lock` never decides which registry crates are built.
