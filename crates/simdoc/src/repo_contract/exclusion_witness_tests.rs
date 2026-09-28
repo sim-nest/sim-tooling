@@ -360,6 +360,74 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
             "async-block-never-polled",
             "#[test]\nfn t() { let _f = async { let d = consume_fixture(\"tests/ui\"); }; }\n",
         ),
+        // An `@`-pattern binds BOTH its own outer name and whatever its
+        // subpattern binds; the subpattern's own shadow must be recognized
+        // too, not only the outer one.
+        (
+            "shadow-via-at-pattern-subpattern",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn dir(x: Option<u8>) {\n    if let whole @ Some(consume_fixture) = x {\n        \
+             let _ = whole;\n        let d = consume_fixture(\"tests/ui\");\n    }\n}\n\
+             #[test]\nfn t() { dir(Some(0)); }\n",
+        ),
+        // A block-local `use ... as X;` shadows X for a QUALIFIED
+        // (multi-segment) call too, not only a bare one: real Rust module
+        // resolution starts from a path's own first segment, and a local
+        // rename of that segment redirects everything after it.
+        (
+            "shadow-of-a-qualified-paths-first-segment",
+            "mod real { pub fn consumer() { let d = consume_fixture(\"tests/ui\"); } }\n\
+             mod fake { pub fn consumer() {} }\n\
+             #[test]\nfn t() {\n    use fake as real;\n    real::consumer();\n}\n",
+        ),
+        // A let-chain's own binding is in scope for every later conjunct in
+        // the SAME chain (Rust 2024 let-chain scoping), so a decoy bound
+        // there shadows a call later in the same condition, not only in the
+        // then-branch.
+        (
+            "shadow-scoped-across-a-let-chain",
+            "fn consume_fixture(relative: &str) -> std::path::PathBuf {\n    \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n}\n\
+             fn decoy() -> Option<u8> { Some(0) }\n\
+             fn dir() {\n    if let Some(consume_fixture) = decoy()\n        \
+             && consume_fixture(\"tests/ui\") == 0\n    {\n    }\n}\n\
+             #[test]\nfn t() { dir(); }\n",
+        ),
+        // `let _: () = return;` diverges exactly as a bare `return;`
+        // statement does.
+        (
+            "after-a-diverging-let-initializer",
+            "#[test]\nfn t() { let _: () = return; let d = consume_fixture(\"tests/ui\"); }\n",
+        ),
+        // `&&` short-circuits: once its left side is statically false, the
+        // right side never runs, exactly like a dead `if false` branch.
+        (
+            "short-circuit-and-never-evaluates-its-right-side",
+            "#[test]\nfn t() { if false && { let d = consume_fixture(\"tests/ui\"); true } {} }\n",
+        ),
+        // A tuple, array, or parenthesized expression that is itself
+        // dropped as a whole drops every element with it, exactly as a
+        // bare dropped call does.
+        (
+            "dropped-inside-a-tuple",
+            "#[test]\nfn t() { let _ = (consume_fixture(\"tests/ui\"),); }\n",
+        ),
+        (
+            "dropped-inside-an-array",
+            "#[test]\nfn t() { let _ = [consume_fixture(\"tests/ui\")]; }\n",
+        ),
+        // `assert!`'s own format-message arguments are only evaluated if
+        // the assertion actually fails; a passing assertion's own message
+        // arguments never run.
+        (
+            "assert-message-argument-is-lazy",
+            "#[test]\nfn t() { assert!(true, \"{}\", consume_fixture(\"tests/ui\").display()); }\n",
+        ),
+        (
+            "assert-eq-message-argument-is-lazy",
+            "#[test]\nfn t() { assert_eq!(1, 1, \"{}\", consume_fixture(\"tests/ui\").display()); }\n",
+        ),
     ];
     for (label, source) in dead {
         let repo = fixture_repo(
@@ -436,6 +504,24 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
             "shadow-scope-limited-to-its-own-for-loop",
             "#[test]\nfn t() {\n    let d = consume_fixture(\"tests/ui\");\n    \
              for consume_fixture in [\"x\"] {\n        let _ = consume_fixture;\n    }\n}\n",
+        ),
+        // A `let` binding's own right-hand side is resolved in the OUTER
+        // scope, exactly as real Rust does: `let consume_fixture =
+        // consume_fixture(...)` calls the outer, reviewed helper on its own
+        // right-hand side, not the name it is itself introducing.
+        (
+            "let-binding-does-not-shadow-its-own-initializer",
+            "#[test]\nfn t() {\n    let consume_fixture = consume_fixture(\"tests/ui\");\n    \
+             let _ = consume_fixture;\n}\n",
+        ),
+        // A `for` loop's own iterator expression is evaluated in the OUTER
+        // scope too, before the loop pattern comes into existence: real
+        // Rust evaluates it exactly once, before binding the pattern for
+        // the first time.
+        (
+            "for-loop-iterator-expression-is-not-shadowed-by-its-own-pattern",
+            "#[test]\nfn t() {\n    for consume_fixture in [consume_fixture(\"tests/ui\")] {\n        \
+             let _ = consume_fixture;\n    }\n}\n",
         ),
     ];
     for (label, source) in live {

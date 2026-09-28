@@ -14,7 +14,14 @@
 /// scope.
 pub(super) fn pattern_bound_names(pattern: &syn::Pat, names: &mut Vec<String>) {
     match pattern {
-        syn::Pat::Ident(ident) => names.push(ident.ident.to_string()),
+        syn::Pat::Ident(ident) => {
+            names.push(ident.ident.to_string());
+            // An `@`-pattern (`whole @ Some(consume_fixture)`) binds BOTH
+            // the outer name and whatever its own subpattern binds.
+            if let Some((_, subpat)) = &ident.subpat {
+                pattern_bound_names(subpat, names);
+            }
+        }
         syn::Pat::Tuple(tuple) => {
             for element in &tuple.elems {
                 pattern_bound_names(element, names);

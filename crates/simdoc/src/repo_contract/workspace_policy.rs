@@ -20,8 +20,8 @@
 //!
 //! | class | consumer | native evidence (see [`super::exclusion_witness`]) |
 //! | --- | --- | --- |
-//! | `test-fixture` | a `test` target source | a live `#[test]` function holds a string literal naming the fixture |
-//! | `recipe-fixture` | a recipe, book, or chapter manifest under `recipes/` | a string value of the parsed TOML names the fixture |
+//! | `test-fixture` | a `test` target source | a live `#[test]` function actually invokes a reviewed `consume_fixture(...)` helper with that fixture path, never merely holding the string as text (see [`super::fixture_consumption`]) |
+//! | `recipe-fixture` | a `recipe.toml` under a covered package's `recipes/` | the file is parsed as TOML; its typed top-level `fixtures` array names the fixture path |
 //! | `focused-test-harness` | one of the root manifest's `validation-commands` | that command runs the harness by `--manifest-path`, and the harness has a matching test or binary target |
 //!
 //! Every excluded package must also declare `publish = false`, and a

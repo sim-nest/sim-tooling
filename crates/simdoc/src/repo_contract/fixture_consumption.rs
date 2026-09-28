@@ -8,9 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use syn::{
-    Attribute, Expr, ExprCall, ExprIf, ItemConst, ItemFn, ItemStatic, Lit, Macro, visit::Visit,
-};
+use syn::{Attribute, Expr, ExprCall, ExprIf, ItemConst, ItemFn, ItemStatic, Macro, visit::Visit};
 
 #[path = "fixture_consumption_shadow.rs"]
 mod fixture_consumption_shadow;
@@ -274,111 +272,11 @@ const EVALUATING_MACROS: [&str; 17] = [
     "todo",
 ];
 
-/// Whether an expression asks about the build configuration (`cfg!(...)`).
-fn mentions_cfg(expr: &Expr) -> bool {
-    quote::quote!(#expr)
-        .to_string()
-        .replace(' ', "")
-        .contains("cfg!(")
-}
-
-/// The leftmost call of a method chain (`f(x).a().b()` starts at `f(x)`).
-fn chain_root(mut expr: &Expr) -> &Expr {
-    while let Expr::MethodCall(call) = expr {
-        expr = &call.receiver;
-    }
-    expr
-}
-
-/// The callee path and literal argument of a `consume_fixture("...")`-shaped
-/// call. The path is returned unresolved: whether it actually names a
-/// reviewed helper is decided later, once the whole file's items are known
-/// (see [`live_test_fixtures`]), never from this final segment alone.
-fn consumption(call: &ExprCall) -> Option<(Vec<String>, String)> {
-    let Expr::Path(path) = &*call.func else {
-        return None;
-    };
-    if path.path.segments.last()?.ident != "consume_fixture" {
-        return None;
-    }
-    let segments = path
-        .path
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>();
-    match call.args.first() {
-        Some(Expr::Lit(literal)) => match &literal.lit {
-            Lit::Str(text) => Some((segments, text.value())),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The value of a condition that is statically a boolean.
-fn constant(expr: &Expr) -> Option<bool> {
-    match expr {
-        Expr::Lit(literal) => match &literal.lit {
-            Lit::Bool(value) => Some(value.value),
-            _ => None,
-        },
-        Expr::Paren(inner) => constant(&inner.expr),
-        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Not(_)) => {
-            constant(&unary.expr).map(|value| !value)
-        }
-        Expr::Macro(mac) if mac.mac.path.is_ident("cfg") => {
-            match mac.mac.tokens.to_string().replace(' ', "").as_str() {
-                "any()" => Some(false),
-                "all()" => Some(true),
-                // `cfg!(test)` is true in a test build; any other predicate
-                // depends on the build, so neither branch is relied on.
-                "test" => Some(true),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Whether `stmt` always diverges: nothing textually after it in the same
-/// block can ever run.
-fn diverges(stmt: &syn::Stmt) -> bool {
-    match stmt {
-        syn::Stmt::Expr(expr, _) => expr_diverges(expr),
-        _ => false,
-    }
-}
-
-/// Whether evaluating `expr` always diverges: a bare `return`, a nested
-/// block whose own contents always diverge, or an `if`/`else` where the
-/// branch a statically decidable condition takes (or, when undecidable,
-/// every branch) always diverges.
-fn expr_diverges(expr: &Expr) -> bool {
-    match expr {
-        Expr::Return(_) => true,
-        Expr::Block(block) => block_diverges(&block.block),
-        Expr::If(if_expr) => match constant(&if_expr.cond) {
-            Some(true) => block_diverges(&if_expr.then_branch),
-            Some(false) => if_expr
-                .else_branch
-                .as_ref()
-                .is_some_and(|(_, otherwise)| expr_diverges(otherwise)),
-            None => {
-                block_diverges(&if_expr.then_branch)
-                    && if_expr
-                        .else_branch
-                        .as_ref()
-                        .is_some_and(|(_, otherwise)| expr_diverges(otherwise))
-            }
-        },
-        _ => false,
-    }
-}
-
-fn block_diverges(block: &syn::Block) -> bool {
-    block.stmts.iter().any(diverges)
-}
+#[path = "fixture_consumption_analysis.rs"]
+mod fixture_consumption_analysis;
+use fixture_consumption_analysis::{
+    Certainty, chain_root, constant, consumption, diverges, mentions_cfg,
+};
 
 impl Collector {
     fn is_shadowed(&self, name: &str) -> bool {
@@ -388,10 +286,13 @@ impl Collector {
     }
 
     /// Records `call` as an actual invocation (`awaited` says whether this
-    /// collector saw it directly `.await`ed): a bare, single-segment callee
-    /// currently shadowed by a local binding of that name is never
-    /// recorded at all, since it can bind only to that local decoy, never
-    /// to any outer item -- reviewed helper or otherwise.
+    /// collector saw it directly `.await`ed): a callee whose own FIRST path
+    /// segment is currently shadowed by a local binding of that name is
+    /// never recorded at all. Rust's own module resolution starts from that
+    /// first segment too, so once it is a local value the rest of the path
+    /// resolves inside whatever that local names -- never the outer, real
+    /// item this (module-tree-only) analysis would otherwise walk to, which
+    /// has no way to know about a local's own contents.
     fn record_call(&mut self, call: &ExprCall, awaited: bool) {
         let Expr::Path(path) = &*call.func else {
             return;
@@ -402,13 +303,111 @@ impl Collector {
             .iter()
             .map(|segment| segment.ident.to_string())
             .collect::<Vec<_>>();
-        if segments.len() == 1 && self.is_shadowed(&segments[0]) {
+        if segments
+            .first()
+            .is_some_and(|first| self.is_shadowed(first))
+        {
             return;
         }
         if let Some(fixture_call) = consumption(call) {
             self.fixture_calls.push(fixture_call);
         }
         self.references.push((segments, awaited));
+    }
+
+    /// Visits an `if`/`while` condition as a left-to-right chain of
+    /// `&&`/`||`-joined conjuncts (a plain condition is a chain of one):
+    /// a `let PAT = EXPR` conjunct visits `EXPR` in the scope active so
+    /// far, then pushes `PAT`'s own bound names, so a LATER conjunct in the
+    /// same chain -- and the body this condition guards -- sees them (real
+    /// Rust let-chain scoping); a statically decided conjunct short-circuits
+    /// the rest of its own `&&`/`||` exactly as the real operator would,
+    /// so a conjunct that can never actually run is never visited. Returns
+    /// how many scope frames were pushed (for the caller to pop once it is
+    /// done with whatever this condition guards) and, when the WHOLE chain
+    /// is statically decided, its value.
+    fn visit_condition(&mut self, cond: &Expr) -> (usize, Certainty) {
+        if let Expr::Binary(binary) = cond
+            && let syn::BinOp::And(_) | syn::BinOp::Or(_) = binary.op
+        {
+            let is_and = matches!(binary.op, syn::BinOp::And(_));
+            let (left_frames, left) = self.visit_condition(&binary.left);
+            // `&&` short-circuits once the left side is false; `||` once
+            // it is true -- the right side is never evaluated, so never
+            // visited either.
+            let short_circuit = Certainty::Decided(!is_and);
+            if left == short_circuit {
+                return (left_frames, left);
+            }
+            let (right_frames, right) = self.visit_condition(&binary.right);
+            let decided = match (left, right) {
+                (Certainty::Decided(left), Certainty::Decided(right)) => {
+                    Certainty::Decided(if is_and { left && right } else { left || right })
+                }
+                (Certainty::CfgUnknown, _) | (_, Certainty::CfgUnknown) => Certainty::CfgUnknown,
+                _ => Certainty::Maybe,
+            };
+            return (left_frames + right_frames, decided);
+        }
+        if let Expr::Let(let_expr) = cond {
+            self.visit_expr(&let_expr.expr);
+            let mut names = Vec::new();
+            pattern_bound_names(&let_expr.pat, &mut names);
+            self.scopes.push(names);
+            return (1, Certainty::Maybe);
+        }
+        match constant(cond) {
+            Some(value) => (0, Certainty::Decided(value)),
+            None if mentions_cfg(cond) => (0, Certainty::CfgUnknown),
+            None => {
+                self.visit_expr(cond);
+                (0, Certainty::Maybe)
+            }
+        }
+    }
+
+    /// Visits `expr`, a value known to be dropped as a whole (or nested
+    /// inside one that is): a direct `consume_fixture("...")`-shaped call is
+    /// visited for its own arguments only, never credited (its own return
+    /// value is thrown away); a tuple, array, or parenthesized expression is
+    /// unwrapped one layer and each part treated the same way in turn (the
+    /// whole aggregate being dropped drops every element with it); anything
+    /// else is visited normally -- it may still execute for real and reach
+    /// further code, even though this particular value ends up discarded.
+    fn visit_dropped(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Tuple(tuple) => {
+                for element in &tuple.elems {
+                    self.visit_dropped(element);
+                }
+            }
+            Expr::Array(array) => {
+                for element in &array.elems {
+                    self.visit_dropped(element);
+                }
+            }
+            Expr::Paren(paren) => self.visit_dropped(&paren.expr),
+            _ => {
+                let root = match chain_root(expr) {
+                    Expr::Call(call) if quote::quote!(#call).to_string().starts_with("drop (") => {
+                        match call.args.first() {
+                            Some(Expr::Call(inner)) => Some(inner),
+                            _ => None,
+                        }
+                    }
+                    Expr::Call(call) => Some(call),
+                    _ => None,
+                };
+                match root {
+                    Some(call) if consumption(call).is_some() => {
+                        for argument in &call.args {
+                            self.visit_expr(argument);
+                        }
+                    }
+                    _ => self.visit_expr(expr),
+                }
+            }
+        }
     }
 }
 
@@ -465,17 +464,6 @@ impl<'ast> Visit<'ast> for Collector {
         if leading_attributes_disable(statement) {
             return;
         }
-        // A local binding shadows any outer item of the same name for the
-        // rest of this block, including one bound through a destructuring
-        // pattern (a tuple, a struct, a slice, an or-pattern, ...), not
-        // only a bare identifier.
-        if let syn::Stmt::Local(local) = statement {
-            let mut names = Vec::new();
-            pattern_bound_names(&local.pat, &mut names);
-            if let Some(frame) = self.scopes.last_mut() {
-                frame.extend(names);
-            }
-        }
         // A consumption whose value is dropped on the spot consumes nothing.
         // (an expression statement, a `let _`/`let _name`, or `drop(...)`).
         let dropped = match statement {
@@ -493,26 +481,25 @@ impl<'ast> Visit<'ast> for Collector {
             _ => None,
         };
         if let Some(expr) = dropped {
-            let root = match chain_root(expr) {
-                Expr::Call(call) if quote::quote!(#call).to_string().starts_with("drop (") => {
-                    match call.args.first() {
-                        Some(Expr::Call(inner)) => Some(inner),
-                        _ => None,
-                    }
-                }
-                Expr::Call(call) => Some(call),
-                _ => None,
-            };
-            if let Some(call) = root
-                && consumption(call).is_some()
-            {
-                for argument in &call.args {
-                    self.visit_expr(argument);
-                }
-                return;
+            self.visit_dropped(expr);
+        } else {
+            syn::visit::visit_stmt(self, statement);
+        }
+        // A local binding shadows any outer item of the same name for the
+        // rest of this block, including one bound through a destructuring
+        // pattern (a tuple, a struct, a slice, an or-pattern, ...), not
+        // only a bare identifier -- pushed only now, after the statement's
+        // own initializer has already been visited: Rust resolves a `let`
+        // binding's own right-hand side in the OUTER scope, so `let
+        // consume_fixture = consume_fixture("x");` must not shadow the call
+        // on its own right-hand side.
+        if let syn::Stmt::Local(local) = statement {
+            let mut names = Vec::new();
+            pattern_bound_names(&local.pat, &mut names);
+            if let Some(frame) = self.scopes.last_mut() {
+                frame.extend(names);
             }
         }
-        syn::visit::visit_stmt(self, statement);
     }
 
     fn visit_expr(&mut self, expr: &'ast Expr) {
@@ -546,74 +533,72 @@ impl<'ast> Visit<'ast> for Collector {
 
     fn visit_macro(&mut self, node: &'ast Macro) {
         use syn::punctuated::Punctuated;
-        let evaluating = node
-            .path
-            .get_ident()
-            .is_some_and(|ident| EVALUATING_MACROS.contains(&ident.to_string().as_str()));
-        if evaluating
-            && let Ok(arguments) =
-                node.parse_body_with(Punctuated::<Expr, syn::Token![,]>::parse_terminated)
-        {
-            for argument in &arguments {
-                self.visit_expr(argument);
-            }
+        let Some(name) = node.path.get_ident().map(ToString::to_string) else {
+            return;
+        };
+        if !EVALUATING_MACROS.contains(&name.as_str()) {
+            return;
+        }
+        let Ok(arguments) =
+            node.parse_body_with(Punctuated::<Expr, syn::Token![,]>::parse_terminated)
+        else {
+            return;
+        };
+        // `assert!`/`debug_assert!` only ever evaluate their condition;
+        // `assert_eq!`/`assert_ne!`/`debug_assert_eq!`/`debug_assert_ne!`
+        // only their two compared values -- every later argument is the
+        // panic message, evaluated only if the assertion actually fails.
+        let eager = match name.as_str() {
+            "assert" | "debug_assert" => 1,
+            "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+            _ => arguments.len(),
+        };
+        for argument in arguments.iter().take(eager) {
+            self.visit_expr(argument);
         }
     }
 
     fn visit_expr_if(&mut self, node: &'ast ExprIf) {
-        match constant(&node.cond) {
-            Some(false) => {
+        let (frames, certainty) = self.visit_condition(&node.cond);
+        match certainty {
+            Certainty::CfgUnknown => {}
+            Certainty::Decided(true) => self.visit_block(&node.then_branch),
+            Certainty::Decided(false) => {
                 if let Some((_, otherwise)) = &node.else_branch {
                     self.visit_expr(otherwise);
                 }
-                return;
             }
-            Some(true) => {
+            Certainty::Maybe => {
                 self.visit_block(&node.then_branch);
-                return;
+                if let Some((_, otherwise)) = &node.else_branch {
+                    self.visit_expr(otherwise);
+                }
             }
-            None if mentions_cfg(&node.cond) => return,
-            None => {}
         }
-        self.visit_expr(&node.cond);
-        // An `if let PAT = ...` binds PAT for the then-branch only (an
-        // `Expr::Let` reached here as `node.cond`, never visited generically
-        // since this override does not delegate to the default `if`
-        // traversal).
-        let mut names = Vec::new();
-        if let Expr::Let(let_expr) = &*node.cond {
-            pattern_bound_names(&let_expr.pat, &mut names);
-        }
-        self.scopes.push(names);
-        self.visit_block(&node.then_branch);
-        self.scopes.pop();
-        if let Some((_, otherwise)) = &node.else_branch {
-            self.visit_expr(otherwise);
+        for _ in 0..frames {
+            self.scopes.pop();
         }
     }
 
     fn visit_expr_while(&mut self, node: &'ast syn::ExprWhile) {
-        if constant(&node.cond) == Some(false) {
-            return;
+        let (frames, certainty) = self.visit_condition(&node.cond);
+        if !matches!(certainty, Certainty::Decided(false) | Certainty::CfgUnknown) {
+            self.visit_block(&node.body);
         }
-        self.visit_expr(&node.cond);
-        // A `while let PAT = ...` binds PAT for the body only, the same as
-        // `if let` above.
-        let mut names = Vec::new();
-        if let Expr::Let(let_expr) = &*node.cond {
-            pattern_bound_names(&let_expr.pat, &mut names);
+        for _ in 0..frames {
+            self.scopes.pop();
         }
-        self.scopes.push(names);
-        self.visit_block(&node.body);
-        self.scopes.pop();
     }
 
-    // A `for` loop's own pattern binds for its body only.
+    // A `for` loop's own pattern binds for its body only, and never for its
+    // own iterator expression: `for consume_fixture in real_iterator() {}`
+    // must evaluate `real_iterator()` in the OUTER scope first, exactly as
+    // a `let` binding's own initializer is.
     fn visit_expr_for_loop(&mut self, node: &'ast syn::ExprForLoop) {
+        self.visit_expr(&node.expr);
         let mut names = Vec::new();
         pattern_bound_names(&node.pat, &mut names);
         self.scopes.push(names);
-        self.visit_expr(&node.expr);
         self.visit_block(&node.body);
         self.scopes.pop();
     }
