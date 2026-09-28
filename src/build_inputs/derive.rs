@@ -9,7 +9,7 @@ use std::{
     io::Read,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Command,
 };
 
 const MAXIMUM_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -211,6 +211,29 @@ fn derive(options: Options) -> Result<(), String> {
     sync_directory(&parent)
 }
 
+/// Reads `path`, refusing if its length differs from `expected` (checked by
+/// reading one byte past it, so neither a shrunk nor a grown file silently
+/// passes and nothing is buffered beyond one byte more than expected).
+/// Unlike `bounded_read`, zero is an allowed `expected` length.
+fn read_exactly(path: &Path, expected: u64) -> Result<Vec<u8>, String> {
+    let limit = usize::try_from(expected)
+        .map_err(|_| format!("{}: recorded length exceeds address space", path.display()))?;
+    let mut file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut bytes = Vec::with_capacity(limit);
+    file.by_ref()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() != limit {
+        return Err(format!(
+            "{} is {} bytes, recorded as {expected}",
+            path.display(),
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
 /// Every file `report` (a materialization record's `TreeReport`, as JSON)
 /// names under `root` must currently have exactly the recorded bytes and
 /// executable bit, and `root` must hold no file the record does not name:
@@ -230,8 +253,11 @@ fn require_tree_matches_record(root: &Path, report: &Json, label: &str) -> Resul
             .as_str()
             .ok_or_else(|| format!("materialization record {label} file has no sha256"))?;
         let executable = file["executable"].as_bool().unwrap_or(false);
+        let bytes = file["bytes"]
+            .as_u64()
+            .ok_or_else(|| format!("materialization record {label} file has no bytes"))?;
         if expected
-            .insert(path.to_owned(), (sha256.to_owned(), executable))
+            .insert(path.to_owned(), (sha256.to_owned(), executable, bytes))
             .is_some()
         {
             return Err(format!(
@@ -264,12 +290,21 @@ fn require_tree_matches_record(root: &Path, report: &Json, label: &str) -> Resul
                 .to_str()
                 .ok_or_else(|| format!("materialized {label} file path is not UTF-8"))?
                 .replace(std::path::MAIN_SEPARATOR, "/");
-            let Some((expected_sha256, expected_executable)) = expected.get(&relative) else {
+            let Some((expected_sha256, expected_executable, expected_bytes)) =
+                expected.get(&relative)
+            else {
                 return Err(format!(
                     "materialized {label} tree has an unrecorded file: {relative}"
                 ));
             };
-            let bytes = bounded_read(&entry.path())?;
+            // Not the generic bounded_read: its fixed ceiling can be
+            // smaller than materialize's own configurable tree limits, and
+            // it unconditionally refuses an empty file, which a real crate
+            // (or this very test suite's own fixtures) can legitimately
+            // have. The record's own recorded length is already a trusted,
+            // exact expectation; read exactly that far plus one byte, to
+            // detect a size mismatch without buffering more than needed.
+            let bytes = read_exactly(&entry.path(), *expected_bytes)?;
             if digest(&bytes) != *expected_sha256 {
                 return Err(format!(
                     "materialized {label} file changed since materialization: {relative}"
@@ -389,8 +424,13 @@ fn derive_into(input: DeriveInputs<'_>) -> Result<(), String> {
     write_new(&input.staging.join("derivation.json"), &report, false)
 }
 
-fn invoke(input: &DeriveInputs<'_>, role: &str, args: &[&str]) -> Result<Output, String> {
-    let output = Command::new(input.cargo)
+fn invoke(
+    input: &DeriveInputs<'_>,
+    role: &str,
+    args: &[&str],
+) -> Result<super::bounded_process::Captured, String> {
+    let mut command = Command::new(input.cargo);
+    command
         .args(args)
         .current_dir(input.workspace)
         .env_clear()
@@ -400,13 +440,17 @@ fn invoke(input: &DeriveInputs<'_>, role: &str, args: &[&str]) -> Result<Output,
         .env("RUSTC", input.rustc)
         .env("RUSTC_BOOTSTRAP", "1")
         .env("TMPDIR", input.work.join("tmp"))
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .map_err(|error| format!("start Cargo {role}: {error}"))?;
-    if output.stdout.len() > MAXIMUM_OUTPUT_BYTES || output.stderr.len() > MAXIMUM_DIAGNOSTIC_BYTES
-    {
-        return Err(format!("Cargo {role} output exceeds its finite bound"));
-    }
+        .env("PATH", "/usr/bin:/bin");
+    // Not Command::output(): it buffers both streams fully in memory before
+    // any bound is applied, so a repository-controlled manifest that makes
+    // cargo (or a build script) print without limit could exhaust memory
+    // before MAXIMUM_OUTPUT_BYTES/MAXIMUM_DIAGNOSTIC_BYTES is ever checked.
+    let output = super::bounded_process::run_bounded(
+        command,
+        &format!("Cargo {role}"),
+        MAXIMUM_OUTPUT_BYTES,
+        MAXIMUM_DIAGNOSTIC_BYTES,
+    )?;
     write_new(
         &input.staging.join(format!("{role}.stdout")),
         &output.stdout,

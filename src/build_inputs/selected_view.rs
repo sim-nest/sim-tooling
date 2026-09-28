@@ -21,7 +21,7 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Command,
 };
 
 mod checks;
@@ -517,13 +517,14 @@ fn invoke(
     work: &Path,
     role: &str,
     args: &[&str],
-) -> Result<Output, String> {
+) -> Result<super::bounded_process::Captured, String> {
     // Never the caller-provided real Cargo home: its own config.toml would
     // apply unconditionally alongside (not instead of) the content-bound
     // config above, and could inject `env`, `build.rustflags`, or a source
     // replacement of its own. This private, freshly created, still-empty
     // directory has no config.toml at all.
-    let output = Command::new(input.cargo)
+    let mut command = Command::new(input.cargo);
+    command
         .args(args)
         .current_dir(view)
         .env_clear()
@@ -534,15 +535,17 @@ fn invoke(
         .env("RUSTC", input.rustc)
         .env("RUSTC_BOOTSTRAP", "1")
         .env("TMPDIR", work.join("tmp"))
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .map_err(|error| format!("start selected Cargo {role}: {error}"))?;
-    if output.stdout.len() > MAXIMUM_OUTPUT_BYTES || output.stderr.len() > MAXIMUM_DIAGNOSTIC_BYTES
-    {
-        return Err(format!(
-            "selected Cargo {role} output exceeds its finite bound"
-        ));
-    }
+        .env("PATH", "/usr/bin:/bin");
+    // Not Command::output(): it buffers both streams fully in memory before
+    // any bound is applied, so a repository-controlled manifest that makes
+    // cargo (or a build script) print without limit could exhaust memory
+    // before MAXIMUM_OUTPUT_BYTES/MAXIMUM_DIAGNOSTIC_BYTES is ever checked.
+    let output = super::bounded_process::run_bounded(
+        command,
+        &format!("selected Cargo {role}"),
+        MAXIMUM_OUTPUT_BYTES,
+        MAXIMUM_DIAGNOSTIC_BYTES,
+    )?;
     write_new(
         &input.staging.join(format!("{role}.stdout")),
         &output.stdout,
