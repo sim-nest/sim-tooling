@@ -192,52 +192,60 @@ struct LockedPackage {
 }
 
 /// The registry packages of a `Cargo.lock` (`[[package]]` tables with a
-/// `source` of a registry), read line by line. A git dependency refuses.
+/// `source` of a registry), read as TOML. A git dependency refuses. Parsed
+/// with the same `toml` crate that decides every other TOML-encoded lock or
+/// manifest reading in this codebase, not by splitting lines and trimming
+/// double quotes: a hand-rolled reader would treat TOML's other valid string
+/// forms (a single-quoted literal string, an escaped double-quoted string,
+/// a multi-line string) as ordinary text carrying their own quote
+/// characters, so a git source encoded that way would fail the `git+`
+/// prefix check for the wrong reason -- an unstripped leading quote, not a
+/// different scheme -- and silently vanish from the result instead of
+/// refusing the run.
 fn registry_packages(lock: &str) -> Result<Vec<LockedPackage>, String> {
+    let root: toml::Value =
+        toml::from_str(lock).map_err(|error| format!("Cargo.lock is invalid: {error}"))?;
+    let rows = root
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten();
     let mut packages = Vec::new();
-    let mut current: Option<(String, String, String, String)> = None; // name, version, source, checksum
-    let mut finish =
-        |current: &mut Option<(String, String, String, String)>| -> Result<(), String> {
-            if let Some((name, version, source, checksum)) = current.take() {
-                if source.starts_with("git+") {
-                    return Err(format!(
-                        "Cargo.lock names the git dependency {name}; a private Cargo home holds \
-                     registry crates only"
-                    ));
-                }
-                if source.starts_with("registry+") || source.starts_with("sparse+") {
-                    if checksum.is_empty() {
-                        return Err(format!("Cargo.lock gives {name} {version} no checksum"));
-                    }
-                    packages.push(LockedPackage {
-                        name,
-                        version,
-                        checksum,
-                    });
-                }
-            }
-            Ok(())
-        };
-    for line in lock.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            finish(&mut current)?;
-            current = (line == "[[package]]").then(Default::default);
-            continue;
-        }
-        let (Some(entry), Some((key, value))) = (current.as_mut(), line.split_once('=')) else {
+    for row in rows {
+        let Some(source) = row.get("source").and_then(toml::Value::as_str) else {
             continue;
         };
-        let value = value.trim().trim_matches('"').to_owned();
-        match key.trim() {
-            "name" => entry.0 = value,
-            "version" => entry.1 = value,
-            "source" => entry.2 = value,
-            "checksum" => entry.3 = value,
-            _ => {}
+        let name = row
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .ok_or("Cargo.lock package has no name")?
+            .to_owned();
+        if source.starts_with("git+") {
+            return Err(format!(
+                "Cargo.lock names the git dependency {name}; a private Cargo home holds \
+                 registry crates only"
+            ));
         }
+        if !(source.starts_with("registry+") || source.starts_with("sparse+")) {
+            continue;
+        }
+        let version = row
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| format!("Cargo.lock gives {name} no version"))?
+            .to_owned();
+        let checksum = row
+            .get("checksum")
+            .and_then(toml::Value::as_str)
+            .filter(|checksum| !checksum.is_empty())
+            .ok_or_else(|| format!("Cargo.lock gives {name} {version} no checksum"))?
+            .to_owned();
+        packages.push(LockedPackage {
+            name,
+            version,
+            checksum,
+        });
     }
-    finish(&mut current)?;
     Ok(packages)
 }
 

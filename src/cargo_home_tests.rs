@@ -190,6 +190,19 @@ fn lock_values_that_are_paths_or_malformed_refuse_and_every_source_kind_is_read(
 }
 
 #[test]
+fn a_git_source_written_with_an_alternate_valid_toml_string_form_still_refuses() {
+    // A hand-rolled line reader that only trims double quotes would leave a
+    // single-quoted literal string's own quote characters attached, so
+    // `source.starts_with("git+")` would see `'git+...` instead and miss it
+    // entirely -- silently dropping the row rather than refusing the run.
+    let lock = "[[package]]\nname = 'g'\nversion = '1'\nsource = 'git+https://example.invalid/g'\n";
+    let err = registry_packages(lock)
+        .err()
+        .unwrap_or_else(|| panic!("a single-quoted git dependency must refuse, not vanish"));
+    assert!(err.contains("git dependency"), "{err}");
+}
+
+#[test]
 fn a_symlink_in_the_index_cache_refuses() {
     let (real, lock) = real_home(b"crate bytes");
     std::os::unix::fs::symlink("/etc", real.join("registry/index/index.crates.io-abc/link"))
