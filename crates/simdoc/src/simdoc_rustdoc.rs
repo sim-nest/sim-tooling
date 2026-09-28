@@ -209,8 +209,38 @@ fn require_path_dependencies_owned(
         let dir = Path::new(manifest_path)
             .parent()
             .ok_or("cargo metadata package manifest has no parent")?;
-        require_directory_owned(&worktree, dir)
+        let bound = require_directory_owned(&worktree, dir)
             .map_err(|why| format!("refused: path dependency {name} ({manifest_path}): {why}"))?;
+        require_targets_bound(package, &bound)
+            .map_err(|why| format!("refused: path dependency {name} ({manifest_path}): {why}"))?;
+    }
+    Ok(())
+}
+
+/// Every metadata target's `src_path` (`[lib]`, `[[bin]]`, `[[test]]`,
+/// `[[example]]`, `[[bench]]`, and the `build` script) must canonicalize to
+/// a file `bound` already validated. A manifest may name any path, absolute
+/// or relative, including one outside its own package directory entirely,
+/// or one inside that directory but beneath a directory
+/// `require_directory_owned` does not walk (`.git`, `target`): neither is
+/// caught by validating the package directory alone.
+fn require_targets_bound(
+    package: &Value,
+    bound: &std::collections::BTreeSet<PathBuf>,
+) -> Result<(), String> {
+    for target in package["targets"].as_array().into_iter().flatten() {
+        let name = target["name"].as_str().unwrap_or("<unnamed>");
+        let source = target["src_path"]
+            .as_str()
+            .ok_or("cargo metadata target has no src_path")?;
+        let canonical = Path::new(source)
+            .canonicalize()
+            .map_err(|err| format!("target {name} reads {source}: {err}"))?;
+        if !bound.contains(&canonical) {
+            return Err(format!(
+                "target {name} reads {source}, which is not part of the package's owned closure"
+            ));
+        }
     }
     Ok(())
 }
@@ -223,8 +253,14 @@ const IGNORED_SOURCE_DIRECTORIES: [&str; 2] = [".git", "target"];
 /// Every entry beneath `dir`, recursively, must be an ordinary file this
 /// repository's own worktree tracks; a symlink (to a file or a directory)
 /// refuses immediately, matching this module's deny-by-default reading of
-/// what a build may reach.
-fn require_directory_owned(worktree: &Worktree, dir: &Path) -> Result<(), String> {
+/// what a build may reach. Returns the canonicalized set of files validated
+/// this way, so a caller can additionally require some other named path
+/// (a metadata target's `src_path`) to be exactly one of them.
+fn require_directory_owned(
+    worktree: &Worktree,
+    dir: &Path,
+) -> Result<std::collections::BTreeSet<PathBuf>, String> {
+    let mut bound = std::collections::BTreeSet::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {
         for entry in
@@ -243,10 +279,15 @@ fn require_directory_owned(worktree: &Worktree, dir: &Path) -> Result<(), String
                 pending.push(entry.path());
             } else {
                 worktree.owned_file(&entry.path(), "path dependency source")?;
+                let canonical = entry
+                    .path()
+                    .canonicalize()
+                    .map_err(|err| format!("{}: {err}", entry.path().display()))?;
+                bound.insert(canonical);
             }
         }
     }
-    Ok(())
+    Ok(bound)
 }
 
 fn docbuild_fingerprint(
@@ -525,6 +566,48 @@ mod tests {
         let (base, repo) = layout("rustdoc-inside-dep", false);
         let lock = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
         require_path_dependencies_owned(&repo, &repo.join("Cargo.toml"), Some(&lock)).unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_target_path_outside_its_own_package_directory_is_refused() {
+        // helper's own directory is validated fine (Cargo.toml + src/lib.rs
+        // are both tracked, inside helper/), but its [lib] path points
+        // somewhere else entirely -- require_directory_owned alone would
+        // never visit that other location, so only a per-target src_path
+        // check catches this.
+        let (base, repo) = layout("rustdoc-target-escape", false);
+        fs::write(
+            repo.join("helper/Cargo.toml"),
+            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [lib]\npath = \"../../outside/evil.rs\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(base.join("outside")).unwrap();
+        fs::write(base.join("outside/evil.rs"), "pub fn one() {}\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--no-verify",
+                "-mretarget",
+            ],
+        );
+        let lock = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+        let err = require_path_dependencies_owned(&repo, &repo.join("Cargo.toml"), Some(&lock))
+            .unwrap_err();
+        assert!(
+            err.contains("evil.rs") && err.contains("not part of the package's owned closure"),
+            "{err}"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 
