@@ -91,6 +91,21 @@ fn a_cached_crate_that_is_not_the_locked_checksum_refuses() {
 }
 
 #[test]
+fn a_locked_registry_package_absent_from_the_cache_refuses() {
+    // Not silently producing a private home that is simply missing the
+    // package: an absent archive must fail closed here, the same as a
+    // tampered one, rather than let a caller who forgot --offline reach the
+    // network for it instead.
+    let (real, lock) = real_home(b"crate bytes");
+    fs::remove_file(real.join("registry/cache/index.crates.io-abc/dep-1.0.0.crate")).unwrap();
+    let err = hermetic_home(&real, Some(&lock), "test").unwrap_err();
+    assert!(
+        err.contains("dep-1.0.0.crate") && err.contains("not in the Cargo cache"),
+        "{err}"
+    );
+}
+
+#[test]
 fn a_git_dependency_or_a_missing_checksum_refuses() {
     let real = scratch("git");
     for lock in [
@@ -187,6 +202,19 @@ fn lock_values_that_are_paths_or_malformed_refuse_and_every_source_kind_is_read(
     .err()
     .unwrap();
     assert!(err.contains("git dependency"));
+}
+
+#[test]
+fn a_git_source_written_with_an_alternate_valid_toml_string_form_still_refuses() {
+    // A hand-rolled line reader that only trims double quotes would leave a
+    // single-quoted literal string's own quote characters attached, so
+    // `source.starts_with("git+")` would see `'git+...` instead and miss it
+    // entirely -- silently dropping the row rather than refusing the run.
+    let lock = "[[package]]\nname = 'g'\nversion = '1'\nsource = 'git+https://example.invalid/g'\n";
+    let err = registry_packages(lock)
+        .err()
+        .unwrap_or_else(|| panic!("a single-quoted git dependency must refuse, not vanish"));
+    assert!(err.contains("git dependency"), "{err}");
 }
 
 #[test]
