@@ -91,6 +91,21 @@ fn a_cached_crate_that_is_not_the_locked_checksum_refuses() {
 }
 
 #[test]
+fn a_locked_registry_package_absent_from_the_cache_refuses() {
+    // Not silently producing a private home that is simply missing the
+    // package: an absent archive must fail closed here, the same as a
+    // tampered one, rather than let a caller who forgot --offline reach the
+    // network for it instead.
+    let (real, lock) = real_home(b"crate bytes");
+    fs::remove_file(real.join("registry/cache/index.crates.io-abc/dep-1.0.0.crate")).unwrap();
+    let err = hermetic_home(&real, Some(&lock), "test").unwrap_err();
+    assert!(
+        err.contains("dep-1.0.0.crate") && err.contains("not in the Cargo cache"),
+        "{err}"
+    );
+}
+
+#[test]
 fn a_git_dependency_or_a_missing_checksum_refuses() {
     let real = scratch("git");
     for lock in [

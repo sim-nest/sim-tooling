@@ -148,9 +148,9 @@ pub(crate) fn hermetic_home(
         }
         let file = format!("{}-{}.crate", package.name, package.version);
         let cache_root = real_home.join("registry/cache");
-        let Ok(indexes) = fs::read_dir(&cache_root) else {
-            continue;
-        };
+        let indexes =
+            fs::read_dir(&cache_root).map_err(|err| format!("{}: {err}", cache_root.display()))?;
+        let mut found = false;
         for index in indexes.flatten() {
             let source = index.path().join(&file);
             let Ok(bytes) = fs::read(&source) else {
@@ -169,6 +169,7 @@ pub(crate) fn hermetic_home(
                     package.checksum
                 ));
             }
+            found = true;
             let target = home.join("registry/cache").join(index.file_name());
             fs::create_dir_all(&target).map_err(|err| format!("{}: {err}", target.display()))?;
             fs::write(target.join(&file), &bytes)
@@ -180,6 +181,19 @@ pub(crate) fn hermetic_home(
                 let mut budget = MAX_INDEX_BYTES;
                 copy_tree(&index_from, &index_to, &mut budget)?;
             }
+        }
+        // A package this run's lock names but the real cache does not hold
+        // must refuse, not silently produce a private home missing it: an
+        // absent archive here is exactly what an offline `--locked` cargo
+        // run should fail closed on, never a reason for a caller who forgot
+        // `--offline` to quietly reach the network instead.
+        if !found {
+            return Err(format!(
+                "{} is not in the Cargo cache under {}; a private Cargo home cannot be built \
+                 without it",
+                file,
+                cache_root.display()
+            ));
         }
     }
     Ok(home)
