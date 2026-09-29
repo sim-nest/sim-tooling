@@ -150,6 +150,20 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     binary.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     cargo_metadata(&binary.root).unwrap();
 
+    // A missing declared-target source refuses the manifest for EVERY verb,
+    // not only the one whose own target kind it belongs to: a valid binary
+    // does not excuse a missing test source when proving `cargo run`.
+    let missing_test_for_run =
+        harness_repo("witness-harness-missing-test-for-run", run, &[run], false);
+    missing_test_for_run.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\n\n[[test]]\nname = \"missing\"\npath = \"tests/missing.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    missing_test_for_run.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    assert!(refused(&missing_test_for_run).contains("has no binary target"));
+
     // `default-run` names a required-features-gated binary; a plain
     // `cargo run` would try to run exactly that one and fail, even though
     // the package's other binary is fine on its own.
@@ -183,6 +197,21 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     );
     bad_default_one_bin.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     assert!(refused(&bad_default_one_bin).contains("has no binary target"));
+
+    // `default-run` present but not a string is a manifest error Cargo
+    // refuses too, never silently treated the same as the key being
+    // absent (which, with one otherwise-valid binary, would wrongly
+    // accept).
+    let non_string_default =
+        harness_repo("witness-harness-non-string-default-run", run, &[run], false);
+    non_string_default.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\ndefault-run = 1\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    non_string_default.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    assert!(refused(&non_string_default).contains("has no binary target"));
 
     // `default-run` names the package's only runnable binary: accepted, even
     // though it is declared with an explicit (ungated) `[[bin]]` entry.

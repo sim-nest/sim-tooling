@@ -319,6 +319,42 @@ fn cargo_invocation(command: &str) -> Option<(&'static str, String)> {
 /// several binaries, plain `cargo run` runs exactly the one `default-run`
 /// names, so for `run` that target itself must be runnable by this same
 /// definition; some other, unrelated binary being fine is not enough.
+/// Whether a declared target of `kind` (`"bin"` or `"test"`) names a source
+/// file (an explicit `path`, or the conventional one for its own name) that
+/// is not among `owned`.
+fn declared_target_source_missing(
+    table: &toml::Table,
+    kind: &str,
+    package_name: &str,
+    owned: &BTreeSet<String>,
+) -> bool {
+    table
+        .get(kind)
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_table)
+        .any(|target| {
+            let target_name = target
+                .get("name")
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default();
+            let has_source = match target.get("path").and_then(toml::Value::as_str) {
+                Some(path) => owned.contains(path),
+                None if kind == "test" => {
+                    owned.contains(&format!("tests/{target_name}.rs"))
+                        || owned.contains(&format!("tests/{target_name}/main.rs"))
+                }
+                None => {
+                    (target_name == package_name && owned.contains("src/main.rs"))
+                        || owned.contains(&format!("src/bin/{target_name}.rs"))
+                        || owned.contains(&format!("src/bin/{target_name}/main.rs"))
+                }
+            };
+            !has_source
+        })
+}
+
 fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: &str) -> bool {
     let Some(package) = table.get("package").and_then(toml::Value::as_table) else {
         return false;
@@ -342,6 +378,17 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             })
         })
         .collect::<BTreeSet<_>>();
+    // A declared target of EITHER kind -- `[[bin]]` or `[[test]]`, not only
+    // the one the current verb happens to be proving -- naming a source
+    // file that does not exist is a manifest real Cargo refuses outright
+    // for every command against this package: Cargo parses and resolves
+    // every declared target before running any of them. A valid binary
+    // does not excuse a missing test source, or the reverse.
+    if declared_target_source_missing(table, "bin", name, &owned)
+        || declared_target_source_missing(table, "test", name, &owned)
+    {
+        return false;
+    }
     let mut declared_names = BTreeSet::new();
     let mut runnable_names = BTreeSet::new();
     for target in table
@@ -370,27 +417,8 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             .is_none_or(Vec::is_empty)
             && !(verb == "test"
                 && target.get("test").and_then(toml::Value::as_bool) == Some(false));
-        let has_source = match target.get("path").and_then(toml::Value::as_str) {
-            Some(path) => owned.contains(path),
-            None if verb == "test" => {
-                owned.contains(&format!("tests/{target_name}.rs"))
-                    || owned.contains(&format!("tests/{target_name}/main.rs"))
-            }
-            None => {
-                (target_name == name && owned.contains("src/main.rs"))
-                    || owned.contains(&format!("src/bin/{target_name}.rs"))
-                    || owned.contains(&format!("src/bin/{target_name}/main.rs"))
-            }
-        };
-        // A declared target (explicit `path` or the conventional one for
-        // its name) naming a source file that does not exist is a manifest
-        // real Cargo refuses outright, for every verb against this
-        // package -- not merely "this one target contributes nothing",
-        // which would let some OTHER, unrelated valid target's existence
-        // wrongly prove the package still runs.
-        if !has_source {
-            return false;
-        }
+        // Its source is already known to exist (checked, for every declared
+        // target of every kind, above).
         if runs {
             runnable_names.insert(target_name.to_owned());
         }
@@ -434,8 +462,14 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         // replacing an automatic one of the same name is one binary, not
         // two, and disabled automatic discovery (`autobins = false`)
         // contributes none at all.
-        return match package.get("default-run").and_then(toml::Value::as_str) {
-            Some(default_run) => runnable_names.contains(default_run),
+        return match package.get("default-run") {
+            // Present but not a string: Cargo requires `default-run` to be a
+            // string and refuses the manifest otherwise, the same as a
+            // `default-run` naming a target that does not exist -- never
+            // silently treated the same as the key being absent.
+            Some(value) => value
+                .as_str()
+                .is_some_and(|default_run| runnable_names.contains(default_run)),
             None if declared_names.len() + automatic_names.len() > 1 => false,
             None => !runnable_names.is_empty(),
         };
