@@ -1,0 +1,24 @@
+[package]
+name = "sim-check-pack"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Exact native invocation adapter for SIM conformance packs."
+readme = "README.md"
+publish = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+sim-conformance-core = "0.3.0"
+sim-conformance-packs = { version = "0.8.0", features = ["external-resolver-lock"] }
+sim-kernel = "0.4.0"
+
+[build-dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[lints]
+workspace = true

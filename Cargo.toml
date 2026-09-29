@@ -16,8 +16,46 @@ sim-kernel = "0.4.0"
 
 [workspace]
 resolver = "3"
-members = [
+members = []
+exclude = [
+    "crates/sim-check-pack",
+    "crates/sim-check-pack-ubuntu-pc",
+    "crates/sim-check-pack-xtask",
 ]
+
+# Every Cargo manifest in this repository belongs to its generated contract.
+# The check-pack crates (crates/) and the simdoc contract engine
+# (crates/simdoc) keep their own resolver roots; declaring them here makes
+# their packages part of the one repo contract.
+[workspace.metadata.sim]
+contract-workspaces = ["crates", "crates/simdoc"]
+# Recorded verbatim in docs/generated/provenance.json: the command that
+# regenerates this repository's documentation, and the full local/guest
+# validation gate. Hosted CI (.github/workflows/ci.yml) runs a reduced
+# subset of these: it skips seven named tests and omits the three
+# crates/simdoc commands entirely, both for the toolchain-identity reason
+# documented in docs/simdoc-trust-boundaries.md B6 and B12. The guest is
+# where every command here is actually run in full.
+docs-command = "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
+validation-commands = [
+    "cargo fmt --all --check",
+    "cargo test",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo doc --no-deps",
+    "cargo fmt --manifest-path crates/simdoc/Cargo.toml --check",
+    "cargo test --locked --manifest-path crates/simdoc/Cargo.toml",
+    "cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings",
+    "cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check",
+    "cargo run -p xtask -- check-file-sizes",
+    "cargo run -p xtask -- repo-contract --check --repo .",
+    "cargo run -p xtask -- validation-matrix --check --repo .",
+    "cargo run -p xtask -- crate-catalog --check --repo .",
+]
+
+# Digesting a toolchain streams hundreds of megabytes; keep it fast in every
+# profile the launcher and its tests build.
+[profile.dev.package.sha2]
+opt-level = 3
 
 [workspace.package]
 edition = "2024"
@@ -38,8 +76,6 @@ sim-cookbook = "0.4.0"
 sim-codec-index = "0.3.0"
 sim-codec-index-vault = "0.2.0"
 sim-codec-json = "0.4.0"
-sim-conformance-core = "0.2.0"
-sim-conformance-packs = "0.6.0"
 sim-index-core = "0.4.0"
 sim-index-vault-core = "0.2.0"
 sim-kernel = "0.4.0"
@@ -51,3 +87,13 @@ toml = "0.8"
 
 [lints]
 workspace = true
+
+[workspace.metadata.sim.encoder]
+source_sha256 = "30ee154387cee2c2567026f0e916923798e440cba6f135d1bc279e80af8f49c1"
+lock_sha256 = "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678"
+toolchain = "1.96.0"
+rustc_commit = "ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
+cargo_commit = "30a34c6821b57de0aaec83a901aca39f88f6778c"
+
+[workspace.metadata.sim.encoder.toolchain_sha256]
+x86_64-unknown-linux-gnu = "31b5ac5b05b75c05a77800b349ba4a5d2d6ff9f4e27dd678d9989e2449c4fd58"

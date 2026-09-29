@@ -19,7 +19,7 @@ These commands are the repository gate recorded in the constellation manifest.
 
 ```bash
 cargo fmt --all --check && cargo test && cargo clippy --all-targets -- -D warnings && cargo doc --no-deps
-cargo run -p xtask -- simdoc --check
+cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc --check
 cargo run -p xtask -- check-file-sizes
 ```
 
@@ -31,14 +31,30 @@ Rust source file exceeds 700 lines.
 
 ## Conformance Packs
 
-`cargo run -p xtask -- check-pack --checker <id> --binding <id> --subject
-<id> --scope <name>` invokes one released public conformance pack. Canonical
-sorted `key=value` evidence arrives on standard input and is limited to 16 KiB.
-The command recomputes the typed subject identity before dispatch, emits one
-`check/result-v1` JSON value with the exact typed execution, invocation, grade,
-and verified checker-receipt identities, and exits nonzero for wrong scope,
-substituted subject or binding, malformed evidence, refusal, or a declared
-scope whose scenarios have not reached its funded phase.
+`sim_check_pack::prepare_operation_local` is the authority-free
+operator-bootstrap seam. It executes the same pure pack evaluation and binds
+the exact evidence, support, native invocation, adapter/checker build graphs,
+bootstrap grade, and policy used by live issuance. Its prepared value contains
+no owner handle, currentness, revocation observation, or receipt. False or
+incompletely supported facts refuse the whole preparation.
+
+The `sim_check_pack_xtask::execute_with_owner_currentness` adapter invokes one exact
+public conformance pack. Canonical sorted `key=value` evidence is limited to 16
+KiB. The caller must supply the weak operation handle issued by the live SDK
+boot owner through the in-process qualification boundary. The owner checks the
+sealed evidence, selects currentness, issues an opaque qualified artifact, and
+immediately re-resolves it against the same live generation. The adapter emits
+one `check/result-v1` JSON value with the set, head, key, receipt, invocation,
+and observations. Missing, revoked, dead-owner, foreign, or substituted inputs
+fail closed.
+
+The checker command is isolated from the documentation tool at
+`cargo run --manifest-path crates/Cargo.toml -p sim-check-pack-xtask --
+check-pack ...`. Its bare process interface cannot carry that qualified Rust
+object and therefore refuses with `owner-currentness-required`. The owner
+handle and opaque qualified artifact have no serialized construction path;
+semantic admission and current re-resolution stay with the live qualification
+owner.
 
 ## Citizenize
 
@@ -130,7 +146,8 @@ imports notes. Logseq support means its Markdown file graph, not its DB graph.
 
 ## Documentation Lanes
 
-`cargo run -p xtask -- simdoc` builds the public documentation lanes:
+`cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc`
+builds the public documentation lanes:
 
 - API docs: `target/doc/`
 - Agent cards: `docs/agents/cards.jsonl` and `docs/agents/card-index.json`

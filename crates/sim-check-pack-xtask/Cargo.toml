@@ -1,0 +1,20 @@
+[package]
+name = "sim-check-pack-xtask"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+description = "In-process command boundary for SIM conformance-pack checks."
+publish = false
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde_json = "1"
+sim-check-pack = { version = "0.1.0", path = "../sim-check-pack" }
+sim-conformance-core = "0.3.0"
+sim-conformance-packs = "0.8.0"
+sim-kernel = "0.4.0"
+
+[lints]
+workspace = true

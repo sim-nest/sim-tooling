@@ -2,6 +2,34 @@
   "generator": "xtask repo-contract v1",
   "packages": [
     {
+      "crate_name": "sim_check_pack",
+      "group": "workspace",
+      "manifest": "crates/sim-check-pack/Cargo.toml",
+      "package": "sim-check-pack",
+      "summary": "Exact native invocation of SIM's public conformance packs."
+    },
+    {
+      "crate_name": "sim_check_pack_ubuntu_pc",
+      "group": "workspace",
+      "manifest": "crates/sim-check-pack-ubuntu-pc/Cargo.toml",
+      "package": "sim-check-pack-ubuntu-pc",
+      "summary": "Ubuntu composition for opaque native operation/local evidence."
+    },
+    {
+      "crate_name": "sim_check_pack_xtask",
+      "group": "workspace",
+      "manifest": "crates/sim-check-pack-xtask/Cargo.toml",
+      "package": "sim-check-pack-xtask",
+      "summary": "Isolated checker command and in-process qualification adapter."
+    },
+    {
+      "crate_name": "simdoc",
+      "group": "workspace",
+      "manifest": "crates/simdoc/Cargo.toml",
+      "package": "simdoc",
+      "summary": "Standalone source and resolver boundary for SIM generated documentation."
+    },
+    {
       "crate_name": "xtask",
       "group": "workspace",
       "manifest": "Cargo.toml",

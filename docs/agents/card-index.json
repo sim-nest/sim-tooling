@@ -1,4 +1,15 @@
 {
   "schema": "sim.card-index.v1",
-  "cards": []
+  "cards": [
+    "crates/sim-check-pack-ubuntu-pc/recipes/01-compose/chapter.toml",
+    "crates/sim-check-pack-ubuntu-pc/recipes/01-compose/operation-local/purpose.md",
+    "crates/sim-check-pack-ubuntu-pc/recipes/01-compose/operation-local/recipe.toml",
+    "crates/sim-check-pack-ubuntu-pc/recipes/01-compose/operation-local/setup.siml",
+    "crates/sim-check-pack-ubuntu-pc/recipes/book.toml",
+    "crates/sim-check-pack/recipes/01-native/chapter.toml",
+    "crates/sim-check-pack/recipes/01-native/operation-local/purpose.md",
+    "crates/sim-check-pack/recipes/01-native/operation-local/recipe.toml",
+    "crates/sim-check-pack/recipes/01-native/operation-local/setup.siml",
+    "crates/sim-check-pack/recipes/book.toml"
+  ]
 }

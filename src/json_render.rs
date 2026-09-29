@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Canonical JSON rendering for committed generated artifacts.
 
 use serde_json::Value;
@@ -7,32 +12,20 @@ pub(crate) fn compact(mut value: Value, context: &str) -> Result<String, String>
     serde_json::to_string(&value).map_err(|err| format!("serialize {context}: {err}"))
 }
 
-pub(crate) fn pretty(mut value: Value, context: &str) -> Result<String, String> {
-    value.sort_all_objects();
-    let mut out = serde_json::to_string_pretty(&value)
-        .map_err(|err| format!("serialize {context}: {err}"))?;
-    out.push('\n');
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Map, Value};
 
-    use super::{compact, pretty};
+    use super::compact;
 
     #[test]
-    fn renderers_ignore_nested_object_insertion_order() {
+    fn compact_rendering_ignores_nested_object_insertion_order() {
         let first = nested_object([("zeta", 2), ("alpha", 1)]);
         let second = nested_object([("alpha", 1), ("zeta", 2)]);
 
         assert_eq!(
-            compact(first.clone(), "fixture").unwrap(),
-            compact(second.clone(), "fixture").unwrap()
-        );
-        assert_eq!(
-            pretty(first, "fixture").unwrap(),
-            pretty(second, "fixture").unwrap()
+            compact(first, "fixture").unwrap(),
+            compact(second, "fixture").unwrap()
         );
     }
 

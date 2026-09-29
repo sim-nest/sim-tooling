@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use crate::{
-    atelier, bench, check_pack, citizenize, crate_catalog, file_size_gate, generator_options,
-    index_check, index_doctor, index_find, index_fixpoint, index_merge, index_overlap,
-    index_render, index_route, index_seed, index_snapshot, index_vault, platform_inventory,
-    repo_contract, simdoc, validation_matrix,
+    atelier, bench, build_inputs, citizenize, file_size_gate, index_check, index_doctor,
+    index_find, index_fixpoint, index_merge, index_overlap, index_render, index_route, index_seed,
+    index_snapshot, index_vault, platform_inventory, sealed_resources, simdoc_pin, simdoc_route,
 };
 
 pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
@@ -10,7 +14,10 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
         return bench::cli::run(args);
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "simdoc") {
-        return simdoc::run(args);
+        return Err(
+            "simdoc moved to its isolated resolver root; run `cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc ...`"
+                .to_owned(),
+        );
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "atelier-site") {
         return atelier::run(args);
@@ -40,7 +47,16 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
         return file_size_gate::run(args);
     }
     if matches!(args.as_slice(), [_, command, ..] if command == "check-pack") {
-        return check_pack::run(args);
+        return Err(
+            "check-pack moved to the checker workspace; run `cargo run --manifest-path crates/Cargo.toml -p sim-check-pack-xtask -- check-pack ...`"
+                .to_owned(),
+        );
+    }
+    if matches!(args.as_slice(), [_, command, ..] if command == "build-inputs") {
+        return build_inputs::run(args);
+    }
+    if matches!(args.as_slice(), [_, command, ..] if command == "sealed-resources") {
+        return sealed_resources::run(args);
     }
     if matches!(args.as_slice(), [_, command, subcommand, ..] if command == "index" && subcommand == "doctor")
     {
@@ -90,60 +106,20 @@ pub(crate) fn dispatch(args: Vec<String>) -> Result<(), String> {
     }
 
     match args.as_slice() {
-        [_, command, ..] if command == "repo-contract" => {
-            let options = repo_contract::parse_options(&args)?;
-            if let Some(emission) = options.emission {
-                let report = repo_contract::emit_contract_artifacts(
-                    &options.repo,
-                    &emission.names,
-                    &emission.out_dir,
-                )?;
-                println!(
-                    "repo-contract: {} package(s), {} artifact(s) emitted",
-                    report.packages, report.artifacts_changed
-                );
-                return Ok(());
-            }
-            let report = repo_contract::repo_contract_for_repo(options.check, &options.repo)?;
-            if options.check {
-                println!("repo-contract: generated contract files are current");
-                return Ok(());
-            }
-            println!(
-                "repo-contract: {} package(s), {} artifact(s) changed",
-                report.packages, report.artifacts_changed
-            );
-            Ok(())
+        // The `xtask-repo-contract-v1` interface (write, `--check`, and
+        // `--emit ... --out-dir`) is served by the locked simdoc engine with
+        // the arguments passed through unchanged.
+        [_, command, rest @ ..] if command == "repo-contract" => {
+            simdoc_route::run_forwarded("repo-contract", rest)
         }
-        [_, command, ..] if command == "validation-matrix" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report =
-                validation_matrix::validation_matrix_for_repo(options.check, &options.repo)?;
-            if options.check {
-                println!("validation-matrix: generated matrix is current");
-                return Ok(());
-            }
-            println!(
-                "validation-matrix: {} row(s), {} artifact(s) changed",
-                report.rows, report.artifacts_changed
-            );
-            Ok(())
+        // The contract-derived generators run inside the locked simdoc
+        // engine, with the arguments passed through.
+        [_, command, rest @ ..] if command == "validation-matrix" || command == "crate-catalog" => {
+            simdoc_route::run_forwarded(command, rest)
         }
-        [_, command, ..] if command == "crate-catalog" => {
-            let options = generator_options::parse_repo_tool_args(&args, command)?;
-            let report = crate_catalog(options.check, Some(options.repo))?;
-            if options.check {
-                println!("crate-catalog: metadata and generated files are current");
-            } else {
-                println!(
-                    "crate-catalog: {} package(s), {} manifest(s), {} readme(s), {} catalog file(s)",
-                    report.packages,
-                    report.manifests_changed,
-                    report.readmes_changed,
-                    report.catalogs_changed
-                );
-            }
-            Ok(())
+        // The explicit, reviewed update of the committed engine identity.
+        [_, command, rest @ ..] if command == "simdoc-pin" => {
+            simdoc_pin::run(&simdoc_route::tooling_root(), rest)
         }
         [_, command, ..] if command == "citizenize" => citizenize::run(args),
         [program, ..] => Err(format!("usage: {program} <{USAGE_COMMANDS}>")),
@@ -155,9 +131,11 @@ const USAGE_COMMANDS: &str = concat!(
     "repo-contract [--check] [--repo <path>]",
     "|validation-matrix [--check] [--repo <path>]",
     "|crate-catalog [--check] [--repo <path>]",
+    "|simdoc-pin [--check]",
     "|citizenize [--local-paths] <crate-name-or-path>",
-    "|simdoc [--check] [--rustdoc auto|skip|force]",
-    "|check-pack --checker <id> --binding <id> --subject <id> --scope <name>",
+    "|check-pack (moved to sim-check-pack-xtask)",
+    "|build-inputs <select|derive|materialize|finalize> ...",
+    "|sealed-resources <capture --plan <plan.json> --expected-plan-sha256 <hex> --selection <new-selection.json>|materialize --selection <selection.json> --expected-selection-sha256 <hex> --destination <new-path>> --owner-root <path>...",
     "|index doctor --repo <path> --missing --out <path>",
     "|index seed --from <markdown> --out .sim/index/<name>.seed.toml",
     "|index merge --fragment <path>... --out <path> [--check]",

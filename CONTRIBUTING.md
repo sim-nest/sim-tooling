@@ -14,14 +14,54 @@ crates.io -- no extra tooling or sibling checkouts are required:
 
 ## What a pull request must pass
 
-Every PR runs these gates in CI, and they must be green before merge:
+Every PR runs these gates in CI (`.github/workflows/ci.yml`) on the toolchain
+pinned in `rust-toolchain.toml`, and they must be green before merge:
 
 - `cargo fmt --all --check`
-- `cargo test`
+- `cargo test` (a handful of tests that must build or run the real pinned
+  `crates/simdoc` engine are skipped here; see below)
 - `cargo clippy --all-targets -- -D warnings`
-- `cargo doc --no-deps`
-- `cargo run -p xtask -- simdoc --check`
+- `cargo doc --no-deps` (with `RUSTDOCFLAGS=-D warnings`)
+- `cargo fmt --manifest-path crates/simdoc/Cargo.toml --check`
 - `cargo run -p xtask -- check-file-sizes`
+
+`crates/simdoc` refuses to build at all unless compiled with the exact
+toolchain committed under `[workspace.metadata.sim.encoder]` in the root
+`Cargo.toml` (`docs/simdoc-trust-boundaries.md` B6, B11) -- a real security
+property, not a gap. No hosted CI runner has ever matched that toolchain
+byte-for-byte, so CI cannot run these three, and does not attempt to:
+
+- `cargo test --locked --manifest-path crates/simdoc/Cargo.toml`
+- `cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings`
+- `cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check`
+
+These three, and the tests CI skips for the same reason, are run for real
+only on the maintainer's own guest environment, the source of truth for
+`crates/simdoc`'s release correctness (`docs/simdoc-trust-boundaries.md`
+B6, B12). A PR does not need to reproduce that environment; hosted CI is
+the gate that applies to contributors.
+
+`simdoc` is the documentation and contract engine. It is its own resolver root
+(`crates/simdoc/Cargo.lock`), so it is always run with `--manifest-path` and
+`--locked`; `cargo run -p xtask -- simdoc` refuses and points here. The xtask
+`repo-contract`, `crate-catalog`, and `validation-matrix` commands run the same
+locked engine, and `cargo test` exercises their `--check` modes.
+
+`simdoc` trusts only what the repository commits. It reads only ordinary files
+Git tracks (`git add` a new file before generating; an untracked or ignored file
+is refused, never read), publishes only reviewed public paths (see
+`crates/simdoc/src/publication.rs`), and never runs a repository script or any
+program found on `PATH`: it launches only the toolchain pinned under
+`[workspace.metadata.sim.encoder]` in the root `Cargo.toml` (its `cargo`,
+`rustc`, `rustdoc`, and libraries are checked against a committed digest and
+commits), and `git` from a root-owned system location. A reviewer refreshes
+that pin, after reading the engine diff, with `cargo run -p xtask -- simdoc-pin`.
+It also refuses to run when any Cargo configuration file (`config` or
+`config.toml` in Cargo's home or in a `.cargo` of any ancestor directory) could
+apply, because such a file can replace the engine's dependencies. The complete
+list of what simdoc allows at each boundary, and refuses, is
+`docs/simdoc-trust-boundaries.md`; change an allowed set there and in code in
+the same reviewed change.
 
 Please keep source and Markdown ASCII-only, and add or update tests for behavior
 you change. Public APIs carry `#![deny(missing_docs)]`; document new public items.

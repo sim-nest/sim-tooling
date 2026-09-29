@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! xtask: the SIM constellation build and documentation tool.
 //!
 //! xtask runs repository maintenance and documentation tasks over a SIM repo
@@ -6,14 +11,16 @@
 //!
 //! # Commands
 //!
-//! - `simdoc` -- build, or `--check`, the documentation lanes: API docs, agent
+//! - `cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml --
+//!   simdoc` -- build, or `--check`, the documentation lanes: API docs, agent
 //!   cards, human docs, diagrams, and split contract files under `docs/`.
 //! - `repo-contract` -- generate or check the per-repo contract files, or emit
 //!   selected current artifacts to a preopened output directory without
-//!   mutating the inspected repository.
-//! - `validation-matrix` -- generate or check the validation matrix.
+//!   mutating the inspected repository; served by the locked simdoc engine.
+//! - `validation-matrix` -- generate or check the validation matrix; served by
+//!   the locked simdoc engine.
 //! - `crate-catalog` -- generate or check crate metadata, READMEs, and the
-//!   crate catalog.
+//!   crate catalog; served by the locked simdoc engine.
 //! - `citizenize` -- rewrite a crate or path toward the citizen conventions.
 //! - `index doctor` -- scan generated index fragments for unclaimed discoveries.
 //! - `index seed` -- extract private migration seed rows from legacy markdown.
@@ -23,8 +30,10 @@
 //!   generated pages, runtime snapshots, and managed Markdown vault namespaces.
 //! - `index-check` -- gate generated index fragment freshness and coverage.
 //! - `check-file-sizes` -- gate Rust source files against repository hard limits.
-//! - `check-pack` -- invoke one exact public conformance pack over canonical
-//!   evidence supplied on standard input.
+//! - `sim-check-pack-xtask` -- bind one exact pack result to an SDK-owner-issued
+//!   currentness set supplied through the separate in-process qualification boundary.
+//! - `build-inputs` and `sealed-resources` -- materialize exact Cargo inputs
+//!   and disjoint immutable native build resources as bounded regular files.
 //! - `bench run`, `bench compare`, `bench show`, and `bench check` -- execute,
 //!   inspect, and enforce durable benchmark artifacts.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -35,7 +44,6 @@
 //!
 //! [`run`] dispatches an argument vector to the matching task. The library also
 //! exposes each task's entry point and report type, including
-//! [`repo_contract`], [`validation_matrix`], [`crate_catalog`],
 //! [`citizenize_arg`], [`atelier_site`], and [`atelier_tools`].
 
 #![deny(unsafe_code)]
@@ -44,27 +52,22 @@
 pub mod atelier;
 pub mod bench;
 
+mod build_inputs;
 mod cardspine;
-mod cardspine_state;
-mod check_pack;
+mod cargo_home;
 mod citizenize;
 mod content_digest;
-mod crate_catalog;
-mod crate_catalog_manifest;
 mod dispatch;
 mod docencoder;
 mod file_size_gate;
 mod generated_artifact;
 mod generated_namespace;
-mod generator_options;
-mod index_anchor_scan;
 mod index_author;
 mod index_check;
-mod index_composition;
 mod index_doctor;
 mod index_find;
 mod index_fixpoint;
-mod index_fragment;
+mod index_ids;
 #[cfg(test)]
 mod index_landed_contract_tests;
 mod index_merge;
@@ -80,20 +83,15 @@ mod index_rules;
 mod index_seed;
 mod index_snapshot;
 mod index_source;
-mod index_specimen_scan;
-mod index_surface_scan;
 mod index_vault;
 mod index_vault_manifest;
 mod json_render;
 mod platform_inventory;
-mod repo_contract;
-mod repo_contract_cut;
-mod repo_contract_render;
-mod repo_contract_scan;
-mod simdoc;
-mod simdoc_index;
-mod simdoc_rustdoc;
-mod validation_matrix;
+mod recipe_discovery;
+mod sealed_resources;
+mod simdoc_pin;
+mod simdoc_route;
+mod toolchain_identity;
 
 #[cfg(test)]
 mod index_vault_tests;
@@ -108,16 +106,14 @@ pub use atelier::{
 };
 pub use cardspine::{CARD_CONTENT_ID_ALGORITHM, Card, CardSpine, card_content_id};
 pub use citizenize::{CitizenizeReport, citizenize_arg, citizenize_path};
-pub use crate_catalog::{CrateCatalogReport, crate_catalog};
 pub use docencoder::{DocEncoder, DocPosition};
-pub use repo_contract::{RepoContractReport, repo_contract};
-pub use validation_matrix::{ValidationMatrixReport, validation_matrix};
 
 /// Dispatches an xtask command-line argument vector to the matching task.
 ///
 /// `args` is the full process argument vector. Remaining arguments select a task
-/// such as `simdoc`, `repo-contract`, `atelier-capsule`, or `atelier-shell` and
-/// its optional flags or argument.
+/// such as `repo-contract`, `atelier-capsule`, or `atelier-shell` and its
+/// optional flags or argument. The documentation command has a separate,
+/// isolated Cargo resolver root.
 /// Returns a usage error for an unrecognized command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
     dispatch::dispatch(args)

@@ -4,6 +4,26 @@
     {
       "features": [],
       "group": "workspace",
+      "package": "sim-check-pack"
+    },
+    {
+      "features": [],
+      "group": "workspace",
+      "package": "sim-check-pack-ubuntu-pc"
+    },
+    {
+      "features": [],
+      "group": "workspace",
+      "package": "sim-check-pack-xtask"
+    },
+    {
+      "features": [],
+      "group": "workspace",
+      "package": "simdoc"
+    },
+    {
+      "features": [],
+      "group": "workspace",
       "package": "xtask"
     }
   ]

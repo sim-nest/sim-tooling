@@ -1,6 +1,6 @@
 {
   "generator": "xtask crate-catalog v1",
-  "package_count": 1,
+  "package_count": 5,
   "packages": [
     {
       "description": "Repository maintenance tasks.",
@@ -15,6 +15,60 @@
         "example",
         "lib",
         "test"
+      ]
+    },
+    {
+      "description": "Opaque Ubuntu native-evidence composition for SIM conformance packs.",
+      "generated_readme": false,
+      "manifest": "crates/sim-check-pack-ubuntu-pc/Cargo.toml",
+      "name": "sim-check-pack-ubuntu-pc",
+      "publish": "true",
+      "readme": "crates/sim-check-pack-ubuntu-pc/README.md",
+      "root": "crates/sim-check-pack-ubuntu-pc",
+      "target_kinds": [
+        "custom-build",
+        "example",
+        "lib"
+      ]
+    },
+    {
+      "description": "In-process command boundary for SIM conformance-pack checks.",
+      "generated_readme": true,
+      "manifest": "crates/sim-check-pack-xtask/Cargo.toml",
+      "name": "sim-check-pack-xtask",
+      "publish": "false",
+      "readme": "crates/sim-check-pack-xtask/README.md",
+      "root": "crates/sim-check-pack-xtask",
+      "target_kinds": [
+        "bin",
+        "lib"
+      ]
+    },
+    {
+      "description": "Exact native invocation adapter for SIM conformance packs.",
+      "generated_readme": false,
+      "manifest": "crates/sim-check-pack/Cargo.toml",
+      "name": "sim-check-pack",
+      "publish": "true",
+      "readme": "crates/sim-check-pack/README.md",
+      "root": "crates/sim-check-pack",
+      "target_kinds": [
+        "custom-build",
+        "lib"
+      ]
+    },
+    {
+      "description": "Standalone SIM generated-document encoder.",
+      "generated_readme": true,
+      "manifest": "crates/simdoc/Cargo.toml",
+      "name": "simdoc",
+      "publish": "false",
+      "readme": "crates/simdoc/README.md",
+      "root": "crates/simdoc",
+      "target_kinds": [
+        "bin",
+        "custom-build",
+        "lib"
       ]
     }
   ]
