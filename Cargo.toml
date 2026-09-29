@@ -30,8 +30,12 @@ exclude = [
 [workspace.metadata.sim]
 contract-workspaces = ["crates", "crates/simdoc"]
 # Recorded verbatim in docs/generated/provenance.json: the command that
-# regenerates this repository's documentation and the gate that validates it
-# (the same commands .github/workflows/ci.yml runs).
+# regenerates this repository's documentation, and the full local/guest
+# validation gate. Hosted CI (.github/workflows/ci.yml) runs a reduced
+# subset of these: it skips seven named tests and omits the three
+# crates/simdoc commands entirely, both for the toolchain-identity reason
+# documented in docs/simdoc-trust-boundaries.md B6 and B12. The guest is
+# where every command here is actually run in full.
 docs-command = "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
 validation-commands = [
     "cargo fmt --all --check",
