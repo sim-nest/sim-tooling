@@ -134,6 +134,23 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     );
     assert!(refused(&missing_source).contains("has no test target"));
 
+    // A plain `cargo test` also builds every declared example by default
+    // (confirmed against real `cargo`), so a missing one refuses the whole
+    // run too, exactly like a missing test or bin.
+    let missing_example_for_test = harness_repo(
+        "witness-harness-missing-example-for-test",
+        HARNESS,
+        &[HARNESS],
+        true,
+    );
+    missing_example_for_test.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\n\n[[example]]\nname = \"missing\"\npath = \"examples/missing.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    assert!(refused(&missing_example_for_test).contains("has no test target"));
+
     let subdir = harness_repo("witness-harness-subdir", HARNESS, &[HARNESS], false);
     subdir.write("tests/ui/case/tests/run/main.rs", "#[test]\nfn run() {}\n");
     cargo_metadata(&subdir.root).unwrap();
@@ -150,24 +167,17 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     binary.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     cargo_metadata(&binary.root).unwrap();
 
-    // A missing declared-target source refuses the manifest for EVERY verb,
-    // not only the one whose own target kind it belongs to: a valid binary
-    // does not excuse a missing test source when proving `cargo run`.
-    let missing_test_for_run =
-        harness_repo("witness-harness-missing-test-for-run", run, &[run], false);
-    missing_test_for_run.package(
-        "tests/ui/case",
-        "case",
-        "publish = false\n\n[[test]]\nname = \"missing\"\npath = \"tests/missing.rs\"\n\n\
-         [dependencies]\napp = { path = \"../../..\" }\n",
-    );
-    missing_test_for_run.write("tests/ui/case/src/main.rs", "fn main() {}\n");
-    assert!(refused(&missing_test_for_run).contains("has no binary target"));
-
-    // The same is true of every OTHER declared target kind Cargo itself
-    // recognizes: a missing `[[example]]`, `[[bench]]`, or `[lib]` source
-    // refuses the manifest too, not only bin/test.
+    // Confirmed against real `cargo` (1.96.0): a plain `cargo run` only
+    // ever builds the ONE binary it resolves to -- a declared `[[test]]`,
+    // `[[example]]`, or `[[bench]]` elsewhere in the package with a
+    // missing source does not matter to it at all, unlike `cargo test`
+    // above, which builds virtually the whole package by default. Each of
+    // these must still be ACCEPTED, not refused.
     for (label, extra) in [
+        (
+            "test",
+            "[[test]]\nname = \"missing\"\npath = \"tests/missing.rs\"\n",
+        ),
         (
             "example",
             "[[example]]\nname = \"missing\"\npath = \"examples/missing.rs\"\n",
@@ -176,10 +186,9 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
             "bench",
             "[[bench]]\nname = \"missing\"\npath = \"benches/missing.rs\"\n",
         ),
-        ("lib", "[lib]\npath = \"src/missing_lib.rs\"\n"),
     ] {
         let repo = harness_repo(
-            &format!("witness-harness-missing-{label}-source"),
+            &format!("witness-harness-unrelated-missing-{label}-source"),
             run,
             &[run],
             false,
@@ -192,8 +201,20 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
             ),
         );
         repo.write("tests/ui/case/src/main.rs", "fn main() {}\n");
-        assert!(refused(&repo).contains("has no binary target"), "{label}");
+        cargo_metadata(&repo.root).unwrap_or_else(|err| panic!("{label}: {err}"));
     }
+
+    // `[lib]`'s own source, by contrast, is resolved before anything else
+    // for every verb (confirmed against real `cargo`): still refused.
+    let missing_lib = harness_repo("witness-harness-missing-lib-source", run, &[run], false);
+    missing_lib.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\n\n[lib]\npath = \"src/missing_lib.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    missing_lib.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    assert!(refused(&missing_lib).contains("has no binary target"));
 
     // A declared target's `path` present but not a string is exactly as
     // missing as one that is absent and matches no convention: Cargo

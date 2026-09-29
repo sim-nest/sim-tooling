@@ -412,19 +412,32 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             })
         })
         .collect::<BTreeSet<_>>();
-    // A declared target of ANY of Cargo's five kinds -- `[lib]`, `[[bin]]`,
-    // `[[test]]`, `[[example]]`, `[[bench]]` -- not only the one the
-    // current verb happens to be proving, naming a source file that does
-    // not exist is a manifest real Cargo refuses outright for every
-    // command against this package: Cargo parses and resolves every
-    // declared target before running any of them. A valid binary does not
-    // excuse a missing test (or example, or bench, or lib) source, and the
-    // reverse.
-    if declared_target_source_missing(table, "bin", name, &owned)
-        || declared_target_source_missing(table, "test", name, &owned)
-        || declared_target_source_missing(table, "example", name, &owned)
-        || declared_target_source_missing(table, "bench", name, &owned)
-        || lib_source_missing(table, name, &owned)
+    // `[lib]`'s own source is resolved before anything else, for every
+    // verb: confirmed against real `cargo` (1.96.0) -- `cargo run` refuses
+    // just as `cargo test` does when `[lib] path` names a file that does
+    // not exist, even for a package whose binary needs no library at all.
+    if lib_source_missing(table, name, &owned) {
+        return false;
+    }
+    // A plain `cargo test` (this witness proves no filters at all, see
+    // `cargo_invocation`) builds and runs virtually the whole package by
+    // default: every declared bin, test, and example (confirmed against
+    // real `cargo` -- NOT bench, which needs `--bench`/`cargo bench` and a
+    // missing bench source alone does not fail a plain `cargo test`). A
+    // missing source among those refuses the whole run regardless of
+    // whether some OTHER target in the package is fine.
+    //
+    // A plain `cargo run`, by contrast, only ever builds the ONE binary it
+    // resolves to (`default-run`, or the package's sole binary): confirmed
+    // against real `cargo` that a DIFFERENT declared bin's own missing
+    // source, or any test's, example's, or bench's, does not matter and
+    // must NOT refuse the run -- only the resolved target's own existence
+    // does, checked per-target in the loop below (via `runs &&
+    // !target_source_missing(...)` feeding `runnable_names`), not here.
+    if verb == "test"
+        && (declared_target_source_missing(table, "bin", name, &owned)
+            || declared_target_source_missing(table, "test", name, &owned)
+            || declared_target_source_missing(table, "example", name, &owned))
     {
         return false;
     }
@@ -456,9 +469,13 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             .is_none_or(Vec::is_empty)
             && !(verb == "test"
                 && target.get("test").and_then(toml::Value::as_bool) == Some(false));
-        // Its source is already known to exist (checked, for every declared
-        // target of every kind, above).
-        if runs {
+        // For `verb == "test"` this target's own source is already known
+        // to exist (the whole kind was checked above); for `verb ==
+        // "run"` it has NOT been checked anywhere else, and must be
+        // checked exactly here: only the target `default-run` (or sole
+        // fallback) ultimately resolves to, below, is allowed to refuse
+        // the run over a missing source, never any other declared bin.
+        if runs && !target_source_missing(target, kind, name, &owned) {
             runnable_names.insert(target_name.to_owned());
         }
     }
