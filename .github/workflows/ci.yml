@@ -102,10 +102,24 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       # simdoc is its own resolver root (crates/simdoc/Cargo.lock), outside
       # the root workspace, so the root gates above never build or test it.
+      # fmt alone is checked here: it parses source without compiling, so it
+      # needs no matching toolchain and still catches real drift.
       - run: cargo fmt --manifest-path crates/simdoc/Cargo.toml --check
-      - run: cargo test --locked --manifest-path crates/simdoc/Cargo.toml
-      - run: cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings
-      - run: cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check
+      # Deliberately not run here: `cargo test`/`clippy`/`run -- simdoc
+      # --check` against crates/simdoc. Its build.rs refuses to compile the
+      # crate at all unless the active toolchain's content digest equals the
+      # committed pin (docs/simdoc-trust-boundaries.md B6, B11) -- this is
+      # the engine's own security boundary, not a bug, and it is not being
+      # weakened or routed around here. No rustup install of the pinned
+      # release observed anywhere other than the guest -- not tiger's, not
+      # this hosted runner's -- has ever matched that pin byte-for-byte,
+      # though all report the identical release and commit hashes; standing
+      # up infrastructure to distribute a byte-identical toolchain to hosted
+      # CI was considered and explicitly declined (maintainer decision,
+      # 2026-09-29: B6 is guest-only by design, matching `repos.toml`'s
+      # `docs_command` already being guest-scoped for the same reason -- see
+      # B12). These three checks run for real only on the guest; that is
+      # where crates/simdoc's own release correctness is actually verified.
       - run: cargo run -p xtask -- check-file-sizes
 
   check:

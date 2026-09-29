@@ -290,6 +290,32 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   any check can run; only a fresh CI runner is trusted to have none. The CI
   checkout of `sim-tooling` is by branch, not a commit (the launcher's
   content pin makes a wrong tooling checkout a red build, not a bypass).
+- **`sim-tooling`'s own hosted CI is deliberately guest-only for
+  `crates/simdoc`'s build-dependent checks (maintainer decision, 2026-09-29).**
+  `crates/simdoc/build.rs` refuses to compile the crate at all unless the
+  active toolchain's content digest equals the committed pin (B6, B11) --
+  this is the engine's own security boundary, working as designed, not a gap
+  in it. Confirmed false in practice, not just theoretically possible: no
+  rustup install of the pinned release found anywhere other than the guest
+  (checked: tiger, and this repository's own GitHub-hosted runner via
+  `dtolnay/rust-toolchain`) has ever matched that pin byte-for-byte, so
+  `cargo test`/`clippy`/`run -- simdoc --check` against `crates/simdoc`
+  cannot succeed on either. Two remediations were considered and declined:
+  standing up infrastructure to distribute a byte-identical toolchain to
+  hosted CI (new, ongoing-maintenance infrastructure, not a repair), and
+  relaxing `build.rs`'s own toolchain-identity check for CI or test builds
+  (touches the security boundary itself, the actual point of B6/B11's
+  design). `.github/workflows/ci.yml`'s `heavy` job therefore runs only
+  `cargo fmt --manifest-path crates/simdoc/Cargo.toml --check` for
+  `crates/simdoc` (parses source, needs no matching toolchain, still catches
+  real drift) and does not attempt to build, test, clippy, or run it, with a
+  comment at the call site pointing back to this section. This matches
+  `repos.toml`'s `docs_command` already being guest-scoped for the identical
+  reason. `crates/simdoc`'s own release correctness (its test suite, its
+  clippy gate, `simdoc --check`) is verified for real only on the guest, the
+  documented source of truth throughout B6/B7; this reconciliation's own
+  closing validation before every merge has always run there for exactly
+  this reason.
 
 ## Not defended (accepted under the trust model)
 
