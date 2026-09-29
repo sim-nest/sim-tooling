@@ -34,6 +34,7 @@
 //!   currentness set supplied through the separate in-process qualification boundary.
 //! - `build-inputs` and `sealed-resources` -- materialize exact Cargo inputs
 //!   and disjoint immutable native build resources as bounded regular files.
+//! - `check-license` -- gate the repository `LICENSE` and file MPL-2.0 notices.
 //! - `bench run`, `bench compare`, `bench show`, and `bench check` -- execute,
 //!   inspect, and enforce durable benchmark artifacts.
 //! - `atelier-site` -- generate or check the Atelier Studio Site graph cache.
@@ -86,6 +87,7 @@ mod index_source;
 mod index_vault;
 mod index_vault_manifest;
 mod json_render;
+mod license_gate;
 mod platform_inventory;
 mod recipe_discovery;
 mod sealed_resources;
