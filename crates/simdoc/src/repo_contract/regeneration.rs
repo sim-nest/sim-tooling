@@ -18,8 +18,8 @@
 //!
 //! ```toml
 //! [workspace.metadata.sim]
-//! docs-command = "cargo run -p xtask -- simdoc"
-//! validation-commands = ["cargo test", "cargo run -p xtask -- simdoc --check"]
+//! docs-command = "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc"
+//! validation-commands = ["cargo test", "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc --check"]
 //! ```
 //!
 //! Without `docs-command`, the regeneration command is the direct encoder
