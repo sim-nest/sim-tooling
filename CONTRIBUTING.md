@@ -18,14 +18,28 @@ Every PR runs these gates in CI (`.github/workflows/ci.yml`) on the toolchain
 pinned in `rust-toolchain.toml`, and they must be green before merge:
 
 - `cargo fmt --all --check`
-- `cargo test`
+- `cargo test` (a handful of tests that must build or run the real pinned
+  `crates/simdoc` engine are skipped here; see below)
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo doc --no-deps` (with `RUSTDOCFLAGS=-D warnings`)
 - `cargo fmt --manifest-path crates/simdoc/Cargo.toml --check`
+- `cargo run -p xtask -- check-file-sizes`
+
+`crates/simdoc` refuses to build at all unless compiled with the exact
+toolchain committed under `[workspace.metadata.sim.encoder]` in the root
+`Cargo.toml` (`docs/simdoc-trust-boundaries.md` B6, B11) -- a real security
+property, not a gap. No hosted CI runner has ever matched that toolchain
+byte-for-byte, so CI cannot run these three, and does not attempt to:
+
 - `cargo test --locked --manifest-path crates/simdoc/Cargo.toml`
 - `cargo clippy --locked --manifest-path crates/simdoc/Cargo.toml --all-targets -- -D warnings`
 - `cargo run --locked --manifest-path crates/simdoc/Cargo.toml -- simdoc --check`
-- `cargo run -p xtask -- check-file-sizes`
+
+These three, and the tests CI skips for the same reason, are run for real
+only on the maintainer's own guest environment, the source of truth for
+`crates/simdoc`'s release correctness (`docs/simdoc-trust-boundaries.md`
+B6, B12). A PR does not need to reproduce that environment; hosted CI is
+the gate that applies to contributors.
 
 `simdoc` is the documentation and contract engine. It is its own resolver root
 (`crates/simdoc/Cargo.lock`), so it is always run with `--manifest-path` and
