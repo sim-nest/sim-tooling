@@ -319,9 +319,50 @@ fn cargo_invocation(command: &str) -> Option<(&'static str, String)> {
 /// several binaries, plain `cargo run` runs exactly the one `default-run`
 /// names, so for `run` that target itself must be runnable by this same
 /// definition; some other, unrelated binary being fine is not enough.
-/// Whether a declared target of `kind` (`"bin"` or `"test"`) names a source
-/// file (an explicit `path`, or the conventional one for its own name) that
-/// is not among `owned`.
+/// Whether `target` (of the given `kind`: `"bin"`, `"test"`, `"example"`,
+/// `"bench"`, or `"lib"`) names a source file -- an explicit `path`, or the
+/// conventional one for its own name -- that is not among `owned`. A `path`
+/// present but not a string is exactly as missing as one that is absent
+/// and matches no convention: Cargo requires it to be a string and refuses
+/// the manifest otherwise, never falling back to the conventional path.
+fn target_source_missing(
+    target: &toml::Table,
+    kind: &str,
+    package_name: &str,
+    owned: &BTreeSet<String>,
+) -> bool {
+    let target_name = target
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .unwrap_or(package_name);
+    let has_source = match target.get("path") {
+        Some(value) => value.as_str().is_some_and(|path| owned.contains(path)),
+        None => match kind {
+            "test" => {
+                owned.contains(&format!("tests/{target_name}.rs"))
+                    || owned.contains(&format!("tests/{target_name}/main.rs"))
+            }
+            "example" => {
+                owned.contains(&format!("examples/{target_name}.rs"))
+                    || owned.contains(&format!("examples/{target_name}/main.rs"))
+            }
+            "bench" => {
+                owned.contains(&format!("benches/{target_name}.rs"))
+                    || owned.contains(&format!("benches/{target_name}/main.rs"))
+            }
+            "lib" => owned.contains("src/lib.rs"),
+            _ => {
+                (target_name == package_name && owned.contains("src/main.rs"))
+                    || owned.contains(&format!("src/bin/{target_name}.rs"))
+                    || owned.contains(&format!("src/bin/{target_name}/main.rs"))
+            }
+        },
+    };
+    !has_source
+}
+
+/// Whether any declared target of `kind` (an array: `"bin"`, `"test"`,
+/// `"example"`, or `"bench"`) names a missing source file.
 fn declared_target_source_missing(
     table: &toml::Table,
     kind: &str,
@@ -334,25 +375,18 @@ fn declared_target_source_missing(
         .into_iter()
         .flatten()
         .filter_map(toml::Value::as_table)
-        .any(|target| {
-            let target_name = target
-                .get("name")
-                .and_then(toml::Value::as_str)
-                .unwrap_or_default();
-            let has_source = match target.get("path").and_then(toml::Value::as_str) {
-                Some(path) => owned.contains(path),
-                None if kind == "test" => {
-                    owned.contains(&format!("tests/{target_name}.rs"))
-                        || owned.contains(&format!("tests/{target_name}/main.rs"))
-                }
-                None => {
-                    (target_name == package_name && owned.contains("src/main.rs"))
-                        || owned.contains(&format!("src/bin/{target_name}.rs"))
-                        || owned.contains(&format!("src/bin/{target_name}/main.rs"))
-                }
-            };
-            !has_source
-        })
+        .any(|target| target_source_missing(target, kind, package_name, owned))
+}
+
+/// Whether an explicitly declared `[lib]` (a single table, not an array)
+/// names a missing source file. Purely automatic library discovery -- no
+/// `[lib]` table at all -- is never an error; Cargo only requires the
+/// source to exist once the target is actually declared.
+fn lib_source_missing(table: &toml::Table, package_name: &str, owned: &BTreeSet<String>) -> bool {
+    table
+        .get("lib")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|lib| target_source_missing(lib, "lib", package_name, owned))
 }
 
 fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: &str) -> bool {
@@ -378,14 +412,19 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
             })
         })
         .collect::<BTreeSet<_>>();
-    // A declared target of EITHER kind -- `[[bin]]` or `[[test]]`, not only
-    // the one the current verb happens to be proving -- naming a source
-    // file that does not exist is a manifest real Cargo refuses outright
-    // for every command against this package: Cargo parses and resolves
-    // every declared target before running any of them. A valid binary
-    // does not excuse a missing test source, or the reverse.
+    // A declared target of ANY of Cargo's five kinds -- `[lib]`, `[[bin]]`,
+    // `[[test]]`, `[[example]]`, `[[bench]]` -- not only the one the
+    // current verb happens to be proving, naming a source file that does
+    // not exist is a manifest real Cargo refuses outright for every
+    // command against this package: Cargo parses and resolves every
+    // declared target before running any of them. A valid binary does not
+    // excuse a missing test (or example, or bench, or lib) source, and the
+    // reverse.
     if declared_target_source_missing(table, "bin", name, &owned)
         || declared_target_source_missing(table, "test", name, &owned)
+        || declared_target_source_missing(table, "example", name, &owned)
+        || declared_target_source_missing(table, "bench", name, &owned)
+        || lib_source_missing(table, name, &owned)
     {
         return false;
     }

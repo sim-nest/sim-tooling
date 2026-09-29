@@ -164,6 +164,51 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     missing_test_for_run.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     assert!(refused(&missing_test_for_run).contains("has no binary target"));
 
+    // The same is true of every OTHER declared target kind Cargo itself
+    // recognizes: a missing `[[example]]`, `[[bench]]`, or `[lib]` source
+    // refuses the manifest too, not only bin/test.
+    for (label, extra) in [
+        (
+            "example",
+            "[[example]]\nname = \"missing\"\npath = \"examples/missing.rs\"\n",
+        ),
+        (
+            "bench",
+            "[[bench]]\nname = \"missing\"\npath = \"benches/missing.rs\"\n",
+        ),
+        ("lib", "[lib]\npath = \"src/missing_lib.rs\"\n"),
+    ] {
+        let repo = harness_repo(
+            &format!("witness-harness-missing-{label}-source"),
+            run,
+            &[run],
+            false,
+        );
+        repo.package(
+            "tests/ui/case",
+            "case",
+            &format!(
+                "publish = false\n\n{extra}\n[dependencies]\napp = {{ path = \"../../..\" }}\n"
+            ),
+        );
+        repo.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+        assert!(refused(&repo).contains("has no binary target"), "{label}");
+    }
+
+    // A declared target's `path` present but not a string is exactly as
+    // missing as one that is absent and matches no convention: Cargo
+    // requires it to be a string, and never falls back to the conventional
+    // path when it is present but wrong.
+    let non_string_path = harness_repo("witness-harness-non-string-path", run, &[run], false);
+    non_string_path.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\n\n[[bin]]\nname = \"case\"\npath = 1\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    non_string_path.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    assert!(refused(&non_string_path).contains("has no binary target"));
+
     // `default-run` names a required-features-gated binary; a plain
     // `cargo run` would try to run exactly that one and fail, even though
     // the package's other binary is fine on its own.
