@@ -382,7 +382,16 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
                     || owned.contains(&format!("src/bin/{target_name}/main.rs"))
             }
         };
-        if runs && has_source {
+        // A declared target (explicit `path` or the conventional one for
+        // its name) naming a source file that does not exist is a manifest
+        // real Cargo refuses outright, for every verb against this
+        // package -- not merely "this one target contributes nothing",
+        // which would let some OTHER, unrelated valid target's existence
+        // wrongly prove the package still runs.
+        if !has_source {
+            return false;
+        }
+        if runs {
             runnable_names.insert(target_name.to_owned());
         }
     }
@@ -416,16 +425,20 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         // any runnable one. A `default-run` naming a target that is absent,
         // or itself required-features-gated, is not proof that the plain
         // command succeeds, even when some other binary in the package is
-        // fine. The count itself is every distinct target name Cargo would
-        // actually see: a declared target replacing an automatic one of the
-        // same name is one binary, not two, and disabled automatic
-        // discovery (`autobins = false`) contributes none at all.
-        if declared_names.len() + automatic_names.len() > 1 {
-            return match package.get("default-run").and_then(toml::Value::as_str) {
-                Some(default_run) => runnable_names.contains(default_run),
-                None => false,
-            };
-        }
+        // fine -- checked whenever `default-run` is declared at all, not
+        // only when more than one binary makes it load-bearing: Cargo
+        // itself refuses a `default-run` naming a nonexistent target
+        // regardless of how many binaries the package actually has. The
+        // count used for the no-`default-run` case is every distinct
+        // target name Cargo would actually see: a declared target
+        // replacing an automatic one of the same name is one binary, not
+        // two, and disabled automatic discovery (`autobins = false`)
+        // contributes none at all.
+        return match package.get("default-run").and_then(toml::Value::as_str) {
+            Some(default_run) => runnable_names.contains(default_run),
+            None if declared_names.len() + automatic_names.len() > 1 => false,
+            None => !runnable_names.is_empty(),
+        };
     }
     !runnable_names.is_empty()
 }

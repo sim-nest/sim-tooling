@@ -116,6 +116,24 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
         );
         assert!(refused(&repo).contains("has no test target"), "{label}");
     }
+    // A declared `[[test]]` naming a source file that does not exist is a
+    // manifest real Cargo refuses outright, even though an automatic test
+    // target elsewhere in the SAME package is perfectly valid on its own:
+    // that other target's existence must never prove the package runs.
+    let missing_source = harness_repo(
+        "witness-harness-missing-test-source",
+        HARNESS,
+        &[HARNESS],
+        true,
+    );
+    missing_source.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\n\n[[test]]\nname = \"missing\"\npath = \"tests/missing.rs\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    assert!(refused(&missing_source).contains("has no test target"));
+
     let subdir = harness_repo("witness-harness-subdir", HARNESS, &[HARNESS], false);
     subdir.write("tests/ui/case/tests/run/main.rs", "#[test]\nfn run() {}\n");
     cargo_metadata(&subdir.root).unwrap();
@@ -147,6 +165,24 @@ fn a_harness_needs_a_declared_command_that_runs_it_and_a_target_cargo_discovers(
     gated_default.write("tests/ui/case/src/main.rs", "fn main() {}\n");
     gated_default.write("tests/ui/case/src/bin/other.rs", "fn main() {}\n");
     assert!(refused(&gated_default).contains("has no binary target"));
+
+    // An invalid `default-run` (naming a target that does not exist) is a
+    // manifest error Cargo refuses regardless of how many binaries the
+    // package actually has -- even a single, otherwise-unambiguous one.
+    let bad_default_one_bin = harness_repo(
+        "witness-harness-bad-default-run-one-bin",
+        run,
+        &[run],
+        false,
+    );
+    bad_default_one_bin.package(
+        "tests/ui/case",
+        "case",
+        "publish = false\ndefault-run = \"nonexistent\"\n\n\
+         [dependencies]\napp = { path = \"../../..\" }\n",
+    );
+    bad_default_one_bin.write("tests/ui/case/src/main.rs", "fn main() {}\n");
+    assert!(refused(&bad_default_one_bin).contains("has no binary target"));
 
     // `default-run` names the package's only runnable binary: accepted, even
     // though it is declared with an explicit (ungated) `[[bin]]` entry.
