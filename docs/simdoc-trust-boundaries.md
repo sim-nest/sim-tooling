@@ -136,7 +136,13 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   the_pin_at_head_is_the_digest_of_the_engine_at_head` (source/lock only, no
   toolchain build) passes on tiger and proves the committed pin matches HEAD.
   `repos.toml`'s `docs_command` for this repository is guest-scoped for the
-  same reason (see the note beside it).
+  same reason (see the note beside it). The same mismatch was independently
+  observed on `sim-tooling`'s own hosted GitHub Actions runner (`dtolnay/
+  rust-toolchain`'s 1.96.0 install, content digest `8880654d...`, also
+  distinct from the committed `31b5ac5b...`): `.github/workflows/ci.yml`'s
+  `heavy` job now passes `cargo test -- --skip ...` for exactly these seven
+  tests, with a comment pointing back to this section, rather than leaving
+  the job red for an already-accepted environmental fact (see B12).
 
 ## B7 Cargo home, target, and configuration
 
@@ -268,7 +274,17 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   is green; (2) the hosted runner's toolchain digest equals the committed
   pin (the pin is the digest of the guest's `rustup` 1.96.0 toolchain, and
   equality with the hosted runner is assumed, not verified); (3) the
-  standalone lock resolves once the sibling crates are published.
+  standalone lock resolves once the sibling crates are published. This
+  specific assumption is now known false for at least one hosted runner:
+  `sim-tooling`'s own `.github/workflows/ci.yml` (a different workflow from
+  sim-platform's, testing this repository directly rather than consuming it
+  as a sibling) observed its `dtolnay/rust-toolchain`-installed 1.96.0 on a
+  GitHub-hosted runner produce yet a third distinct content digest, matching
+  neither the committed pin nor tiger's (B6). Whether sim-platform's own CI
+  runner happens to match is still unverified either way; nothing here
+  changes that assumption's status, only confirms it is not free-standing --
+  a generic rustup install of the pinned release, on an arbitrary machine,
+  should be expected to differ from the guest's unless proven otherwise.
 - Outside the boundary: a person's local `cargo run -p xtask` is compiled
   and started by the caller's cargo under the caller's environment, before
   any check can run; only a fresh CI runner is trusted to have none. The CI
