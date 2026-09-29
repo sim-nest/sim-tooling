@@ -227,7 +227,7 @@ fn generated_artifacts(docs_repo: &str) -> Vec<Value> {
             "path": "docs/generated/contract.md",
             "generated_public_doc": true,
             "hand_edited": false,
-            "generator": "xtask simdoc"
+            "generator": "simdoc"
         }),
         json!({
             "repo": docs_repo,
