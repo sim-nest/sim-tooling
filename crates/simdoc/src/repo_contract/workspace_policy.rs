@@ -86,7 +86,7 @@ pub(crate) struct ContractExclusion {
     pub(crate) path: String,
     pub(crate) class: ExclusionClass,
     /// What consumes the fixture: a test target source for `test-fixture`,
-    /// a recipe, book, or chapter manifest for `recipe-fixture`, and the
+    /// a `recipe.toml` under `recipes/` for `recipe-fixture`, and the
     /// `validation-commands` entry that runs it for `focused-test-harness`.
     pub(crate) consumer: Option<String>,
     pub(crate) reason: String,
