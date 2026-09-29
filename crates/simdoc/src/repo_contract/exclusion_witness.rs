@@ -308,25 +308,6 @@ fn cargo_invocation(command: &str) -> Option<(&'static str, String)> {
     Some((verb, manifest?))
 }
 
-/// Whether Cargo would discover and run a test target (verb `test`) or a
-/// binary target (verb `run`) in the package at `dir`: exactly the automatic
-/// layout (`tests/*.rs`, `tests/*/main.rs`; `src/main.rs`, `src/bin/*.rs`,
-/// `src/bin/*/main.rs`) unless `autotests`/`autobins = false`, or a declared
-/// `[[test]]`/`[[bin]]` whose source is an owned file. A virtual manifest has
-/// no target. A declared target with `required-features`, or a declared test
-/// with `test = false`, is not run by the plain command and does not count,
-/// and a declared target replaces the automatic one of the same name. With
-/// several binaries, plain `cargo run` runs exactly the one `default-run`
-/// names, so for `run` that target itself must be runnable by this same
-/// definition; some other, unrelated binary being fine is not enough.
-///
-/// This is verified directly against real `cargo`, not reasoned about from
-/// documentation alone, but is not a complete model of Cargo's own
-/// target-selection algorithm: see `docs/simdoc-trust-boundaries.md`,
-/// section B9, "Known limitation (`focused-test-harness`, ...)", for the
-/// specific gaps (per-target `required-features`/`test` gating, a `[[bench]]`
-/// opted into `cargo test`, workspace-member manifests, build-script
-/// targets, non-`lib` name defaulting) and why they are not closed here.
 /// Whether `target` (of the given `kind`: `"bin"`, `"test"`, `"example"`,
 /// `"bench"`, or `"lib"`) names a source file -- an explicit `path`, or the
 /// conventional one for its own name -- that is not among `owned`. A `path`
@@ -397,6 +378,26 @@ fn lib_source_missing(table: &toml::Table, package_name: &str, owned: &BTreeSet<
         .is_some_and(|lib| target_source_missing(lib, "lib", package_name, owned))
 }
 
+/// Whether Cargo would discover and run a test target (verb `test`) or a
+/// binary target (verb `run`) in the package at `dir`: exactly the automatic
+/// layout (`tests/*.rs`, `tests/*/main.rs`; `src/main.rs`, `src/bin/*.rs`,
+/// `src/bin/*/main.rs`) unless `autotests`/`autobins = false`, or a declared
+/// `[[test]]`/`[[bin]]` whose source is an owned file. A virtual manifest has
+/// no target. A declared target with `required-features`, or a declared test
+/// with `test = false`, is not run by the plain command and does not count,
+/// and a declared target replaces the automatic one of the same name. With
+/// several binaries, plain `cargo run` runs exactly the one `default-run`
+/// names, so for `run` that target itself must be runnable by this same
+/// definition; some other, unrelated binary being fine is not enough.
+///
+/// This is verified directly against real `cargo`, not reasoned about from
+/// documentation alone, but is not a complete model of Cargo's own
+/// target-selection algorithm: see `docs/simdoc-trust-boundaries.md`,
+/// section B9, "Known limitation (`focused-test-harness`, ...)", for the
+/// specific gaps (per-target `required-features`/`test` gating not
+/// reconciled with the harness's own `--all-features`, a `[[bench]]`
+/// opted into `cargo test`, workspace-member manifests, build-script
+/// targets, non-`lib` name defaulting) and why they are not closed here.
 fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: &str) -> bool {
     let Some(package) = table.get("package").and_then(toml::Value::as_table) else {
         return false;
