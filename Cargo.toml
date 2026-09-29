@@ -89,7 +89,7 @@ toml = "0.8"
 workspace = true
 
 [workspace.metadata.sim.encoder]
-source_sha256 = "187e004d72c10f13929416e090806b7211f9767c5ceaa47f283606544ceae81f"
+source_sha256 = "30ee154387cee2c2567026f0e916923798e440cba6f135d1bc279e80af8f49c1"
 lock_sha256 = "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678"
 toolchain = "1.96.0"
 rustc_commit = "ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
