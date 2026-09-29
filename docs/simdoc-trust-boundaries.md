@@ -204,6 +204,15 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
 
   None of these close with another point-fix to the same AST-matching design; the honest full fix, if this ever needs to be fully sound against a deliberate adversary rather than reviewed by hand, is a MIR-level or real dataflow analysis in place of syntactic pattern-matching -- a separate future task, not part of this reconciliation. A product-owned API that opens and consumes the fixture (executed by the validation run, proving real use rather than syntactic use) is a separate follow-up that would close a different part of this same gap.
 
+  **Known limitation (`focused-test-harness`, `exclusion_witness.rs::has_cargo_target`):** verified against real `cargo` (1.96.0) directly, not reasoned about from documentation alone, across five independent review rounds (the last of which itself ran real `cargo` probes) -- the function correctly models, per verb, which of Cargo's five target kinds (`lib`, `bin`, `test`, `example`, `bench`) must have a real, existing source for a plain `cargo test` or `cargo run` to succeed, including the asymmetry between the two (`cargo test` builds virtually the whole package by default; `cargo run` only the one binary it resolves to). It does **not** yet model:
+  - per-target gating within a kind it does check: a `[[test]]`/`[[bin]]`/`[[example]]` marked `test = false`, or gated by `required-features` that the harness's own `--all-features`/`--features` flags (which `cargo_invocation` discards, keeping only the verb) would or would not satisfy, is treated as if it always needs a real source, when Cargo would actually skip it;
+  - the reverse gap this creates: a `[[bench]]` marked `test = true` (opting it into a plain `cargo test`) is never checked, since benches are excluded from the test-verb check entirely;
+  - workspace member manifests Cargo also loads when resolving a command against the selected package -- only the selected package's own manifest is read;
+  - Cargo's own implicit `build = "..."` build-script target;
+  - a declared `bin`/`test`/`example`/`bench` target's own `name` defaulting to the package name when absent or non-string, which is only correct for `[lib]` -- the other four kinds require an explicit string name from Cargo, so a manifest missing one may still be wrongly accepted here.
+
+  Closing these needs modeling a materially larger slice of Cargo's own target-selection algorithm (per-target flags, feature-gate evaluation, workspace loading) than the kind-level check above -- a bigger, more failure-prone undertaking than the fixes already made, per the same proportionality judgment as the test-fixture witness's own limitation. Not attempted further this reconciliation; a real dataflow/feature-resolution model, or shelling out to `cargo metadata`/`cargo build --dry-run`-equivalent tooling against the actual candidate manifest, is the honest full fix.
+
 ## B10 Recipe evidence
 
 - Claim: **declared consumer only.** Generation runs no recipe, and simdoc

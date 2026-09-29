@@ -319,6 +319,14 @@ fn cargo_invocation(command: &str) -> Option<(&'static str, String)> {
 /// several binaries, plain `cargo run` runs exactly the one `default-run`
 /// names, so for `run` that target itself must be runnable by this same
 /// definition; some other, unrelated binary being fine is not enough.
+///
+/// This is verified directly against real `cargo`, not reasoned about from
+/// documentation alone, but is not a complete model of Cargo's own
+/// target-selection algorithm: see `docs/simdoc-trust-boundaries.md`,
+/// section B9, "Known limitation (`focused-test-harness`, ...)", for the
+/// specific gaps (per-target `required-features`/`test` gating, a `[[bench]]`
+/// opted into `cargo test`, workspace-member manifests, build-script
+/// targets, non-`lib` name defaulting) and why they are not closed here.
 /// Whether `target` (of the given `kind`: `"bin"`, `"test"`, `"example"`,
 /// `"bench"`, or `"lib"`) names a source file -- an explicit `path`, or the
 /// conventional one for its own name -- that is not among `owned`. A `path`
