@@ -5,6 +5,12 @@
 
 //! Which fixtures a normal `cargo test` run consumes, read from a test
 //! target's source (see [`super::exclusion_witness`]).
+//!
+//! This is a *syntactic* analysis, not a sound one: see
+//! `docs/simdoc-trust-boundaries.md`, section B9, "Known limitation", for
+//! the specific constructs a same-repository author deliberately trying to
+//! defeat it can still exploit, and why closing them needs a different
+//! design (real dataflow analysis), not another point-fix here.
 
 use std::collections::{BTreeMap, BTreeSet};
 

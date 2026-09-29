@@ -193,7 +193,16 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   prose, other TOML keys, bare-identifier merging across modules, `--no-run`,
   filters, target selection, program arguments, nested `.rs` files that are
   not targets.
-- Coverage: unit (`exclusion_witness_tests`, through `contract_packages`, the function the repo-contract task calls); no route test through the built binary. **Known limitation:** the test-fixture witness is *syntactic*. It proves a live test calls a `consume_fixture("<fixture>")` helper of the reviewed shape and uses its value; it does not prove that the helper opens and reads the fixture, or that the test executed. The witness is reviewed by hand, and a product-owned API that opens and consumes the fixture (executed by the validation run) is a follow-up.
+- Coverage: unit (`exclusion_witness_tests`, through `contract_packages`, the function the repo-contract task calls); no route test through the built binary. **Known limitation:** the test-fixture witness is *syntactic*, not a sound reachability/liveness analysis. It proves a live test's own SOURCE TEXT calls a `consume_fixture("<fixture>")` helper of the reviewed shape and uses its value, resolved through real scoping (the module tree, `use`, lexical shadowing including let-chains, `async`/`.await`, short-circuit `&&`/`||`, and control-flow divergence) -- it does not prove the helper genuinely opens and reads the fixture, or that the test executed. A same-repository author deliberately trying to defeat the witness, as opposed to an ordinary contributor accidentally tripping a false positive, can still forge evidence through constructs this AST-level analysis (`fixture_consumption.rs`) does not model:
+  - the reviewed-shape check is itself substring-based (does the rendered signature+body text contain `CARGO_MANIFEST_DIR`, `join`, and `->`), so a helper can satisfy it without truly joining its argument;
+  - a *direct* call to an `async fn consume_fixture` (not an intermediate reference reached transitively) is credited even when never `.await`ed -- the await-tracking protects only the transitive-reference path;
+  - shadow detection covers only the value namespace; a local `type`/`mod` alias in the type or module namespace is not tracked;
+  - a local `macro_rules!` redefinition of a trusted "evaluating" macro (`assert!` and the rest of `EVALUATING_MACROS`) is not detected -- every invocation is trusted by its bare textual name alone;
+  - short-circuit `&&`/`||` handling has real gaps outside a bare `if`/`while` condition, through parentheses, and once an earlier conjunct's own certainty has already collapsed to "maybe" before a later, provably-false one is reached;
+  - divergence detection does not recognize `continue`/`break` as always diverging, only `return` and specific `if`/block forms;
+  - dropped-value unwrapping recognizes a bare `drop(...)` call but not `std::mem::drop(...)` or a drop-wrapped aggregate.
+
+  None of these close with another point-fix to the same AST-matching design; the honest full fix, if this ever needs to be fully sound against a deliberate adversary rather than reviewed by hand, is a MIR-level or real dataflow analysis in place of syntactic pattern-matching -- a separate future task, not part of this reconciliation. A product-owned API that opens and consumes the fixture (executed by the validation run, proving real use rather than syntactic use) is a separate follow-up that would close a different part of this same gap.
 
 ## B10 Recipe evidence
 
