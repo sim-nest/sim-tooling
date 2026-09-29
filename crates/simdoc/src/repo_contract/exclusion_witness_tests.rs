@@ -377,7 +377,13 @@ fn only_a_live_test_that_reaches_the_fixture_consumes_it() {
         // rename of that segment redirects everything after it.
         (
             "shadow-of-a-qualified-paths-first-segment",
-            "mod real { pub fn consumer() { let d = consume_fixture(\"tests/ui\"); } }\n\
+            // `consume_fixture` lives INSIDE `real` itself, so `consumer`'s
+            // own bare call to it resolves by ordinary same-module lookup,
+            // never needing (and so never blocked by the analyzer's own
+            // refusal of) a bare cross-module reference.
+            "mod real {\n    pub fn consume_fixture(relative: &str) -> std::path::PathBuf {\n        \
+             std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(relative)\n    }\n    \
+             pub fn consumer() { let d = consume_fixture(\"tests/ui\"); }\n}\n\
              mod fake { pub fn consumer() {} }\n\
              #[test]\nfn t() {\n    use fake as real;\n    real::consumer();\n}\n",
         ),
