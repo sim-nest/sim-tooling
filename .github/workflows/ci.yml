@@ -68,6 +68,14 @@ jobs:
             (cd "$dir" && cargo --version --verbose | grep -qx "release: $pinned")
           done
       - run: cargo fmt --all --check
+      # crates/simdoc is a separate resolver root with its own Cargo.lock
+      # (pinning different dependency versions than the root workspace, e.g.
+      # cfg-if 1.0.4 vs 1.0.5 here). The root test suite exercises the real
+      # private-Cargo-home builder (src/cargo_home.rs) against that lock, so
+      # its exact locked dependency set must already be in the runner's
+      # ambient registry cache before `cargo test` runs below -- fetch it
+      # first rather than relying on some later step to have warmed it.
+      - run: cargo fetch --locked --manifest-path crates/simdoc/Cargo.toml
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo doc --no-deps
