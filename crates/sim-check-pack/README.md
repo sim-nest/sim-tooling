@@ -25,5 +25,8 @@ absolute regular file and `SIM_CONFORMANCE_PACKS_LOCK_SHA256` to its lowercase
 digest. Supplying only one value or a mismatching digest fails the build before
 code generation. A packaged owner lock remains the standalone fallback.
 
-The maintenance `xtask check-pack` command remains a separate command binding.
-It cannot substitute for this native call or serialize live owner authority.
+The maintenance check-pack command lives in the separate checker workspace,
+not `xtask`: `cargo run --manifest-path crates/Cargo.toml -p
+sim-check-pack-xtask -- check-pack ...` (`xtask check-pack` itself refuses
+and points here). It cannot substitute for this native call or serialize
+live owner authority.
