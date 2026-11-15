@@ -210,6 +210,33 @@ fn a_protocol_route_literal_is_exact_and_a_url_is_not_a_path() {
 }
 
 #[test]
+fn parent_markers_are_not_trimmed_into_a_reviewed_literal() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    for content in [
+        "/v1/models..",
+        "/v1/models\\..",
+        "`/v1/models..`",
+        "`/v1/models\\..`",
+        "see /v1/models.. in claims",
+        "/proc/cpuinfo..",
+        "/etc/os-release\\..",
+    ] {
+        let tokens = path_tokens(content);
+        assert!(
+            tokens.iter().all(|token| token.contains("..") && !is_public_path(token)),
+            "{content} -> {tokens:?}"
+        );
+        assert!(
+            guard(repo, "sim-index-fragment.claims.sx", content).is_err(),
+            "{content}"
+        );
+    }
+    // One sentence dot is still punctuation, not a parent marker.
+    guard(repo, "sim-index-fragment.claims.sx", "quoted /v1/models.").unwrap();
+    guard(repo, "README.md", "(x \"\\\"/etc/os-release\\\"\")").unwrap();
+}
+
+#[test]
 fn a_file_url_or_slash_drive_path_is_a_path_too() {
     let repo = Path::new("/work/constellation/sim-fixture");
     for content in [
