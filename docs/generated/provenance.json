@@ -4,7 +4,7 @@
     "executable": {
       "lock_sha256": "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678",
       "package": "simdoc",
-      "source_sha256": "30ee154387cee2c2567026f0e916923798e440cba6f135d1bc279e80af8f49c1",
+      "source_sha256": "0830129029045df1e020446f232ffff638c5cd5d65265ada29458b4748a1561d",
       "version": "0.1.0"
     },
     "operation": "repo-contract --repo .",
@@ -20,13 +20,13 @@
       }
     }
   },
-  "generation_timestamp": "2026-09-29T12:31:29+02:00",
+  "generation_timestamp": "2026-11-15T10:25:29+01:00",
   "generator": "xtask repo-contract v1",
-  "git_commit": "6531bb481e054a3c2c1037d023ded1e68006e868",
+  "git_commit": "3db8ff7965b28686e6fa57ab9eff9e2ce142cf14",
   "regeneration_command": "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc",
   "repo": "sim-tooling",
   "schema": "sim.provenance.v1",
-  "source_commit": "6531bb481e054a3c2c1037d023ded1e68006e868",
+  "source_commit": "3db8ff7965b28686e6fa57ab9eff9e2ce142cf14",
   "source_remote": "https://github.com/sim-nest/sim-tooling",
   "validation_commands": [
     "cargo fmt --all --check",
@@ -42,9 +42,9 @@
     "cargo run -p xtask -- validation-matrix --check --repo .",
     "cargo run -p xtask -- crate-catalog --check --repo ."
   ],
-  "workspace_hash": "3bb51347497a5372",
+  "workspace_hash": "7f5727d3c4306f42",
   "workspace_hash_algorithm": "fnv1a64",
-  "workspace_hash_input_count": 234,
+  "workspace_hash_input_count": 239,
   "workspace_hash_inputs": [
     ".github/workflows/authorship.yml",
     ".github/workflows/ci.yml",
@@ -112,6 +112,8 @@
     "crates/simdoc/src/repo_contract/fixture_consumption_cfg.rs",
     "crates/simdoc/src/repo_contract/fixture_consumption_resolve.rs",
     "crates/simdoc/src/repo_contract/fixture_consumption_shadow.rs",
+    "crates/simdoc/src/repo_contract/harness_source_tests.rs",
+    "crates/simdoc/src/repo_contract/harness_sources.rs",
     "crates/simdoc/src/repo_contract/package_projection.rs",
     "crates/simdoc/src/repo_contract/policy_fixture.rs",
     "crates/simdoc/src/repo_contract/provenance.rs",
@@ -267,6 +269,9 @@
     "src/index_vault_write_tests.rs",
     "src/json_render.rs",
     "src/lib.rs",
+    "src/license_gate/exclusions.rs",
+    "src/license_gate/tests.rs",
+    "src/license_gate.rs",
     "src/main.rs",
     "src/platform_inventory.rs",
     "src/platform_inventory_tests.rs",
