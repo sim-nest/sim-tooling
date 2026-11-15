@@ -22,7 +22,7 @@
 //! | --- | --- | --- |
 //! | `test-fixture` | a `test` target source | a live `#[test]` function actually invokes a reviewed `consume_fixture(...)` helper with that fixture path, never merely holding the string as text (see [`super::fixture_consumption`]) |
 //! | `recipe-fixture` | a `recipe.toml` under a covered package's `recipes/` | the file is parsed as TOML; its typed top-level `fixtures` array names the fixture path |
-//! | `focused-test-harness` | one of the root manifest's `validation-commands` | that command runs the harness by `--manifest-path`, and the harness has a matching test or binary target |
+//! | `focused-test-harness` | one of the root manifest's `validation-commands` | that command runs the harness by `--manifest-path`, and the harness has a matching test or binary target. A `..` path that normalizes to an owned file stays inside the repository. The harness path-depends on a covered package, or a declared target or `#[path]` names an owned source of one |
 //!
 //! Every excluded package must also declare `publish = false`, and a
 //! focused harness must path-depend on a covered package. No covered
@@ -338,7 +338,7 @@ pub(crate) fn classify_manifests(
         for manifest in &entry.manifests {
             worktree.owned_file(&worktree.root().join(manifest), "excluded manifest")?;
         }
-        prove_exclusion(worktree.root(), entry, &package_roots)?;
+        prove_exclusion(worktree, metadata, entry, &package_roots)?;
         super::exclusion_witness::prove(worktree, metadata, entry)?;
     }
     reject_first_party_dependencies(worktree.root(), metadata, &excluded)?;
@@ -346,10 +346,12 @@ pub(crate) fn classify_manifests(
 }
 
 fn prove_exclusion(
-    repo: &Path,
+    worktree: &Worktree,
+    metadata: &Value,
     entry: &ExcludedManifests,
     package_roots: &BTreeSet<PathBuf>,
 ) -> Result<(), String> {
+    let repo = worktree.root();
     let exclusion = &entry.exclusion;
     let has_component = |name: &str| {
         Path::new(&exclusion.path)
@@ -387,6 +389,7 @@ fn prove_exclusion(
             && !path_dependency_targets(&path, &table)
                 .iter()
                 .any(|target| package_roots.contains(target))
+            && !super::harness_sources::tied_by_covered_source(worktree, metadata, &path, &table)
         {
             return Err(format!(
                 "focused-test-harness package {manifest} has no path dependency on a contract package"

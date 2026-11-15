@@ -16,7 +16,7 @@
 use std::{
     collections::BTreeSet,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use crate::bounded_process::run_bounded;
@@ -145,18 +145,33 @@ impl Worktree {
 }
 
 impl Worktree {
-    /// `path` relative to the root without following anything: `None` when it
-    /// is not lexically beneath the root or contains `..`.
+    /// `path` relative to the root without following anything.
     fn lexical_relative(&self, path: &Path) -> Option<String> {
-        let relative = path.strip_prefix(&self.root).ok()?;
-        if !relative
-            .components()
-            .all(|component| matches!(component, std::path::Component::Normal(_)))
-        {
-            return None;
-        }
-        Some(relative.to_str()?.replace(std::path::MAIN_SEPARATOR, "/"))
+        lexical_repo_relative(&self.root, path)
     }
+}
+
+/// Repository-relative form of `path` without following the filesystem.
+///
+/// `.` is dropped. `..` cancels the preceding component. The result is `None`
+/// when `path` is not lexically beneath `root`, or when `..` would leave
+/// `root`. A `..` that only cancels an earlier component inside `root` names
+/// that same file; the ordinary-file and symlink checks then walk the
+/// normalized path.
+pub(crate) fn lexical_repo_relative(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(parts.join("/"))
 }
 
 fn git(repo: &Path, args: &[&str], role: &str) -> Result<Vec<u8>, String> {
@@ -171,4 +186,39 @@ fn git(repo: &Path, args: &[&str], role: &str) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(captured.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_segments_inside_the_root_normalize() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo/crates/focused/../src/lib.rs")).as_deref(),
+            Some("crates/src/lib.rs")
+        );
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo")).as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn parent_segments_that_leave_the_root_are_outside() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo/../outside.rs")),
+            None
+        );
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo/a/../../other.rs")),
+            None
+        );
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/other/src/lib.rs")),
+            None
+        );
+    }
 }

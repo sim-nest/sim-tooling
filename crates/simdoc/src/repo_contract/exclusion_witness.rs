@@ -13,7 +13,7 @@
 //! | --- | --- | --- |
 //! | `test-fixture` | a `test` target source of a covered package | the source is parsed as Rust; a live `#[test]` function, or a live item it reaches by qualified path, calls `consume_fixture("<fixture path>")` (the fixture path relative to the repository, the package, or the consumer) |
 //! | `recipe-fixture` | a `recipe.toml` under a covered package's `recipes/` | the file is parsed as TOML; its typed top-level `fixtures` array names the fixture path |
-//! | `focused-test-harness` | one command of the root manifest's `validation-commands` | the command is `cargo test` or `cargo run` with only `--manifest-path` naming the harness manifest and a few plain flags (never `--no-run`, target or test filters, or program arguments), and the harness has a test target (for `test`) or a binary target (for `run`) that Cargo would discover |
+//! | `focused-test-harness` | one command of the root manifest's `validation-commands` | the command is `cargo test` or `cargo run` with only `--manifest-path` naming the harness manifest and a few plain flags (never `--no-run`, target or test filters, or program arguments), and the harness has a test target (for `test`) or a binary target (for `run`) that Cargo would discover. A declared `..` path counts when it normalizes to an owned file. `cargo test` also counts a library that declares `#[cfg(test)]` or `#[test]` |
 //!
 //! Comments, doc attributes, `#[cfg(...)]`-disabled items (other than
 //! `cfg(test)`), `#[ignore]`d tests, `if false` bodies, macro definitions,
@@ -315,6 +315,8 @@ fn cargo_invocation(command: &str) -> Option<(&'static str, String)> {
 /// and matches no convention: Cargo requires it to be a string and refuses
 /// the manifest otherwise, never falling back to the conventional path.
 fn target_source_missing(
+    worktree: &Worktree,
+    dir: &Path,
     target: &toml::Table,
     kind: &str,
     package_name: &str,
@@ -325,7 +327,9 @@ fn target_source_missing(
         .and_then(toml::Value::as_str)
         .unwrap_or(package_name);
     let has_source = match target.get("path") {
-        Some(value) => value.as_str().is_some_and(|path| owned.contains(path)),
+        Some(value) => value.as_str().is_some_and(|path| {
+            super::harness_sources::declared_path_is_owned(worktree, dir, path, owned)
+        }),
         None => match kind {
             "test" => {
                 owned.contains(&format!("tests/{target_name}.rs"))
@@ -353,6 +357,8 @@ fn target_source_missing(
 /// Whether any declared target of `kind` (an array: `"bin"`, `"test"`,
 /// `"example"`, or `"bench"`) names a missing source file.
 fn declared_target_source_missing(
+    worktree: &Worktree,
+    dir: &Path,
     table: &toml::Table,
     kind: &str,
     package_name: &str,
@@ -364,25 +370,34 @@ fn declared_target_source_missing(
         .into_iter()
         .flatten()
         .filter_map(toml::Value::as_table)
-        .any(|target| target_source_missing(target, kind, package_name, owned))
+        .any(|target| target_source_missing(worktree, dir, target, kind, package_name, owned))
 }
 
 /// Whether an explicitly declared `[lib]` (a single table, not an array)
 /// names a missing source file. Purely automatic library discovery -- no
 /// `[lib]` table at all -- is never an error; Cargo only requires the
 /// source to exist once the target is actually declared.
-fn lib_source_missing(table: &toml::Table, package_name: &str, owned: &BTreeSet<String>) -> bool {
+fn lib_source_missing(
+    worktree: &Worktree,
+    dir: &Path,
+    table: &toml::Table,
+    package_name: &str,
+    owned: &BTreeSet<String>,
+) -> bool {
     table
         .get("lib")
         .and_then(toml::Value::as_table)
-        .is_some_and(|lib| target_source_missing(lib, "lib", package_name, owned))
+        .is_some_and(|lib| target_source_missing(worktree, dir, lib, "lib", package_name, owned))
 }
 
 /// Whether Cargo would discover and run a test target (verb `test`) or a
 /// binary target (verb `run`) in the package at `dir`: exactly the automatic
 /// layout (`tests/*.rs`, `tests/*/main.rs`; `src/main.rs`, `src/bin/*.rs`,
 /// `src/bin/*/main.rs`) unless `autotests`/`autobins = false`, or a declared
-/// `[[test]]`/`[[bin]]` whose source is an owned file. A virtual manifest has
+/// `[[test]]`/`[[bin]]` whose source is an owned file. A declared path with
+/// `..` counts when it normalizes to an owned ordinary file and stays inside
+/// the repository. For `test`, a library source that declares `#[cfg(test)]`
+/// or `#[test]` also counts. A virtual manifest has
 /// no target. A declared target with `required-features`, or a declared test
 /// with `test = false`, is not run by the plain command and does not count,
 /// and a declared target replaces the automatic one of the same name. With
@@ -425,7 +440,7 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
     // verb: confirmed against real `cargo` (1.96.0) -- `cargo run` refuses
     // just as `cargo test` does when `[lib] path` names a file that does
     // not exist, even for a package whose binary needs no library at all.
-    if lib_source_missing(table, name, &owned) {
+    if lib_source_missing(worktree, dir, table, name, &owned) {
         return false;
     }
     // A plain `cargo test` (this witness proves no filters at all, see
@@ -444,9 +459,9 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
     // does, checked per-target in the loop below (via `runs &&
     // !target_source_missing(...)` feeding `runnable_names`), not here.
     if verb == "test"
-        && (declared_target_source_missing(table, "bin", name, &owned)
-            || declared_target_source_missing(table, "test", name, &owned)
-            || declared_target_source_missing(table, "example", name, &owned))
+        && (declared_target_source_missing(worktree, dir, table, "bin", name, &owned)
+            || declared_target_source_missing(worktree, dir, table, "test", name, &owned)
+            || declared_target_source_missing(worktree, dir, table, "example", name, &owned))
     {
         return false;
     }
@@ -484,7 +499,7 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         // checked exactly here: only the target `default-run` (or sole
         // fallback) ultimately resolves to, below, is allowed to refuse
         // the run over a missing source, never any other declared bin.
-        if runs && !target_source_missing(target, kind, name, &owned) {
+        if runs && !target_source_missing(worktree, dir, target, kind, name, &owned) {
             runnable_names.insert(target_name.to_owned());
         }
     }
@@ -540,6 +555,7 @@ fn has_cargo_target(worktree: &Worktree, dir: &Path, table: &toml::Table, verb: 
         };
     }
     !runnable_names.is_empty()
+        || super::harness_sources::library_declares_tests(worktree, dir, table, &owned)
 }
 
 #[cfg(test)]

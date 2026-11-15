@@ -180,11 +180,8 @@ fn string_array(value: &Value) -> Vec<String> {
 }
 
 pub(super) fn rel_path(repo: &Path, path: &Path) -> Result<String, String> {
-    Ok(path
-        .strip_prefix(repo)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/"))
+    crate::worktree::lexical_repo_relative(repo, path)
+        .ok_or_else(|| format!("{} resolves outside the repository", path.display()))
 }
 
 pub(super) fn display_io(err: io::Error) -> String {
