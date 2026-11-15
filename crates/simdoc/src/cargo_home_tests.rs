@@ -154,6 +154,27 @@ fn private_directories_are_owner_only_and_dead_ones_are_swept() {
     assert!(dir.exists());
 }
 
+#[test]
+fn concurrent_private_directories_are_distinct() {
+    let dirs = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..32 {
+            handles.push(scope.spawn(|| private_dir("race").expect("private dir")));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread"))
+            .collect::<Vec<_>>()
+    });
+    let mut names = dirs
+        .iter()
+        .map(|dir| dir.file_name().expect("name").to_os_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), dirs.len());
+}
+
 trait ModeBits {
     fn mode_bits(&self) -> u32;
 }

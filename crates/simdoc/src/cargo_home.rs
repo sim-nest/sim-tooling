@@ -22,12 +22,15 @@ use std::{
     fs,
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use sha2::{Digest, Sha256};
 
 const PREFIX: &str = "simdoc-private-";
+/// Distinguishes directories created in the same nanosecond by one process.
+static PRIVATE_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Ceiling for a copied index cache.
 const MAX_INDEX_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -60,7 +63,11 @@ fn private_dir_in(temp: &Path, label: &str) -> Result<PathBuf, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|err| err.to_string())?
         .as_nanos();
-    let dir = temp.join(format!("{PREFIX}{}-{stamp}-{label}", std::process::id()));
+    let seq = PRIVATE_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = temp.join(format!(
+        "{PREFIX}{}-{stamp}-{seq}-{label}",
+        std::process::id()
+    ));
     fs::DirBuilder::new()
         .mode(0o700)
         .create(&dir)
