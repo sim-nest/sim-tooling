@@ -194,9 +194,12 @@ mutation harness in CI. Where a boundary has no route test, that is stated.
   Cargo would discover by its exact layout (a declared target with
   `required-features` or `test = false`, and a virtual manifest, do not count).
   A declared target path may contain `..` when normalization stays inside the
-  repository and names an ordinary file the worktree owns. Absolute paths, a
-  path that leaves the repository, a symlink, and an untracked or ignored file
-  stay refused. The harness is tied to a covered package by a path dependency,
+  repository and names an ordinary file the worktree owns. Each original
+  component is checked before `..` cancels it, so a symlink followed by `..`
+  stays refused. A `..` that cancels only an ordinary component and stays
+  inside the repository still names that file. Absolute paths, a path that
+  leaves the repository, a symlink, and an untracked or ignored file stay
+  refused. The harness is tied to a covered package by a path dependency,
   or by a declared target or a parsed `#[path]` attribute that names an owned
   `.rs` file of a covered package outside the harness directory. `cargo test`
   also accepts a library source that declares a `#[test]` function or a

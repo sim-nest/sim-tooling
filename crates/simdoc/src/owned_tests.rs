@@ -198,6 +198,58 @@ fn untracked_files_are_never_owned_whether_or_not_they_are_ignored() {
 }
 
 #[test]
+fn a_symlink_followed_by_parent_is_refused_before_it_is_cancelled() {
+    let fixture = Fixture::new("owned-symlink-parent");
+    fs::create_dir_all(fixture.root.join("src")).unwrap();
+    fs::create_dir_all(fixture.root.join("ordinary")).unwrap();
+    fs::write(fixture.root.join("src/lib.rs"), "safe\n").unwrap();
+    fs::create_dir_all(fixture.outside.join("decoy")).unwrap();
+    fs::create_dir_all(fixture.outside.join("src")).unwrap();
+    fs::write(fixture.outside.join("src/lib.rs"), "secret\n").unwrap();
+    symlink(fixture.outside.join("decoy"), fixture.root.join("link")).unwrap();
+    symlink("ordinary", fixture.root.join("inner")).unwrap();
+    git(&fixture.root, &["add", "src/lib.rs"]);
+    git(&fixture.root, &FIXTURE_COMMIT);
+
+    let worktree = crate::worktree::Worktree::open(&fixture.root).unwrap();
+    assert_eq!(
+        worktree
+            .owned_file(&fixture.root.join("ordinary/../src/lib.rs"), "file")
+            .unwrap(),
+        "src/lib.rs"
+    );
+    let hidden = worktree
+        .owned_file(&fixture.root.join("link/../src/lib.rs"), "file")
+        .unwrap_err();
+    assert!(
+        hidden.contains("symlink") && hidden.contains("link/../src/lib.rs"),
+        "{hidden}"
+    );
+    let inner = worktree
+        .owned_file(&fixture.root.join("inner/../src/lib.rs"), "file")
+        .unwrap_err();
+    assert!(
+        inner.contains("symlink") && inner.contains("inner/../src/lib.rs"),
+        "{inner}"
+    );
+
+    let scope = enter(&fixture.root).unwrap();
+    assert_eq!(
+        read_to_string(fixture.root.join("ordinary/../src/lib.rs")).unwrap(),
+        "safe\n"
+    );
+    let leaked = read_to_string(fixture.root.join("link/../src/lib.rs")).unwrap_err();
+    let leaked = leaked.to_string();
+    assert!(
+        leaked.contains("symlink") && leaked.contains("link/../src/lib.rs"),
+        "{leaked}"
+    );
+    assert!(!leaked.contains("secret"), "{leaked}");
+    let err = scope.finish().unwrap_err();
+    assert!(err.contains("link/../src/lib.rs") && err.contains("symlink"), "{err}");
+}
+
+#[test]
 fn nested_scopes_share_state() {
     let fixture = Fixture::new("owned-nested");
     let scope = enter(&fixture.root).unwrap();

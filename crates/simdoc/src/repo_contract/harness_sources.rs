@@ -7,9 +7,10 @@
 //!
 //! A harness may compile a covered package's source through a declared target
 //! path or a `#[path]` attribute instead of a path dependency. `..` is accepted
-//! only when it cancels an earlier component and the result is an ordinary file
-//! this worktree owns. A path that leaves the repository, a symlink, and an
-//! untracked or ignored file are not that file.
+//! only when the original traversal has no symlink and the cancelled path is an
+//! ordinary file this worktree owns. A path that leaves the repository, a
+//! symlink (including a symlink followed by `..`), and an untracked or ignored
+//! file are not that file.
 
 use std::{
     collections::BTreeSet,
@@ -18,7 +19,7 @@ use std::{
 
 use serde_json::Value;
 
-use crate::worktree::{Worktree, lexical_repo_relative};
+use crate::worktree::Worktree;
 
 /// How many module files one harness walk may open.
 const MAX_FOLLOWED_FILES: usize = 64;
@@ -26,9 +27,9 @@ const MAX_FOLLOWED_FILES: usize = 64;
 /// Whether `declared`, a path from the harness manifest, names an owned file.
 ///
 /// Paths already listed under the package directory match directly. A path
-/// with `.` or `..` matches when lexical normalization stays inside the
-/// repository and [`Worktree::owned_file`] accepts the result. Absolute paths
-/// stay refused.
+/// with `.` or `..` matches when the original traversal stays inside the
+/// repository, passes through no symlink, and [`Worktree::owned_file`]
+/// accepts it. Absolute paths stay refused.
 pub(super) fn declared_path_is_owned(
     worktree: &Worktree,
     dir: &Path,
@@ -60,12 +61,11 @@ pub(super) fn resolve_declared_source(
             .owned_file(&dir.join(declared), "harness target")
             .ok();
     }
-    let relative = lexical_repo_relative(worktree.root(), &dir.join(declared))?;
-    if relative.is_empty() {
-        return None;
-    }
+    // Ownership validates the original traversal, then returns the cancelled
+    // repository-relative path. Cancelling first would hide a symlink that
+    // `..` removes.
     worktree
-        .owned_file(&worktree.root().join(&relative), "harness target")
+        .owned_file(&dir.join(declared), "harness target")
         .ok()
 }
 
