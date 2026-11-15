@@ -158,7 +158,6 @@ fn only_exact_reviewed_literals_are_public() {
         "/usr/local/private/tool",
         "/proc/self/environ",
         "/dev/null",
-        "/v1/models",
         "/srv/private/customer",
         "/home/bo/x",
         "/Users/bo/x",
@@ -181,6 +180,31 @@ fn only_exact_reviewed_literals_are_public() {
         assert!(
             !NEVER_PUBLIC_ROOTS.contains(&root),
             "{literal} names a machine"
+        );
+    }
+}
+
+#[test]
+fn a_protocol_route_literal_is_exact_and_a_url_is_not_a_path() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    // The fingerprint quotes the route the same way the generated claims do.
+    guard(
+        repo,
+        "sim-index-fragment.claims.sx",
+        r#"GatewayRequest::get(\"/v1/models\")"#,
+    )
+    .unwrap();
+    guard(
+        repo,
+        "sim-index-fragment.claims.sx",
+        r#"uri:\"sim://citizen/resource\".to_owned()"#,
+    )
+    .unwrap();
+    for path in ["/v1/models/admin", "/v1/chat/completions", "/v1/models/../etc/passwd"] {
+        assert!(!is_public_path(path), "{path}");
+        assert!(
+            guard(repo, "sim-index-fragment.claims.sx", &format!("`{path}`")).is_err(),
+            "{path}"
         );
     }
 }

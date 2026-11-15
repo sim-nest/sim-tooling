@@ -36,8 +36,10 @@ use serde_json::Value;
 
 /// Reviewed exact public paths: documented values that name no machine (a
 /// sandbox or test-filesystem location, a vendor library path, a documented
-/// Windows example). Adding an entry is a reviewed code change; a path that is
-/// not listed is refused, whatever its first segment.
+/// Windows example, or a protocol route spelling a syntax fingerprint quotes).
+/// Adding an entry is a reviewed code change; a path that is not listed is
+/// refused, whatever its first segment. There is no route prefix: a longer
+/// path under an admitted route is a different token.
 pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/bin/sh",
     "/bin/sleep",
@@ -60,6 +62,8 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/usr/bin/bwrap",
     "/usr/bin/gcc",
     "/usr/bin/prlimit",
+    // The OpenAI models route, quoted inside a protocol body fingerprint.
+    "/v1/models",
     "file:///source",
     "file:///etc/passwd",
     "C:/SIM-Index",
