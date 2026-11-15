@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{fs, os::unix::fs::symlink};
+use std::{fs, os::unix::fs::symlink, path::Path};
 
 use serde_json::json;
 
@@ -434,6 +434,32 @@ fn a_member_or_target_outside_the_repository_is_refused() {
     assert!(err.contains("resolves outside the repository"), "{err}");
 
     fs::remove_dir_all(outside).unwrap();
+}
+
+#[test]
+fn a_parent_relative_target_inside_the_repository_is_owned() {
+    let repo = Repo::new("policy-parent-inside");
+    repo.root_package("app", "contract-workspaces = [\"nested\"]\n");
+    repo.write(
+        "nested/Cargo.toml",
+        "[package]\nname = \"focused\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+         publish = false\n\n[lib]\npath = \"../src/lib.rs\"\n\n[workspace]\n",
+    );
+
+    let packages = contract_packages(&repo.root).expect("in-repo parent path");
+    let source = packages.metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"] == "focused")
+        .unwrap()["targets"][0]["src_path"]
+        .as_str()
+        .unwrap();
+    assert!(source.contains(".."), "{source}");
+    let relative = super::super::package_projection::rel_path(&repo.root, Path::new(source))
+        .expect("normalized source");
+    assert_eq!(relative, "src/lib.rs");
+    assert!(!relative.contains(".."));
 }
 
 #[test]

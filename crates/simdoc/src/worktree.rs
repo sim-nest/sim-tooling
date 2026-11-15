@@ -16,7 +16,7 @@
 use std::{
     collections::BTreeSet,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use crate::bounded_process::run_bounded;
@@ -113,26 +113,62 @@ impl Worktree {
     /// Requires `path` to be an ordinary file owned by this worktree, reached
     /// from the repository root without passing through any symlink, and
     /// returns its repository-relative path.
+    ///
+    /// Each original component is checked before `..` cancels it. A symlink
+    /// followed by `..` is refused, because a later open uses the original
+    /// path. A `..` that cancels only an ordinary component and stays inside
+    /// the root names that file.
     pub(crate) fn owned_file(&self, path: &Path, role: &str) -> Result<String, String> {
-        let relative = self
-            .lexical_relative(path)
-            .filter(|relative| !relative.is_empty())
-            .ok_or_else(|| format!("{role} {} resolves outside the repository", path.display()))?;
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| outside(role, path))?;
+        let original = relative.display().to_string();
+        let mut parts = Vec::new();
         let mut current = self.root.clone();
-        let components = Path::new(&relative).components().collect::<Vec<_>>();
-        for (index, component) in components.iter().enumerate() {
-            current.push(component);
-            let metadata = fs::symlink_metadata(&current)
-                .map_err(|err| format!("{role} {relative}: {err}"))?;
-            let last = index + 1 == components.len();
-            if last && (metadata.file_type().is_symlink() || !metadata.is_file()) {
-                return Err(format!("{role} {relative} is not an ordinary file"));
+        let components = relative.components().collect::<Vec<_>>();
+        for (index, component) in components.iter().copied().enumerate() {
+            match component {
+                Component::CurDir => {}
+                Component::RootDir | Component::Prefix(_) => return Err(outside(role, path)),
+                Component::ParentDir => {
+                    if parts.pop().is_none() {
+                        return Err(outside(role, path));
+                    }
+                    current.pop();
+                }
+                Component::Normal(part) => {
+                    let Some(part) = part.to_str() else {
+                        return Err(outside(role, path));
+                    };
+                    current.push(part);
+                    let metadata = fs::symlink_metadata(&current)
+                        .map_err(|err| format!("{role} {original}: {err}"))?;
+                    let continues = components[index + 1..]
+                        .iter()
+                        .any(|next| matches!(next, Component::Normal(_) | Component::ParentDir));
+                    if metadata.file_type().is_symlink() {
+                        if continues {
+                            return Err(format!(
+                                "{role} {original} is reached through a symlink and resolves outside the repository's own files"
+                            ));
+                        }
+                        return Err(format!(
+                            "{role} {} is not an ordinary file",
+                            shown(&parts, part)
+                        ));
+                    }
+                    parts.push(part);
+                }
             }
-            if !last && metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "{role} {relative} is reached through a symlink and resolves outside the repository's own files"
-                ));
-            }
+        }
+        let relative = parts.join("/");
+        if relative.is_empty() {
+            return Err(outside(role, path));
+        }
+        let metadata =
+            fs::symlink_metadata(&current).map_err(|err| format!("{role} {relative}: {err}"))?;
+        if !metadata.is_file() {
+            return Err(format!("{role} {relative} is not an ordinary file"));
         }
         if !self.visible.contains(&relative) {
             return Err(format!(
@@ -144,19 +180,46 @@ impl Worktree {
     }
 }
 
-impl Worktree {
-    /// `path` relative to the root without following anything: `None` when it
-    /// is not lexically beneath the root or contains `..`.
-    fn lexical_relative(&self, path: &Path) -> Option<String> {
-        let relative = path.strip_prefix(&self.root).ok()?;
-        if !relative
-            .components()
-            .all(|component| matches!(component, std::path::Component::Normal(_)))
-        {
-            return None;
-        }
-        Some(relative.to_str()?.replace(std::path::MAIN_SEPARATOR, "/"))
+fn outside(role: &str, path: &Path) -> String {
+    format!("{role} {} resolves outside the repository", path.display())
+}
+
+fn shown(parts: &[&str], part: &str) -> String {
+    if parts.is_empty() {
+        part.to_owned()
+    } else {
+        format!("{}/{part}", parts.join("/"))
     }
+}
+
+impl Worktree {
+    /// `path` relative to the root without following anything.
+    fn lexical_relative(&self, path: &Path) -> Option<String> {
+        lexical_repo_relative(&self.root, path)
+    }
+}
+
+/// Repository-relative form of `path` without following the filesystem.
+///
+/// `.` is dropped. `..` cancels the preceding component. The result is `None`
+/// when `path` is not lexically beneath `root`, or when `..` would leave
+/// `root`. This function does not inspect symlinks. [`Worktree::owned_file`]
+/// checks each original component before cancelling `..` and refuses a
+/// symlink on that traversal.
+pub(crate) fn lexical_repo_relative(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(parts.join("/"))
 }
 
 fn git(repo: &Path, args: &[&str], role: &str) -> Result<Vec<u8>, String> {
@@ -171,4 +234,39 @@ fn git(repo: &Path, args: &[&str], role: &str) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(captured.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_segments_inside_the_root_normalize() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo/crates/focused/../src/lib.rs")).as_deref(),
+            Some("crates/src/lib.rs")
+        );
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo")).as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn parent_segments_that_leave_the_root_are_outside() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo/../outside.rs")),
+            None
+        );
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/repo/a/../../other.rs")),
+            None
+        );
+        assert_eq!(
+            lexical_repo_relative(root, Path::new("/other/src/lib.rs")),
+            None
+        );
+    }
 }

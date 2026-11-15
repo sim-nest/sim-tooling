@@ -36,6 +36,8 @@ use package_projection::*;
 mod exclusion_witness;
 #[path = "repo_contract/fixture_consumption.rs"]
 mod fixture_consumption;
+#[path = "repo_contract/harness_sources.rs"]
+mod harness_sources;
 #[cfg(test)]
 #[path = "repo_contract/policy_fixture.rs"]
 mod policy_fixture;

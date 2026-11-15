@@ -158,7 +158,6 @@ fn only_exact_reviewed_literals_are_public() {
         "/usr/local/private/tool",
         "/proc/self/environ",
         "/dev/null",
-        "/v1/models",
         "/srv/private/customer",
         "/home/bo/x",
         "/Users/bo/x",
@@ -183,6 +182,78 @@ fn only_exact_reviewed_literals_are_public() {
             "{literal} names a machine"
         );
     }
+}
+
+#[test]
+fn a_protocol_route_literal_is_exact_and_a_url_is_not_a_path() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    // The fingerprint quotes the route the same way the generated claims do.
+    guard(
+        repo,
+        "sim-index-fragment.claims.sx",
+        r#"GatewayRequest::get(\"/v1/models\")"#,
+    )
+    .unwrap();
+    guard(
+        repo,
+        "docs/humans/README.md",
+        r#"request_path: \"/api/chat\""#,
+    )
+    .unwrap();
+    guard(
+        repo,
+        "docs/humans/README.md",
+        r#"request_path: \"/chat/completions\""#,
+    )
+    .unwrap();
+    guard(
+        repo,
+        "sim-index-fragment.claims.sx",
+        r#"uri:\"sim://citizen/resource\".to_owned()"#,
+    )
+    .unwrap();
+    for path in [
+        "/v1/models/admin",
+        "/v1/chat/completions",
+        "/v1/models/../etc/passwd",
+    ] {
+        assert!(!is_public_path(path), "{path}");
+        assert!(
+            guard(repo, "sim-index-fragment.claims.sx", &format!("`{path}`")).is_err(),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn parent_markers_are_not_trimmed_into_a_reviewed_literal() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    for content in [
+        "/v1/models..",
+        "/v1/models\\..",
+        "`/v1/models..`",
+        "`/v1/models\\..`",
+        "see /v1/models.. in claims",
+        "/api/chat..",
+        "/chat/completions\\..",
+        "/proc/cpuinfo..",
+        "/etc/os-release\\..",
+    ] {
+        let tokens = path_tokens(content);
+        assert!(
+            tokens
+                .iter()
+                .all(|token| token.contains("..") && !is_public_path(token)),
+            "{content} -> {tokens:?}"
+        );
+        assert!(
+            guard(repo, "sim-index-fragment.claims.sx", content).is_err(),
+            "{content}"
+        );
+    }
+    // One sentence dot is still punctuation, not a parent marker.
+    guard(repo, "sim-index-fragment.claims.sx", "quoted /v1/models.").unwrap();
+    guard(repo, "README.md", "(x \"\\\"/etc/os-release\\\"\")").unwrap();
 }
 
 #[test]

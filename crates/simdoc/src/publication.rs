@@ -36,8 +36,10 @@ use serde_json::Value;
 
 /// Reviewed exact public paths: documented values that name no machine (a
 /// sandbox or test-filesystem location, a vendor library path, a documented
-/// Windows example). Adding an entry is a reviewed code change; a path that is
-/// not listed is refused, whatever its first segment.
+/// Windows example, or a protocol route spelling a syntax fingerprint quotes).
+/// Adding an entry is a reviewed code change; a path that is not listed is
+/// refused, whatever its first segment. There is no route prefix: a longer
+/// path under an admitted route is a different token.
 pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/bin/sh",
     "/bin/sleep",
@@ -60,6 +62,11 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/usr/bin/bwrap",
     "/usr/bin/gcc",
     "/usr/bin/prlimit",
+    // Protocol route spellings quoted by fingerprints and worked examples.
+    // Exact only: a longer path under one of these stays refused.
+    "/api/chat",
+    "/chat/completions",
+    "/v1/models",
     "file:///source",
     "file:///etc/passwd",
     "C:/SIM-Index",
@@ -295,9 +302,10 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
             continue;
         };
         let end = rest.find(is_delimiter).unwrap_or(rest.len());
-        // Trailing sentence punctuation and the backslashes of an escaped
-        // closing quote are not part of the path.
-        let token = rest[..end].trim_end_matches(['.', ':', ';', '?', '!', '\\']);
+        // Sentence punctuation and an escaped closing quote are not part of
+        // the path. A `..` parent marker is judged first and kept, so cleanup
+        // cannot turn `/v1/models..` or `/v1/models\..` into a reviewed literal.
+        let token = boundary_token(&rest[..end]);
         let segments = token
             .trim_start_matches('~')
             .split(['/', '\\'])
@@ -320,6 +328,24 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
         }
     }
     tokens
+}
+
+/// Returns `raw` when it carries a parent marker. Otherwise drops trailing
+/// sentence punctuation and escaped-quote backslashes.
+fn boundary_token(raw: &str) -> &str {
+    if raw.contains("..") {
+        return raw;
+    }
+    let bytes = raw.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 {
+        match bytes[end - 1] {
+            b':' | b';' | b'?' | b'!' | b'\\' => end -= 1,
+            b'.' => end -= 1,
+            _ => break,
+        }
+    }
+    &raw[..end]
 }
 
 /// Whether `c` ends a path candidate.
