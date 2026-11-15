@@ -62,7 +62,10 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/usr/bin/bwrap",
     "/usr/bin/gcc",
     "/usr/bin/prlimit",
-    // The OpenAI models route, quoted inside a protocol body fingerprint.
+    // Protocol route spellings quoted by fingerprints and worked examples.
+    // Exact only: a longer path under one of these stays refused.
+    "/api/chat",
+    "/chat/completions",
     "/v1/models",
     "file:///source",
     "file:///etc/passwd",

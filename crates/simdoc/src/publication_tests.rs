@@ -196,6 +196,18 @@ fn a_protocol_route_literal_is_exact_and_a_url_is_not_a_path() {
     .unwrap();
     guard(
         repo,
+        "docs/humans/README.md",
+        r#"request_path: \"/api/chat\""#,
+    )
+    .unwrap();
+    guard(
+        repo,
+        "docs/humans/README.md",
+        r#"request_path: \"/chat/completions\""#,
+    )
+    .unwrap();
+    guard(
+        repo,
         "sim-index-fragment.claims.sx",
         r#"uri:\"sim://citizen/resource\".to_owned()"#,
     )
@@ -218,6 +230,8 @@ fn parent_markers_are_not_trimmed_into_a_reviewed_literal() {
         "`/v1/models..`",
         "`/v1/models\\..`",
         "see /v1/models.. in claims",
+        "/api/chat..",
+        "/chat/completions\\..",
         "/proc/cpuinfo..",
         "/etc/os-release\\..",
     ] {
