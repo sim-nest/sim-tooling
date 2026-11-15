@@ -119,7 +119,9 @@ impl Worktree {
     /// path. A `..` that cancels only an ordinary component and stays inside
     /// the root names that file.
     pub(crate) fn owned_file(&self, path: &Path, role: &str) -> Result<String, String> {
-        let relative = path.strip_prefix(&self.root).map_err(|_| outside(role, path))?;
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| outside(role, path))?;
         let original = relative.display().to_string();
         let mut parts = Vec::new();
         let mut current = self.root.clone();
@@ -163,8 +165,8 @@ impl Worktree {
         if relative.is_empty() {
             return Err(outside(role, path));
         }
-        let metadata = fs::symlink_metadata(&current)
-            .map_err(|err| format!("{role} {relative}: {err}"))?;
+        let metadata =
+            fs::symlink_metadata(&current).map_err(|err| format!("{role} {relative}: {err}"))?;
         if !metadata.is_file() {
             return Err(format!("{role} {relative} is not an ordinary file"));
         }

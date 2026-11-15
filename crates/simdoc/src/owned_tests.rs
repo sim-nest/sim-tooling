@@ -246,7 +246,10 @@ fn a_symlink_followed_by_parent_is_refused_before_it_is_cancelled() {
     );
     assert!(!leaked.contains("secret"), "{leaked}");
     let err = scope.finish().unwrap_err();
-    assert!(err.contains("link/../src/lib.rs") && err.contains("symlink"), "{err}");
+    assert!(
+        err.contains("link/../src/lib.rs") && err.contains("symlink"),
+        "{err}"
+    );
 }
 
 #[test]

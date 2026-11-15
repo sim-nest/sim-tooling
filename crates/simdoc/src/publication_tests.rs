@@ -212,7 +212,11 @@ fn a_protocol_route_literal_is_exact_and_a_url_is_not_a_path() {
         r#"uri:\"sim://citizen/resource\".to_owned()"#,
     )
     .unwrap();
-    for path in ["/v1/models/admin", "/v1/chat/completions", "/v1/models/../etc/passwd"] {
+    for path in [
+        "/v1/models/admin",
+        "/v1/chat/completions",
+        "/v1/models/../etc/passwd",
+    ] {
         assert!(!is_public_path(path), "{path}");
         assert!(
             guard(repo, "sim-index-fragment.claims.sx", &format!("`{path}`")).is_err(),
@@ -237,7 +241,9 @@ fn parent_markers_are_not_trimmed_into_a_reviewed_literal() {
     ] {
         let tokens = path_tokens(content);
         assert!(
-            tokens.iter().all(|token| token.contains("..") && !is_public_path(token)),
+            tokens
+                .iter()
+                .all(|token| token.contains("..") && !is_public_path(token)),
             "{content} -> {tokens:?}"
         );
         assert!(
