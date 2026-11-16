@@ -253,6 +253,51 @@ fn local_locations(repo: &Path) -> Vec<String> {
     locations
 }
 
+/// Whether the raw candidate at `token_start` is non-path text.
+///
+/// A format-label tail and a numeric slash run split after a digit are the
+/// two demonstrated cases. Anything else stays a candidate.
+fn is_non_path_text(text: &str, token_start: usize, raw_len: usize) -> bool {
+    is_non_path_format_text(text, token_start, raw_len)
+        || is_split_numeric_slash_run(text, token_start, raw_len)
+}
+
+/// Whether the raw candidate is the tail of a digit-glued numeric slash run.
+///
+/// The scanner starts at the `/` inside `24/08/2026`, so the token is
+/// `/08/2026`. That date is the verified false positive in the ledger
+/// statement example. The raw candidate has to be only digit segments, and
+/// the character immediately before it has to be an ASCII digit. A leading
+/// `/08/2026`, a letter glued in front, or a non-digit segment stays a path.
+fn is_split_numeric_slash_run(text: &str, token_start: usize, raw_len: usize) -> bool {
+    if token_start == 0 {
+        return false;
+    }
+    let glue = text[..token_start].chars().next_back().unwrap();
+    if !glue.is_ascii_digit() {
+        return false;
+    }
+    is_pure_digit_path(&text[token_start..token_start + raw_len])
+}
+
+/// An absolute `/` run whose every segment is ASCII digits.
+fn is_pure_digit_path(raw: &str) -> bool {
+    if !raw.starts_with('/') || raw.starts_with("//") {
+        return false;
+    }
+    let mut any = false;
+    for segment in raw.split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        if !segment.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
 /// Whether the raw candidate at `token_start` is the split tail of a format label.
 ///
 /// The scanner starts an absolute candidate at the `/` inside
@@ -345,9 +390,11 @@ fn is_format_hole(segment: &str) -> bool {
 /// scanner did not expect. An absolute candidate needs two segments
 /// (`/single` and `and/or` are prose). The tail of a `{ident}` hole run that
 /// this scan splits at `/`, bounded by a quote or whitespace, is non-path
-/// text. The judgment uses the raw candidate, before a trailing mark is
-/// stripped. A leading-slash placeholder stays a candidate. A home path, a
-/// shell variable, or a Windows path stays a candidate too.
+/// text. So is the tail of a numeric slash run split after a digit, as in
+/// `24/08/2026`. The judgment uses the raw candidate, before a trailing mark
+/// is stripped. A leading-slash placeholder or a leading `/08/2026` stays a
+/// candidate. A home path, a shell variable, or a Windows path stays a
+/// candidate too.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
@@ -405,7 +452,7 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
             token.chars().nth(3).is_some()
         };
         if keep && !token.is_empty() {
-            if !is_non_path_format_text(text, index, end) {
+            if !is_non_path_text(text, index, end) {
                 tokens.push(token);
             }
             // Resume after the candidate so its interior is not rescanned.
