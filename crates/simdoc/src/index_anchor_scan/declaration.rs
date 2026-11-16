@@ -374,25 +374,116 @@ pub(super) fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics)
     compact_tokens(&rewrite(value.to_token_stream(), &names).to_string())
 }
 
+#[derive(Clone, Copy)]
+enum ScanMode {
+    Code,
+    Cooked,
+    Raw { hashes: usize },
+}
+
 pub(super) fn compact_tokens(tokens: &str) -> String {
-    // A Rust string line continuation is a backslash followed by a newline.
-    // Token display keeps that spelling, then the next line's indent. Dropping
-    // only the newline would glue the backslash to the next token, and the
-    // publication guard would read the glue as a path separator. A backslash
-    // before any other character is a real escape or a raw-string character
-    // and stays.
-    let mut compacted = String::with_capacity(tokens.len());
-    let mut chars = tokens.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek().copied() == Some('\n') {
-            chars.next();
-            continue;
-        }
-        if !ch.is_whitespace() {
-            compacted.push(ch);
+    // Fingerprints drop whitespace. Token display keeps a cooked string's
+    // line continuation, which is a backslash followed by a newline. Drop
+    // that pair so the backslash is not glued to the next token as a path
+    // separator. An escaped backslash and a raw-string backslash stay.
+    let chars: Vec<char> = tokens.chars().collect();
+    let mut compacted = String::with_capacity(chars.len());
+    let mut mode = ScanMode::Code;
+    let mut i = 0;
+    while i < chars.len() {
+        match mode {
+            ScanMode::Code => {
+                if let Some((len, opened)) = open_string(&chars, i) {
+                    compacted.extend(chars[i..i + len].iter().copied());
+                    mode = opened;
+                    i += len;
+                    continue;
+                }
+                if !chars[i].is_whitespace() {
+                    compacted.push(chars[i]);
+                }
+                i += 1;
+            }
+            ScanMode::Cooked => {
+                if chars[i] == '\\' {
+                    match chars.get(i + 1).copied() {
+                        Some('\n') => i += 2,
+                        Some(next) => {
+                            compacted.push('\\');
+                            if !next.is_whitespace() {
+                                compacted.push(next);
+                            }
+                            i += 2;
+                        }
+                        None => {
+                            compacted.push('\\');
+                            i += 1;
+                        }
+                    }
+                    continue;
+                }
+                if chars[i] == '"' {
+                    compacted.push('"');
+                    mode = ScanMode::Code;
+                    i += 1;
+                    continue;
+                }
+                if !chars[i].is_whitespace() {
+                    compacted.push(chars[i]);
+                }
+                i += 1;
+            }
+            ScanMode::Raw { hashes } => {
+                if closes_raw(&chars, i, hashes) {
+                    compacted.push('"');
+                    for _ in 0..hashes {
+                        compacted.push('#');
+                    }
+                    mode = ScanMode::Code;
+                    i += 1 + hashes;
+                    continue;
+                }
+                if !chars[i].is_whitespace() {
+                    compacted.push(chars[i]);
+                }
+                i += 1;
+            }
         }
     }
     compacted
+}
+
+/// A string opener at `index`, and how many characters it occupies through
+/// its opening quote. Byte and C-string prefixes use cooked escapes. A raw
+/// prefix keeps every backslash.
+fn open_string(chars: &[char], index: usize) -> Option<(usize, ScanMode)> {
+    let mut cursor = index;
+    if matches!(chars.get(cursor), Some('b' | 'c'))
+        && matches!(chars.get(cursor + 1), Some('"' | 'r'))
+    {
+        cursor += 1;
+    }
+    if chars.get(cursor) == Some(&'r') {
+        let mut end = cursor + 1;
+        let mut hashes = 0usize;
+        while chars.get(end) == Some(&'#') {
+            hashes += 1;
+            end += 1;
+        }
+        if chars.get(end) == Some(&'"') {
+            return Some((end + 1 - index, ScanMode::Raw { hashes }));
+        }
+        return None;
+    }
+    if chars.get(cursor) == Some(&'"') {
+        return Some((cursor + 1 - index, ScanMode::Cooked));
+    }
+    None
+}
+
+fn closes_raw(chars: &[char], index: usize, hashes: usize) -> bool {
+    chars.get(index) == Some(&'"')
+        && (0..hashes).all(|offset| chars.get(index + 1 + offset) == Some(&'#'))
 }
 
 fn bound_fact(fact: &mut DeclarationFact, limit: usize, scan: &mut DeclarationScan) {
@@ -488,6 +579,10 @@ mod tests {
                 let _ = "keep\nthis";
                 let _ = "\\ n";
                 let _ = r"a\ b";
+                let _ = "cook\\
+ed";
+                let _ = r"raw\
+cont";
             }
         "#;
         let parsed = syn::parse_file(src).expect("sample");
@@ -508,5 +603,9 @@ mod tests {
         // does not collapse into the newline escape above.
         assert!(compacted.contains("\\\\n"), "{compacted}");
         assert!(compacted.contains("r\"a\\b\""), "{compacted}");
+        // An escaped backslash followed by a real newline is not a continuation.
+        assert!(compacted.contains("\"cook\\\\ed\""), "{compacted}");
+        // A raw string keeps a backslash that precedes a newline.
+        assert!(compacted.contains("r\"raw\\cont\""), "{compacted}");
     }
 }
