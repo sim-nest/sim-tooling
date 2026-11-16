@@ -370,17 +370,17 @@ pub(super) fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics)
 }
 
 pub(super) fn compact_tokens(tokens: &str) -> String {
-    // A Rust string line continuation is a backslash followed by a newline and
-    // the next line's indent. Token display keeps that spelling. Dropping only
-    // the whitespace would glue the backslash to the next token, and the
-    // publication guard would read the glue as a path separator.
+    // A Rust string line continuation is a backslash followed by a newline.
+    // Token display keeps that spelling, then the next line's indent. Dropping
+    // only the newline would glue the backslash to the next token, and the
+    // publication guard would read the glue as a path separator. A backslash
+    // before any other character is a real escape or a raw-string character
+    // and stays.
     let mut compacted = String::with_capacity(tokens.len());
     let mut chars = tokens.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek().copied().is_some_and(char::is_whitespace) {
-            while chars.peek().copied().is_some_and(char::is_whitespace) {
-                chars.next();
-            }
+        if ch == '\\' && chars.peek().copied() == Some('\n') {
+            chars.next();
             continue;
         }
         if !ch.is_whitespace() {
@@ -481,6 +481,8 @@ mod tests {
                     u={:?}, above \
                     {maximum:?}";
                 let _ = "keep\nthis";
+                let _ = "\\ n";
+                let _ = r"a\ b";
             }
         "#;
         let parsed = syn::parse_file(src).expect("sample");
@@ -496,5 +498,10 @@ mod tests {
         );
         assert!(compacted.contains("above{maximum:?}"), "{compacted}");
         assert!(compacted.contains("keep\\nthis"), "{compacted}");
+        // An escaped backslash followed by a space is not a continuation.
+        // Compacting the space must leave both backslashes, so the spelling
+        // does not collapse into the newline escape above.
+        assert!(compacted.contains("\\\\n"), "{compacted}");
+        assert!(compacted.contains("r\"a\\b\""), "{compacted}");
     }
 }
