@@ -266,6 +266,9 @@ fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool 
     {
         return false;
     }
+    if real_segment_after(&text[token_start + token.len()..]) {
+        return false;
+    }
     let mut any = false;
     for segment in token.split('/') {
         if segment.is_empty() {
@@ -348,6 +351,27 @@ fn is_path_punctuation(c: char) -> bool {
         c,
         '=' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '|'
     )
+}
+
+/// Whether a real path segment follows a format-hole token.
+///
+/// `/{project}/{lens})/secret` is one path the candidate split at `)`.
+/// `/{target}/{lens}\ ` keeps the backslash as path evidence. A quote or
+/// whitespace still ends the label, and a bare `)` does not invent a segment.
+fn real_segment_after(text: &str) -> bool {
+    for ch in text.chars() {
+        if is_label_separator(ch) {
+            return false;
+        }
+        if ch == '\\' {
+            return true;
+        }
+        if is_path_punctuation(ch) || ch == '/' {
+            continue;
+        }
+        return !is_delimiter(ch) && !is_boundary(ch);
+    }
+    false
 }
 
 /// Whether a real path segment sits in `text` once path punctuation is skipped.
