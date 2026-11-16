@@ -192,6 +192,7 @@ fn conformance_rust_files(repo: &Path) -> Vec<PathBuf> {
     collect_ext_files(&repo.join("src"), "rs", &mut files);
     collect_ext_files(&repo.join("tests"), "rs", &mut files);
     collect_ext_files(&repo.join("crates"), "rs", &mut files);
+    collect_ext_files(&repo.join("xtask"), "rs", &mut files);
     files.retain(|path| {
         let rel = rel_path(repo, path);
         crate::owned::read_to_string(path)
@@ -361,10 +362,12 @@ mod tests {
             "// conformance: the root package preserves its public behavior.\n#[test]\nfn public_behavior_is_stable() {}\n",
         )
         .unwrap();
+        fs::write(xtask_dir.join("docs.rs"), "// conformance: the maintenance package resolves its encoder.\n#[test]\nfn encoder_resolves() {}\n").unwrap();
         let packages = vec![
             package("sim-demo", ""),
             package("sim-codec-doc", "crates/sim-codec-doc"),
             package("sim-loose", "crates/sim-loose"),
+            package("xtask", "xtask"),
         ];
 
         let specimens = discovered(&root, &packages);
@@ -382,6 +385,10 @@ mod tests {
             "spec-test/sim-demo-repo/crates/sim-codec-doc/tests/conformance",
         );
         let root_spec_test = find(&specimens, "spec-test/sim-demo-repo/tests/behavior");
+        let xtask_spec = find(&specimens, "spec-test/sim-demo-repo/xtask/src/docs");
+        assert_eq!(xtask_spec.subject.as_str(), "crate/xtask");
+        assert!(xtask_spec.runnable && xtask_spec.checked);
+        assert!(ids.iter().all(|id| !id.contains("xtask/src/main")));
 
         assert_eq!(ids, sorted(ids.clone()));
         assert_eq!(checked.subject.as_str(), "crate/sim-demo");
