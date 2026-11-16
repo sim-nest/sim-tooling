@@ -444,3 +444,45 @@ fn rust_format_labels_are_not_filesystem_paths() {
         );
     }
 }
+
+#[test]
+fn numeric_slash_dates_are_not_filesystem_paths() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    // The backslash keeps the date from being read as one relative path, so
+    // the scanner starts at `/08/2026`. That is the ledger statement line.
+    let dated = "b\"24/08/2026;b1;12,50;;Coffee\\n25/08/2026;b2;;54,50;Invoice\\n\"";
+    assert!(path_tokens(dated).is_empty(), "{:?}", path_tokens(dated));
+    guard(repo, "docs/humans/README.md", dated).unwrap();
+    let other = "b\"25/08/2026;x;1,00;2,00;both\\n25/08/2026;y;;;neither\\n\"";
+    assert!(path_tokens(other).is_empty(), "{:?}", path_tokens(other));
+    guard(repo, "docs/humans/README.md", other).unwrap();
+
+    for label in ["x\\n25/08/2026", "x\\n2026/08/24"] {
+        assert!(
+            path_tokens(label).is_empty(),
+            "{label} tokens {:?}",
+            path_tokens(label)
+        );
+        guard(repo, "docs/humans/README.md", label).unwrap();
+    }
+
+    for text in [
+        "/08/2026",
+        "cache at /08/2026",
+        "/home/{user}/keys",
+        "~/{secret}/x",
+        "/etc/shadow",
+        "/tmp/db",
+        "x\\n25/etc/passwd",
+        "x\\n25/08/passwd",
+        "x\\n25/08/2026!",
+        "x\\n25/08/2026.",
+        "x\\n25/08/2026/../secret",
+    ] {
+        assert!(
+            guard(repo, "README.md", text).is_err(),
+            "{text} tokens {:?}",
+            path_tokens(text)
+        );
+    }
+}
