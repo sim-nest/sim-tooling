@@ -370,7 +370,24 @@ pub(super) fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics)
 }
 
 pub(super) fn compact_tokens(tokens: &str) -> String {
-    tokens.split_whitespace().collect()
+    // A Rust string line continuation is a backslash followed by a newline and
+    // the next line's indent. Token display keeps that spelling. Dropping only
+    // the whitespace would glue the backslash to the next token, and the
+    // publication guard would read the glue as a path separator.
+    let mut compacted = String::with_capacity(tokens.len());
+    let mut chars = tokens.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek().copied().is_some_and(char::is_whitespace) {
+            while chars.peek().copied().is_some_and(char::is_whitespace) {
+                chars.next();
+            }
+            continue;
+        }
+        if !ch.is_whitespace() {
+            compacted.push(ch);
+        }
+    }
+    compacted
 }
 
 fn bound_fact(fact: &mut DeclarationFact, limit: usize, scan: &mut DeclarationScan) {
@@ -454,5 +471,30 @@ mod tests {
             "unexpected declaration facts: {:?}",
             scan.facts
         );
+    }
+
+    #[test]
+    fn string_line_continuations_are_not_path_separators() {
+        let src = r#"
+            fn demo() {
+                let _ = "carrier samples/wavelength \
+                    u={:?}, above \
+                    {maximum:?}";
+                let _ = "keep\nthis";
+            }
+        "#;
+        let parsed = syn::parse_file(src).expect("sample");
+        let displayed = quote::ToTokens::to_token_stream(&parsed).to_string();
+        let compacted = compact_tokens(&displayed);
+        assert!(
+            !compacted.contains("wavelength\\") && !compacted.contains("above\\"),
+            "{compacted}"
+        );
+        assert!(
+            compacted.contains("samples/wavelengthu={:?}"),
+            "{compacted}"
+        );
+        assert!(compacted.contains("above{maximum:?}"), "{compacted}");
+        assert!(compacted.contains("keep\\nthis"), "{compacted}");
     }
 }
