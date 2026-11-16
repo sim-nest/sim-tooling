@@ -256,16 +256,18 @@ fn local_locations(repo: &Path) -> Vec<String> {
 /// Whether `token` is an absolute run of Rust format holes and nothing else.
 ///
 /// `/{lens}/{fidelity}` is label text. The same run stays a candidate when it
-/// continues a real path segment, as in `//home/alice/{project}/{lens}/{fidelity}`.
-/// `/home/{user}`, `~/{secret}/x`, and `/tmp/${SECRET}` name a machine location
-/// and stay candidates too.
+/// continues a real path segment, as in `//home/alice/{project}/{lens}/{fidelity}`
+/// or `name={project}/{lens}/{fidelity}`. A backslash inside a slash segment,
+/// as in `/{lens}\{fidelity}`, is not a format hole. `/home/{user}`,
+/// `~/{secret}/x`, and `/tmp/${SECRET}` name a machine location and stay
+/// candidates too.
 fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool {
     if !token.starts_with('/') || token.starts_with("//") || continues_real_path(text, token_start)
     {
         return false;
     }
     let mut any = false;
-    for segment in token.split(['/', '\\']) {
+    for segment in token.split('/') {
         if segment.is_empty() {
             continue;
         }
@@ -297,9 +299,16 @@ fn continues_real_path(text: &str, token_start: usize) -> bool {
                 end = hole_at - glue.len_utf8();
                 continue;
             }
+            // `=` starts a candidate, and it also glues `name={project}/...`.
+            if glue == '=' {
+                return true;
+            }
             return !is_delimiter(glue) && !is_boundary(glue);
         }
         let last = before[..end].chars().next_back().unwrap();
+        if last == '=' {
+            return true;
+        }
         return !is_delimiter(last) && !is_boundary(last);
     }
 }
@@ -340,8 +349,9 @@ fn is_format_hole(segment: &str) -> bool {
 /// scanner did not expect. An absolute candidate needs two segments
 /// (`/single` and `and/or` are prose). An absolute candidate whose every
 /// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text,
-/// unless that run continues a real path segment. A real segment beside a
-/// hole, a home path, a shell variable, or a Windows path stays a candidate.
+/// unless that run continues a real path segment or a segment contains a
+/// backslash. A real segment beside a hole, a home path, a shell variable, or
+/// a Windows path stays a candidate.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;

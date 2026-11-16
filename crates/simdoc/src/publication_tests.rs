@@ -404,8 +404,11 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "/{lens}/etc/passwd",
         "C:\\{User}\\{Secret}",
         "cache at //home/alice/{project}/{lens}/{fidelity}",
+        "cache at //home/alice/name={project}/{lens}/{fidelity}",
+        "name=/{lens}/{fidelity}",
         "notes/{target}/{lens}/{fidelity}",
         "foo{project}/{lens}/{fidelity}",
+        "/{target}/{lens}\\{fidelity}",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),
