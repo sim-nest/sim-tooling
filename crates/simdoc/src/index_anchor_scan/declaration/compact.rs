@@ -78,9 +78,17 @@ fn compact_spelling(spelling: &str, drop_continuation: bool) -> String {
     let mut chars = spelling.chars().peekable();
     while let Some(ch) = chars.next() {
         if drop_continuation && ch == '\\' {
+            // A continuation newline is LF, CR, or CR LF. The Rust lexer
+            // accepts all three, and literal display keeps that spelling.
             match chars.peek().copied() {
                 Some('\n') => {
                     chars.next();
+                }
+                Some('\r') => {
+                    chars.next();
+                    if chars.peek().copied() == Some('\n') {
+                        chars.next();
+                    }
                 }
                 Some(next) => {
                     out.push('\\');

@@ -517,6 +517,16 @@ char";
             compacted.contains("afterchar") && !compacted.contains("after\\"),
             "{compacted}"
         );
+
+        let crlf =
+            "fn demo() {\n    let _ = \"wave\\\r\nlength\";\n    let _ = \"a\\\\\r\nb\";\n}\n";
+        let crlf_tokens = quote::ToTokens::to_token_stream(&syn::parse_file(crlf).expect("crlf"));
+        let crlf_compacted = compact_tokens(&crlf_tokens);
+        assert!(
+            crlf_compacted.contains("wavelength") && !crlf_compacted.contains("wave\\"),
+            "{crlf_compacted}"
+        );
+        assert!(crlf_compacted.contains("\"a\\\\b\""), "{crlf_compacted}");
     }
 
     #[test]
