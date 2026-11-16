@@ -266,7 +266,11 @@ fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool 
     {
         return false;
     }
-    if real_segment_after(&text[token_start + token.len()..]) {
+    // `boundary_token` strips a trailing dot before this sees it, so
+    // `/{project}/{lens}/.` arrives as token `/{project}/{lens}/` plus `.`.
+    // That slash is path context for the stripped mark.
+    let slash_before = token.ends_with('/') || token.ends_with('\\');
+    if real_segment_after(&text[token_start + token.len()..], slash_before) {
         return false;
     }
     let mut any = false;
@@ -361,12 +365,12 @@ fn is_path_punctuation(c: char) -> bool {
 /// A period, colon, question mark, or exclamation point is the sentence
 /// punctuation `boundary_token` already strips, so `/{target}/{lens}.` stays
 /// a label. A parent marker does not: `/{project}/{lens})/..` stays a path,
-/// as does a dot segment after a slash (`/{project}/{lens})/.`). A real
-/// segment after sentence punctuation, as in `/{project}/{lens}.)/secret`,
-/// stays a path.
-fn real_segment_after(text: &str) -> bool {
+/// as does a dot segment after a slash (`/{project}/{lens})/.` and
+/// `/{project}/{lens}/.`). `slash_before` is that slash when the candidate
+/// boundary already removed the dot. A real segment after sentence
+/// punctuation, as in `/{project}/{lens}.)/secret`, stays a path.
+fn real_segment_after(text: &str, mut saw_slash: bool) -> bool {
     let mut chars = text.chars().peekable();
-    let mut saw_slash = false;
     while let Some(ch) = chars.next() {
         if is_label_separator(ch) {
             return false;
