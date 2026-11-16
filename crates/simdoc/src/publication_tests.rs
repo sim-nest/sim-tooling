@@ -185,6 +185,16 @@ fn only_exact_reviewed_literals_are_public() {
 }
 
 #[test]
+fn a_json_schema_pointer_fragment_is_reviewed() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    let example = "\"#/$defs/node\"";
+    assert_eq!(path_tokens(example), ["/$defs/node"]);
+    guard(repo, "docs/humans/README.md", example).unwrap();
+    let longer = "\"#/$defs/node/extra\"";
+    assert!(guard(repo, "docs/humans/README.md", longer).is_err());
+}
+
+#[test]
 fn a_protocol_route_literal_is_exact_and_a_url_is_not_a_path() {
     let repo = Path::new("/work/constellation/sim-fixture");
     // The fingerprint quotes the route the same way the generated claims do.
