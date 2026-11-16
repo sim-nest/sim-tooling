@@ -284,7 +284,8 @@ fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool 
 /// `{target}/{lens}` is still label text. `alice/{project}/{lens}` is not: the
 /// hole is only the tail of a path the candidate split did not swallow.
 /// `name({project}/{lens}`, `name)({project}/{lens}`, and `name][{project}/{lens}`
-/// stay paths. A quote or whitespace still separates label text, so
+/// stay paths. A backslash does too: `\{User}\{Secret}/{lens}` is a path.
+/// A quote or whitespace still separates label text, so
 /// `badge("{target}/{lens}")` and `({target}/{lens})` do not.
 fn continues_real_path(text: &str, token_start: usize) -> bool {
     let before = &text[..token_start];
@@ -298,9 +299,14 @@ fn continues_real_path(text: &str, token_start: usize) -> bool {
                 return false;
             }
             let glue = before[..hole_at].chars().next_back().unwrap();
-            if glue == '/' || glue == '\\' {
+            if glue == '/' {
                 end = hole_at - glue.len_utf8();
                 continue;
+            }
+            // A backslash is path evidence. Skipping it would publish
+            // `\{User}\{Secret}/{lens}/{fidelity}` as label text.
+            if glue == '\\' {
+                return true;
             }
             if continues_through_glue(&before[..hole_at], glue) {
                 return true;

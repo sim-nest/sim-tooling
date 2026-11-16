@@ -429,6 +429,7 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "name]/{lens}/{fidelity}",
         "cache at //home/alice/name<{project}/{lens}/{fidelity}",
         "cache at //home/alice/name,{project}/{lens}/{fidelity}",
+        "cache at \\{User}\\{Secret}/{lens}/{fidelity}",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),
