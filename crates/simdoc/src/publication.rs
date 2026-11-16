@@ -67,6 +67,8 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/api/chat",
     "/chat/completions",
     "/v1/models",
+    // JSON Schema pointer fragment quoted by a worked example. Exact only.
+    "/$defs/node",
     "file:///source",
     "file:///etc/passwd",
     "C:/SIM-Index",
