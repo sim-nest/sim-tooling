@@ -386,3 +386,61 @@ fn a_candidate_is_the_whole_run_through_unicode_and_shell_punctuation() {
     )
     .unwrap();
 }
+
+#[test]
+fn rust_format_labels_are_not_filesystem_paths() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    let badge = "badge(\"{target}/{lens}/{fidelity}\")";
+    assert!(path_tokens(badge).is_empty(), "{:?}", path_tokens(badge));
+    guard(repo, "docs/humans/README.md", badge).unwrap();
+
+    // The same split tail, bounded by the scanner's other label separators.
+    for label in [
+        "badge('{target}/{lens}/{fidelity}')",
+        "badge(`{target}/{lens}/{fidelity}`)",
+        "before {target}/{lens}/{fidelity} after",
+        "{target}/{lens}/{fidelity}",
+        "name\"{target}/{lens}/{fidelity}\"",
+    ] {
+        assert!(
+            path_tokens(label).is_empty(),
+            "{label} tokens {:?}",
+            path_tokens(label)
+        );
+        guard(repo, "docs/humans/README.md", label).unwrap();
+    }
+
+    // Security counterexamples, plus one surrounding case for each way the
+    // hole run stops being the badge. A leading slash is still a path.
+    for text in [
+        "/home/{user}/keys",
+        "~/{secret}/x",
+        "/tmp/${SECRET}/x",
+        "/etc/shadow",
+        "/tmp/db",
+        "see }/etc/passwd now",
+        "/{lens}/etc/passwd",
+        "C:\\{User}\\{Secret}",
+        "/{target}/{lens}/{fidelity}",
+        "The route is /{target}/{lens}.",
+        "name=/{lens}/{fidelity}",
+        "={target}/{lens}/{fidelity}",
+        "name({target}/{lens}/{fidelity}",
+        "({target}/{lens}/{fidelity})",
+        "notes/{target}/{lens}/{fidelity}",
+        "foo{target}/{lens}/{fidelity}",
+        "cache at \\{target}/{lens}/{fidelity}",
+        "cache at //home/alice/{target}/{lens}/{fidelity}",
+        "badge(\"{target}/{lens}/{fidelity}!\")",
+        "badge(\"{target}/{lens}/{fidelity}.\")",
+        "cache at {target}/{lens}/../secret",
+        "cache at /{target}/{lens})/secret",
+        "cache at =({target}/{lens}/{fidelity}",
+    ] {
+        assert!(
+            guard(repo, "README.md", text).is_err(),
+            "{text} tokens {:?}",
+            path_tokens(text)
+        );
+    }
+}

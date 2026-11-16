@@ -253,6 +253,88 @@ fn local_locations(repo: &Path) -> Vec<String> {
     locations
 }
 
+/// Whether the raw candidate at `token_start` is the split tail of a format label.
+///
+/// The scanner starts an absolute candidate at the `/` inside
+/// `{target}/{lens}/{fidelity}`, so the token is `/{lens}/{fidelity}` and the
+/// `{target}` hole sits outside it. That is the demonstrated false positive in
+/// `badge("{target}/{lens}/{fidelity}")`. The raw candidate, before
+/// [`boundary_token`] strips a tail, has to be only `{ident}` holes. The holes
+/// before that slash have to reach a quote or whitespace, the same characters
+/// that already end a candidate. A leading-slash placeholder has no preceding
+/// hole and stays a path. So does anything glued on by another character,
+/// including `=`, `\`, a real segment, or punctuation.
+fn is_non_path_format_text(text: &str, token_start: usize, raw_len: usize) -> bool {
+    let raw_end = token_start + raw_len;
+    if !is_pure_format_hole_path(&text[token_start..raw_end]) {
+        return false;
+    }
+    let mut cursor = token_start;
+    loop {
+        let Some(hole_at) = trailing_format_hole(&text[..cursor]) else {
+            return false;
+        };
+        if hole_at == 0 {
+            return true;
+        }
+        let glue = text[..hole_at].chars().next_back().unwrap();
+        if glue == '/' {
+            cursor = hole_at - glue.len_utf8();
+            continue;
+        }
+        return is_label_separator(glue);
+    }
+}
+
+/// An absolute `/` run whose every segment is one `{ident}` hole.
+fn is_pure_format_hole_path(raw: &str) -> bool {
+    if !raw.starts_with('/') || raw.starts_with("//") {
+        return false;
+    }
+    let mut any = false;
+    for segment in raw.split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        if !is_format_hole(segment) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// A quote or whitespace ends a candidate and a format label.
+fn is_label_separator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '"' | '\'' | '`')
+}
+
+/// Byte index of a `{ident}` format hole that ends `text`.
+fn trailing_format_hole(text: &str) -> Option<usize> {
+    if !text.ends_with('}') {
+        return None;
+    }
+    let open = text.rfind('{')?;
+    is_format_hole(&text[open..]).then_some(open)
+}
+
+/// One `{ident}` format hole, with an ASCII identifier and no other text.
+fn is_format_hole(segment: &str) -> bool {
+    let Some(inner) = segment
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    let mut chars = inner.chars();
+    match chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {
+            chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        }
+        _ => false,
+    }
+}
+
 /// Path candidates in `text`, read conservatively: from a candidate start
 /// (an absolute `/`, a home-relative `~/`, a shell variable path such as
 /// `$HOME/x` or `${X}/y`, a Windows drive or UNC path) at a word boundary, to
@@ -261,7 +343,11 @@ fn local_locations(repo: &Path) -> Vec<String> {
 /// `$`, braces, `%`, `*`. A candidate is published only when it exactly equals
 /// a reviewed literal, so a private name cannot hide behind a character the
 /// scanner did not expect. An absolute candidate needs two segments
-/// (`/single` and `and/or` are prose).
+/// (`/single` and `and/or` are prose). The tail of a `{ident}` hole run that
+/// this scan splits at `/`, bounded by a quote or whitespace, is non-path
+/// text. The judgment uses the raw candidate, before a trailing mark is
+/// stripped. A leading-slash placeholder stays a candidate. A home path, a
+/// shell variable, or a Windows path stays a candidate too.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
@@ -319,7 +405,9 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
             token.chars().nth(3).is_some()
         };
         if keep && !token.is_empty() {
-            tokens.push(token);
+            if !is_non_path_format_text(text, index, end) {
+                tokens.push(token);
+            }
             // Resume after the candidate so its interior is not rescanned.
             while chars.peek().is_some_and(|(at, _)| *at < index + end) {
                 chars.next();
