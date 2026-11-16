@@ -405,6 +405,10 @@ fn is_stripped_sentence_mark(c: char) -> bool {
 }
 
 /// Whether a real path segment sits in `text` once path punctuation is skipped.
+///
+/// `=` always joins, including through other punctuation: `=({project}/{lens}`
+/// is a path. Skipping `=` here would publish that tail. A quote or
+/// whitespace still ends the label.
 fn segment_behind_punctuation(text: &str) -> bool {
     let mut end = text.len();
     loop {
@@ -412,6 +416,9 @@ fn segment_behind_punctuation(text: &str) -> bool {
             return false;
         }
         let ch = text[..end].chars().next_back().unwrap();
+        if ch == '=' {
+            return true;
+        }
         if is_label_separator(ch) {
             return false;
         }
