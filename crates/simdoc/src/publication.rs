@@ -360,15 +360,25 @@ fn is_path_punctuation(c: char) -> bool {
 /// whitespace still ends the label, and a bare `)` does not invent a segment.
 /// A period, colon, question mark, or exclamation point is the sentence
 /// punctuation `boundary_token` already strips, so `/{target}/{lens}.` stays
-/// a label. A real segment after that punctuation, as in
-/// `/{project}/{lens}.)/secret`, stays a path.
+/// a label. A parent marker does not: `/{project}/{lens})/..` stays a path,
+/// as does a dot segment after a slash (`/{project}/{lens})/.`). A real
+/// segment after sentence punctuation, as in `/{project}/{lens}.)/secret`,
+/// stays a path.
 fn real_segment_after(text: &str) -> bool {
-    for ch in text.chars() {
+    let mut chars = text.chars().peekable();
+    let mut saw_slash = false;
+    while let Some(ch) = chars.next() {
         if is_label_separator(ch) {
             return false;
         }
         if ch == '\\' {
             return true;
+        }
+        if ch == '.' && (chars.peek() == Some(&'.') || saw_slash) {
+            return true;
+        }
+        if ch == '/' {
+            saw_slash = true;
         }
         if is_path_punctuation(ch) || ch == '/' || is_stripped_sentence_mark(ch) {
             continue;
