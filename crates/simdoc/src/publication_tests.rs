@@ -496,3 +496,51 @@ fn numeric_slash_dates_are_not_filesystem_paths() {
         );
     }
 }
+
+#[test]
+fn expression_tree_table_examples_are_exact_public_literals() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    let specimen = r#"
+        Expr::String("/dir-1/cell-1".to_owned())
+        "(expr-tree/ref tree \"../base\" \"/dir-1/nested\")"
+        "(expr-tree/ref tree \"/dir-1/base\")"
+        Expr::String("/external/renamed".to_owned())
+        "(expr-tree/rename tree \"/external/record\" \"renamed\")"
+        Expr::String("/dir-1/moved".to_owned())
+        path("/team/cell")
+        path("/team/frozen")
+        path("/team/manual")
+        path("/sheet/a")
+        path("/sheet/b")
+        path("/sheet/c")
+        path("/sheet/quoted")
+        path("/sheet/total")
+        path("/sheet/use")
+        path("/sheet/use-remote")
+        path("/sheet/use-value")
+        path("/sheet/value")
+        path("/secure/result")
+        absolute("/results/detail")
+        set_codec(&session, revision, "/model/answer", "codec/lisp")
+        "/measurements/trial-0001"
+        path("/chain/0")
+        path("/chain/{LAST}")
+        path("/chain/{index}")
+        path("/chain/{}")
+        path("/remote/value")
+        path("/remote/moved")
+        "/external/value"
+        target("/archive/solve", TREE_REVISION)
+        generated-dir=/dir-1 generated-cell=/dir-1/cell-1
+    "#;
+    let tokens = path_tokens(specimen);
+    assert!(
+        tokens.iter().all(|token| is_public_path(token)),
+        "{tokens:?}"
+    );
+    guard(repo, "docs/humans/README.md", specimen).unwrap();
+    assert!(!is_public_path("/unreviewed/route"));
+    assert!(guard(repo, "docs/humans/README.md", "`/unreviewed/route`").is_err());
+    assert!(!is_public_path("/dir-1/cell-1/extra"));
+    assert!(guard(repo, "docs/humans/README.md", "`/dir-1/cell-1/extra`").is_err());
+}
