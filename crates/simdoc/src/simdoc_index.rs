@@ -149,19 +149,43 @@ fn render_specimen_source(
             feature.id
         )
     })?;
-    out.push_str(&format!(
-        "Specimen `{}` is checked by `{}`.\n\n",
-        specimen.id,
-        specimen.checked_by.as_deref().unwrap_or("validation")
-    ));
-    out.push_str(&format!("Source `{}`:\n\n", specimen.path));
-    out.push_str(&format!(
-        "```{}\n",
-        language_hint(&specimen.path, specimen.language.as_deref())
-    ));
-    out.push_str(text.trim_end());
-    out.push_str("\n```\n\n");
-    Ok(())
+    let refused = crate::publication::path_tokens(&text)
+        .into_iter()
+        .filter(|token| !crate::publication::is_public_path(token))
+        .collect::<Vec<_>>();
+    let checked_by = specimen.checked_by.as_deref().unwrap_or("validation");
+    if refused.is_empty() {
+        out.push_str(&format!(
+            "Specimen `{}` is checked by `{}`.\n\n",
+            specimen.id, checked_by
+        ));
+        out.push_str(&format!("Source `{}`:\n\n", specimen.path));
+        out.push_str(&format!(
+            "```{}\n",
+            language_hint(&specimen.path, specimen.language.as_deref())
+        ));
+        out.push_str(text.trim_end());
+        out.push_str("\n```\n\n");
+        return Ok(());
+    }
+    if refused
+        .iter()
+        .all(|token| crate::publication::is_machine_path(token))
+    {
+        out.push_str(&format!(
+            "Specimen `{}` is checked by `{}`.\n\n",
+            specimen.id, checked_by
+        ));
+        out.push_str(&format!(
+            "Source `{path}` stays in the repository and is not pasted here, because publishing it would record a machine path.\n\n",
+            path = specimen.path
+        ));
+        return Ok(());
+    }
+    Err(format!(
+        "refused to publish worked example {}: it embeds the path {:?}, which is not a reviewed public path",
+        specimen.path, refused[0]
+    ))
 }
 
 fn specimens_by_id(doc: &IndexDoc) -> BTreeMap<String, &DiscoveredSpecimen> {
@@ -249,6 +273,74 @@ mod tests {
         assert!(!page.ends_with("\n\n"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn machine_path_specimen_is_cited_and_not_pasted() {
+        let root = temp_root("sim-tooling-simdoc-machine");
+        fs::create_dir_all(root.join("crates/demo")).unwrap();
+        fs::write(
+            root.join("crates/demo/public.rs"),
+            "fn demo() { let _ = \"/remote/nested\"; }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("crates/demo/locator.rs"),
+            "fn reject() { let _ = \"/tmp/db\"; }\n",
+        )
+        .unwrap();
+        let mut doc = fixture_doc();
+        doc.specimens = vec![
+            specimen("spec-test/sim-demo/public", "crates/demo/public.rs"),
+            specimen("spec-test/sim-demo/locator", "crates/demo/locator.rs"),
+        ];
+        doc.features[0].specimens = vec![
+            SpecimenId::new("spec-test/sim-demo/public"),
+            SpecimenId::new("spec-test/sim-demo/locator"),
+        ];
+
+        let page = render_human_readme(&root, "sim-demo", &[], &doc).unwrap();
+
+        assert!(page.contains("/remote/nested"));
+        assert!(page.contains("crates/demo/locator.rs"));
+        assert!(page.contains("not pasted here"));
+        assert!(!page.contains("/tmp/db"));
+        crate::publication::guard(&root, "docs/humans/README.md", &page).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unreviewed_specimen_path_still_fails_publication() {
+        let root = temp_root("sim-tooling-simdoc-unreviewed");
+        fs::create_dir_all(root.join("crates/demo")).unwrap();
+        fs::write(
+            root.join("crates/demo/public.rs"),
+            "fn demo() { let _ = \"/unreviewed/route\"; }\n",
+        )
+        .unwrap();
+        let mut doc = fixture_doc();
+        doc.specimens[0].path = "crates/demo/public.rs".to_owned();
+        doc.specimens[0].id = SpecimenId::new("spec-test/sim-demo/public");
+        doc.features[0].specimens = vec![SpecimenId::new("spec-test/sim-demo/public")];
+
+        let error = render_human_readme(&root, "sim-demo", &[], &doc).unwrap_err();
+
+        assert!(error.contains("/unreviewed/route"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn specimen(id: &str, path: &str) -> DiscoveredSpecimen {
+        DiscoveredSpecimen {
+            id: SpecimenId::new(id),
+            subject: SubjectId::new("repo/sim-demo"),
+            kind: "spec-test".to_owned(),
+            path: path.to_owned(),
+            language: Some("rust".to_owned()),
+            runnable: true,
+            checked: true,
+            checked_by: Some("cargo test".to_owned()),
+            doc_anchor: None,
+        }
     }
 
     #[test]

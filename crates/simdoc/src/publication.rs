@@ -82,12 +82,17 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/external/record",
     "/external/renamed",
     "/external/value",
+    // Storage Table paths and relation spellings quoted by checked specimens. Exact only.
+    "/kept/leaf",
     "/measurements/trial-0001",
     "/model/answer",
     "/remote/moved",
+    "/remote/nested",
     "/remote/value",
+    "/relation/customers\\nprovider=SQLite\\n",
     "/results/detail",
     "/secure/result",
+    "/site/sqlite\\n",
     "/sheet/a",
     "/sheet/b",
     "/sheet/c",
@@ -100,6 +105,7 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/team/cell",
     "/team/frozen",
     "/team/manual",
+    "/virtual/leaf",
     "file:///source",
     "file:///etc/passwd",
     "C:/SIM-Index",
@@ -109,7 +115,6 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
 
 /// First segments that name a machine or a person, never publishable whatever
 /// the table says (a test proves the table holds none).
-#[cfg(test)]
 pub(crate) const NEVER_PUBLIC_ROOTS: &[&str] = &[
     "home", "Users", "root", "srv", "mnt", "media", "private", "Volumes", "snap", "nix", "tmp",
     "var", "run",
@@ -180,6 +185,31 @@ pub(crate) fn is_public_path(token: &str) -> bool {
         return false;
     }
     PUBLIC_LITERALS.contains(&token)
+}
+
+/// Whether `token` names a machine, a person, a parent segment, a home
+/// directory, or a Windows path. Exact admission cannot publish one.
+pub(crate) fn is_machine_path(token: &str) -> bool {
+    if token.split(['/', '\\']).any(|segment| segment == "..") {
+        return true;
+    }
+    if token.starts_with('~') || token.starts_with('$') || token.starts_with("\\\\") {
+        return true;
+    }
+    let bytes = token.as_bytes();
+    if bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    let root = token
+        .trim_start_matches(['/', '\\'])
+        .split(['/', '\\'])
+        .next()
+        .unwrap_or("");
+    NEVER_PUBLIC_ROOTS.contains(&root)
 }
 
 /// Guards every artifact of a set.

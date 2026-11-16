@@ -544,3 +544,26 @@ fn expression_tree_table_examples_are_exact_public_literals() {
     assert!(!is_public_path("/dir-1/cell-1/extra"));
     assert!(guard(repo, "docs/humans/README.md", "`/dir-1/cell-1/extra`").is_err());
 }
+
+#[test]
+fn storage_table_examples_are_exact_public_literals() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    let specimen = r#"
+        .mount_dir(&mut cx, absolute("/remote/nested"), nested.clone())
+        .mount_table(&mut cx, absolute("/virtual/leaf"), leaf.clone())
+        .mount_table(&mut cx, absolute("/kept/leaf"), leaf)
+        "provider\tsite\nSQLite\trelation/site/sqlite\n".into()
+        format!("Dir\nmount={target}\nlogical=/relation/customers\nprovider=SQLite\n")
+    "#;
+    let tokens = path_tokens(specimen);
+    assert!(
+        tokens.iter().all(|token| is_public_path(token)),
+        "{tokens:?}"
+    );
+    guard(repo, "docs/humans/README.md", specimen).unwrap();
+    assert!(!is_public_path("/tmp/db"));
+    assert!(is_machine_path("/tmp/db"));
+    assert!(guard(repo, "docs/humans/README.md", "\"/tmp/db\"").is_err());
+    assert!(!is_public_path("/remote/nested/extra"));
+    assert!(guard(repo, "docs/humans/README.md", "`/remote/nested/extra`").is_err());
+}
