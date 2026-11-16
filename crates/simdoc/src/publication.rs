@@ -253,6 +253,44 @@ fn local_locations(repo: &Path) -> Vec<String> {
     locations
 }
 
+/// Whether `token` is an absolute run of Rust format holes and nothing else.
+///
+/// `/{lens}/{fidelity}` is label text. `/home/{user}`, `~/{secret}/x`, and
+/// `/tmp/${SECRET}` name a machine location and stay candidates.
+fn is_non_path_format_text(token: &str) -> bool {
+    if !token.starts_with('/') || token.starts_with("//") {
+        return false;
+    }
+    let mut any = false;
+    for segment in token.split(['/', '\\']) {
+        if segment.is_empty() {
+            continue;
+        }
+        if !is_format_hole(segment) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// One `{ident}` format hole, with an ASCII identifier and no other text.
+fn is_format_hole(segment: &str) -> bool {
+    let Some(inner) = segment
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    let mut chars = inner.chars();
+    match chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {
+            chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        }
+        _ => false,
+    }
+}
+
 /// Path candidates in `text`, read conservatively: from a candidate start
 /// (an absolute `/`, a home-relative `~/`, a shell variable path such as
 /// `$HOME/x` or `${X}/y`, a Windows drive or UNC path) at a word boundary, to
@@ -261,7 +299,10 @@ fn local_locations(repo: &Path) -> Vec<String> {
 /// `$`, braces, `%`, `*`. A candidate is published only when it exactly equals
 /// a reviewed literal, so a private name cannot hide behind a character the
 /// scanner did not expect. An absolute candidate needs two segments
-/// (`/single` and `and/or` are prose).
+/// (`/single` and `and/or` are prose). An absolute candidate whose every
+/// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text.
+/// A real segment beside a hole, a home path, a shell variable, or a Windows
+/// path stays a candidate.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
@@ -318,7 +359,7 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
         } else {
             token.chars().nth(3).is_some()
         };
-        if keep && !token.is_empty() {
+        if keep && !token.is_empty() && !is_non_path_format_text(token) {
             tokens.push(token);
             // Resume after the candidate so its interior is not rescanned.
             while chars.peek().is_some_and(|(at, _)| *at < index + end) {

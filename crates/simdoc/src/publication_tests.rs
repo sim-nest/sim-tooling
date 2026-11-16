@@ -386,3 +386,28 @@ fn a_candidate_is_the_whole_run_through_unicode_and_shell_punctuation() {
     )
     .unwrap();
 }
+
+#[test]
+fn rust_format_labels_are_not_filesystem_paths() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    let label = "badge(\"{target}/{lens}/{fidelity}\")";
+    assert!(path_tokens(label).is_empty(), "{:?}", path_tokens(label));
+    guard(repo, "docs/humans/README.md", label).unwrap();
+
+    for text in [
+        "/home/{user}/keys",
+        "~/{secret}/x",
+        "/tmp/${SECRET}/x",
+        "/etc/shadow",
+        "/tmp/db",
+        "see }/etc/passwd now",
+        "/{lens}/etc/passwd",
+        "C:\\{User}\\{Secret}",
+    ] {
+        assert!(
+            guard(repo, "README.md", text).is_err(),
+            "{text} tokens {:?}",
+            path_tokens(text)
+        );
+    }
+}
