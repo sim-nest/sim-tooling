@@ -26,6 +26,7 @@ owner = "crate/xtask"
 audiences = ["code", "framework"]
 guidance = "Use this row when adding a generated doc lane, checking generated index artifacts, synchronizing a managed generated namespace, or adapting a preopened repository observation by emitting selected current repo-contract artifacts into a preopened output directory without updating docs/generated."
 claims_anchors = [
+  "anchor/cli/simdoc",
   "anchor/crate/simdoc",
   "anchor/crate/xtask",
   "anchor/doc/generated/card-index",
@@ -35,9 +36,16 @@ claims_anchors = [
   "anchor/export/simdoc/browse/catalog",
   "anchor/export/simdoc/codec/json",
   "anchor/export/simdoc/codec/lisp",
+  "anchor/export/simdoc/registry/cache",
   "anchor/export/simdoc/registry/catalog",
+  "anchor/export/simdoc/registry/index",
   "anchor/export/xtask/codec-lisp",
   "anchor/export/xtask/doc/chunk-recursive",
+  "anchor/export/xtask/registry/cache",
+  "anchor/export/xtask/registry/index",
+]
+claims_surfaces = [
+  "cli/simdoc",
 ]
 claims_specimens = [
   "spec-test/sim-tooling/crates/simdoc/src/repo_contract_tests",
@@ -53,9 +61,14 @@ owner = "crate/sim-check-pack"
 audiences = ["code", "framework"]
 guidance = "Use prepare_operation_local when an operator-bootstrap producer needs the deterministic expected binding, invocation, result, observations, support, build graph, bootstrap grade, and policy without constructing an SDK owner. A prepared value has no currentness, revocation observation, or receipt. Call the in-process live adapter only with the weak operation handle issued by the live SDK boot owner; issuance consumes that same preparation and re-resolves the result against the same live generation. Preserve the emitted activation source, binding, subject, scope, execution, invocation, result, grade, receipt, revocation issuer/source/key/set/head/receipt, and observations. Missing, dead-owner, foreign, revoked, substituted, refusal, and UnimplementedPack outcomes never satisfy a phase gate. The bare process command refuses because authority has no serialized construction path."
 claims_anchors = [
+  "anchor/cli/sim-check-pack-xtask",
   "anchor/crate/sim-check-pack",
+  "anchor/crate/sim-check-pack-xtask",
   "anchor/rustdoc/sim-check-pack/prepare_operation_local",
   "anchor/rustdoc/sim-check-pack/invoke_operation_local",
+]
+claims_surfaces = [
+  "cli/sim-check-pack-xtask",
 ]
 claims_specimens = ["spec-test/sim-tooling/src/check_pack"]
 supports = [
