@@ -393,6 +393,13 @@ fn rust_format_labels_are_not_filesystem_paths() {
     let label = "badge(\"{target}/{lens}/{fidelity}\")";
     assert!(path_tokens(label).is_empty(), "{:?}", path_tokens(label));
     guard(repo, "docs/humans/README.md", label).unwrap();
+    let wrapped = "({target}/{lens}/{fidelity})";
+    assert!(
+        path_tokens(wrapped).is_empty(),
+        "{:?}",
+        path_tokens(wrapped)
+    );
+    guard(repo, "docs/humans/README.md", wrapped).unwrap();
 
     for text in [
         "/home/{user}/keys",
@@ -409,6 +416,13 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "notes/{target}/{lens}/{fidelity}",
         "foo{project}/{lens}/{fidelity}",
         "/{target}/{lens}\\{fidelity}",
+        "cache at //home/alice/name({project}/{lens}/{fidelity}",
+        "cache at //home/alice/name[{project}/{lens}/{fidelity}",
+        "cache at //home/alice/name{{project}/{lens}/{fidelity}",
+        "name({project}/{lens}/{fidelity}",
+        "name[{project}/{lens}/{fidelity}",
+        "name{{project}/{lens}/{fidelity}",
+        "name(({project}/{lens}/{fidelity}",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),

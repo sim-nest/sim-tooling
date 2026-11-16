@@ -256,11 +256,11 @@ fn local_locations(repo: &Path) -> Vec<String> {
 /// Whether `token` is an absolute run of Rust format holes and nothing else.
 ///
 /// `/{lens}/{fidelity}` is label text. The same run stays a candidate when it
-/// continues a real path segment, as in `//home/alice/{project}/{lens}/{fidelity}`
-/// or `name={project}/{lens}/{fidelity}`. A backslash inside a slash segment,
-/// as in `/{lens}\{fidelity}`, is not a format hole. `/home/{user}`,
-/// `~/{secret}/x`, and `/tmp/${SECRET}` name a machine location and stay
-/// candidates too.
+/// continues a real path segment, as in `//home/alice/{project}/{lens}/{fidelity}`,
+/// `name={project}/{lens}/{fidelity}`, or `name({project}/{lens}/{fidelity}`.
+/// A backslash inside a slash segment, as in `/{lens}\{fidelity}`, is not a
+/// format hole. `/home/{user}`, `~/{secret}/x`, and `/tmp/${SECRET}` name a
+/// machine location and stay candidates too.
 fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool {
     if !token.starts_with('/') || token.starts_with("//") || continues_real_path(text, token_start)
     {
@@ -283,6 +283,8 @@ fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool 
 ///
 /// `{target}/{lens}` is still label text. `alice/{project}/{lens}` is not: the
 /// hole is only the tail of a path the candidate split did not swallow.
+/// `name({project}/{lens}`, `name[{project}/{lens}`, and `name{{project}/{lens}`
+/// stay paths. `({target}/{lens})` does not: the opener has no segment behind it.
 fn continues_real_path(text: &str, token_start: usize) -> bool {
     let before = &text[..token_start];
     let mut end = before.len();
@@ -299,17 +301,42 @@ fn continues_real_path(text: &str, token_start: usize) -> bool {
                 end = hole_at - glue.len_utf8();
                 continue;
             }
-            // `=` starts a candidate, and it also glues `name={project}/...`.
-            if glue == '=' {
+            if continues_through_glue(&before[..hole_at], glue) {
                 return true;
             }
             return !is_delimiter(glue) && !is_boundary(glue);
         }
         let last = before[..end].chars().next_back().unwrap();
-        if last == '=' {
+        if continues_through_glue(&before[..end], last) {
             return true;
         }
         return !is_delimiter(last) && !is_boundary(last);
+    }
+}
+
+/// Whether `glue` joins the format-hole tail to a real segment in `text`.
+///
+/// `text` ends at `glue`. `=` always joins, including `name=/{lens}`. `(`,
+/// `[`, and `{` join only when a segment sits behind them, so a bare
+/// `({target}/{lens})` stays label text while `name({project}/{lens}` does not.
+fn continues_through_glue(text: &str, glue: char) -> bool {
+    if glue == '=' {
+        return true;
+    }
+    if !matches!(glue, '(' | '[' | '{') {
+        return false;
+    }
+    let mut end = text.len() - glue.len_utf8();
+    loop {
+        if end == 0 {
+            return false;
+        }
+        let ch = text[..end].chars().next_back().unwrap();
+        if matches!(ch, '=' | '(' | '[' | '{') {
+            end -= ch.len_utf8();
+            continue;
+        }
+        return !is_delimiter(ch) && !is_boundary(ch);
     }
 }
 
@@ -350,8 +377,9 @@ fn is_format_hole(segment: &str) -> bool {
 /// (`/single` and `and/or` are prose). An absolute candidate whose every
 /// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text,
 /// unless that run continues a real path segment or a segment contains a
-/// backslash. A real segment beside a hole, a home path, a shell variable, or
-/// a Windows path stays a candidate.
+/// backslash. A real segment beside a hole, including one glued by `=`, `(`,
+/// `[`, or `{`, a home path, a shell variable, or a Windows path stays a
+/// candidate.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
