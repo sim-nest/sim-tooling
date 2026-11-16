@@ -423,6 +423,12 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "name[{project}/{lens}/{fidelity}",
         "name{{project}/{lens}/{fidelity}",
         "name(({project}/{lens}/{fidelity}",
+        "cache at //home/alice/name)({project}/{lens}/{fidelity}",
+        "cache at //home/alice/name][{project}/{lens}/{fidelity}",
+        "name)/{lens}/{fidelity}",
+        "name]/{lens}/{fidelity}",
+        "cache at //home/alice/name<{project}/{lens}/{fidelity}",
+        "cache at //home/alice/name,{project}/{lens}/{fidelity}",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),

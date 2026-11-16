@@ -283,8 +283,9 @@ fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool 
 ///
 /// `{target}/{lens}` is still label text. `alice/{project}/{lens}` is not: the
 /// hole is only the tail of a path the candidate split did not swallow.
-/// `name({project}/{lens}`, `name[{project}/{lens}`, and `name{{project}/{lens}`
-/// stay paths. `({target}/{lens})` does not: the opener has no segment behind it.
+/// `name({project}/{lens}`, `name)({project}/{lens}`, and `name][{project}/{lens}`
+/// stay paths. A quote or whitespace still separates label text, so
+/// `badge("{target}/{lens}")` and `({target}/{lens})` do not.
 fn continues_real_path(text: &str, token_start: usize) -> bool {
     let before = &text[..token_start];
     let mut end = before.len();
@@ -316,23 +317,45 @@ fn continues_real_path(text: &str, token_start: usize) -> bool {
 
 /// Whether `glue` joins the format-hole tail to a real segment in `text`.
 ///
-/// `text` ends at `glue`. `=` always joins, including `name=/{lens}`. `(`,
-/// `[`, and `{` join only when a segment sits behind them, so a bare
-/// `({target}/{lens})` stays label text while `name({project}/{lens}` does not.
+/// `text` ends at `glue`. `=` always joins, including `name=/{lens}`. Other
+/// path punctuation joins when a segment sits behind it, so
+/// `name)({project}/{lens}` stays a path. A quote or whitespace stops the
+/// walk: `badge("{target}/{lens}")` and `({target}/{lens})` stay label text.
 fn continues_through_glue(text: &str, glue: char) -> bool {
     if glue == '=' {
         return true;
     }
-    if !matches!(glue, '(' | '[' | '{') {
+    if is_label_separator(glue) || !is_path_punctuation(glue) {
         return false;
     }
-    let mut end = text.len() - glue.len_utf8();
+    segment_behind_punctuation(&text[..text.len() - glue.len_utf8()])
+}
+
+/// A quote or whitespace ends a format label. Other punctuation does not.
+fn is_label_separator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '"' | '\'' | '`')
+}
+
+/// Punctuation the candidate split can leave between a segment and a format hole.
+fn is_path_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '=' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '|'
+    )
+}
+
+/// Whether a real path segment sits in `text` once path punctuation is skipped.
+fn segment_behind_punctuation(text: &str) -> bool {
+    let mut end = text.len();
     loop {
         if end == 0 {
             return false;
         }
         let ch = text[..end].chars().next_back().unwrap();
-        if matches!(ch, '=' | '(' | '[' | '{') {
+        if is_label_separator(ch) {
+            return false;
+        }
+        if is_path_punctuation(ch) {
             end -= ch.len_utf8();
             continue;
         }
@@ -377,9 +400,9 @@ fn is_format_hole(segment: &str) -> bool {
 /// (`/single` and `and/or` are prose). An absolute candidate whose every
 /// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text,
 /// unless that run continues a real path segment or a segment contains a
-/// backslash. A real segment beside a hole, including one glued by `=`, `(`,
-/// `[`, or `{`, a home path, a shell variable, or a Windows path stays a
-/// candidate.
+/// backslash. A real segment beside a hole stays a candidate, including one
+/// joined through path punctuation other than a quote or whitespace. A home
+/// path, a shell variable, or a Windows path stays a candidate too.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
