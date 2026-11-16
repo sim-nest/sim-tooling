@@ -358,6 +358,10 @@ fn is_path_punctuation(c: char) -> bool {
 /// `/{project}/{lens})/secret` is one path the candidate split at `)`.
 /// `/{target}/{lens}\ ` keeps the backslash as path evidence. A quote or
 /// whitespace still ends the label, and a bare `)` does not invent a segment.
+/// A period, colon, question mark, or exclamation point is the sentence
+/// punctuation `boundary_token` already strips, so `/{target}/{lens}.` stays
+/// a label. A real segment after that punctuation, as in
+/// `/{project}/{lens}.)/secret`, stays a path.
 fn real_segment_after(text: &str) -> bool {
     for ch in text.chars() {
         if is_label_separator(ch) {
@@ -366,12 +370,20 @@ fn real_segment_after(text: &str) -> bool {
         if ch == '\\' {
             return true;
         }
-        if is_path_punctuation(ch) || ch == '/' {
+        if is_path_punctuation(ch) || ch == '/' || is_stripped_sentence_mark(ch) {
             continue;
         }
         return !is_delimiter(ch) && !is_boundary(ch);
     }
     false
+}
+
+/// Sentence punctuation `boundary_token` removes from the end of a candidate.
+///
+/// These marks are not path segments. A backslash is absent here on purpose:
+/// `boundary_token` strips it too, and the caller keeps that as path evidence.
+fn is_stripped_sentence_mark(c: char) -> bool {
+    matches!(c, '.' | ':' | '?' | '!')
 }
 
 /// Whether a real path segment sits in `text` once path punctuation is skipped.
@@ -429,10 +441,12 @@ fn is_format_hole(segment: &str) -> bool {
 /// scanner did not expect. An absolute candidate needs two segments
 /// (`/single` and `and/or` are prose). An absolute candidate whose every
 /// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text,
-/// unless that run continues a real path segment or a segment contains a
-/// backslash. A real segment beside a hole stays a candidate, including one
-/// joined through path punctuation other than a quote or whitespace. A home
-/// path, a shell variable, or a Windows path stays a candidate too.
+/// unless that run continues a real path segment, a real segment follows it,
+/// or a segment contains a backslash. A trailing backslash stays path
+/// evidence. Sentence punctuation does not. A real segment beside a hole
+/// stays a candidate, including one joined through path punctuation other
+/// than a quote or whitespace. A home path, a shell variable, or a Windows
+/// path stays a candidate too.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;

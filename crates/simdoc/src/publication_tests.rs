@@ -400,6 +400,20 @@ fn rust_format_labels_are_not_filesystem_paths() {
         path_tokens(wrapped)
     );
     guard(repo, "docs/humans/README.md", wrapped).unwrap();
+    for label in [
+        "({target}/{lens}/{fidelity}).",
+        "The route is /{target}/{lens}.",
+        "The route is /{target}/{lens}!",
+        "The route is /{target}/{lens}?",
+        "The route is /{target}/{lens}:",
+    ] {
+        assert!(
+            path_tokens(label).is_empty(),
+            "{label} tokens {:?}",
+            path_tokens(label)
+        );
+        guard(repo, "docs/humans/README.md", label).unwrap();
+    }
 
     for text in [
         "/home/{user}/keys",
@@ -432,6 +446,13 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "cache at \\{User}\\{Secret}/{lens}/{fidelity}",
         "cache at /{project}/{lens})/secret",
         "cache at /{target}/{lens}\\ now",
+        "cache at /{project}/{lens}.)/secret",
+        "cache at /{target}/{lens}\\.",
+        "cache at /{target}/{lens}..",
+        "cache at /{target}/{lens}../secret",
+        "cache at /{project}/{lens}!/secret",
+        "cache at /{project}/{lens}?/secret",
+        "cache at /{project}/{lens}:/etc/passwd",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),
