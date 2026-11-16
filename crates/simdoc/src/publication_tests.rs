@@ -459,6 +459,12 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "cache at /{project}/{lens})/.hidden",
         "cache at /{project}/{lens}/.",
         "cache at /{project}/{lens}/. ",
+        "cache at /{project}/{lens}/!",
+        "cache at /{project}/{lens}/?",
+        "cache at /{project}/{lens}/:",
+        "cache at /{project}/{lens})/!",
+        "cache at /{project}/{lens})/?",
+        "cache at /{project}/{lens})/:",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),

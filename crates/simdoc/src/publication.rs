@@ -364,11 +364,12 @@ fn is_path_punctuation(c: char) -> bool {
 /// whitespace still ends the label, and a bare `)` does not invent a segment.
 /// A period, colon, question mark, or exclamation point is the sentence
 /// punctuation `boundary_token` already strips, so `/{target}/{lens}.` stays
-/// a label. A parent marker does not: `/{project}/{lens})/..` stays a path,
-/// as does a dot segment after a slash (`/{project}/{lens})/.` and
-/// `/{project}/{lens}/.`). `slash_before` is that slash when the candidate
-/// boundary already removed the dot. A real segment after sentence
-/// punctuation, as in `/{project}/{lens}.)/secret`, stays a path.
+/// a label. A parent marker does not: `/{project}/{lens})/..` stays a path.
+/// After a slash, `.`, `:`, `?`, and `!` are path segments, including when
+/// the candidate boundary already removed the mark (`/{project}/{lens}/.`
+/// and `/{project}/{lens}/!`). `slash_before` is that slash. The same marks
+/// without a preceding slash stay sentence punctuation. A real segment after
+/// sentence punctuation, as in `/{project}/{lens}.)/secret`, stays a path.
 fn real_segment_after(text: &str, mut saw_slash: bool) -> bool {
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -378,7 +379,10 @@ fn real_segment_after(text: &str, mut saw_slash: bool) -> bool {
         if ch == '\\' {
             return true;
         }
-        if ch == '.' && (chars.peek() == Some(&'.') || saw_slash) {
+        if ch == '.' && chars.peek() == Some(&'.') {
+            return true;
+        }
+        if saw_slash && is_stripped_sentence_mark(ch) {
             return true;
         }
         if ch == '/' {
