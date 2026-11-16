@@ -255,10 +255,13 @@ fn local_locations(repo: &Path) -> Vec<String> {
 
 /// Whether `token` is an absolute run of Rust format holes and nothing else.
 ///
-/// `/{lens}/{fidelity}` is label text. `/home/{user}`, `~/{secret}/x`, and
-/// `/tmp/${SECRET}` name a machine location and stay candidates.
-fn is_non_path_format_text(token: &str) -> bool {
-    if !token.starts_with('/') || token.starts_with("//") {
+/// `/{lens}/{fidelity}` is label text. The same run stays a candidate when it
+/// continues a real path segment, as in `//home/alice/{project}/{lens}/{fidelity}`.
+/// `/home/{user}`, `~/{secret}/x`, and `/tmp/${SECRET}` name a machine location
+/// and stay candidates too.
+fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool {
+    if !token.starts_with('/') || token.starts_with("//") || continues_real_path(text, token_start)
+    {
         return false;
     }
     let mut any = false;
@@ -272,6 +275,42 @@ fn is_non_path_format_text(token: &str) -> bool {
         any = true;
     }
     any
+}
+
+/// Whether the format-hole run at `token_start` is glued to a real path segment.
+///
+/// `{target}/{lens}` is still label text. `alice/{project}/{lens}` is not: the
+/// hole is only the tail of a path the candidate split did not swallow.
+fn continues_real_path(text: &str, token_start: usize) -> bool {
+    let before = &text[..token_start];
+    let mut end = before.len();
+    loop {
+        if end == 0 {
+            return false;
+        }
+        if let Some(hole_at) = trailing_format_hole(&before[..end]) {
+            if hole_at == 0 {
+                return false;
+            }
+            let glue = before[..hole_at].chars().next_back().unwrap();
+            if glue == '/' || glue == '\\' {
+                end = hole_at - glue.len_utf8();
+                continue;
+            }
+            return !is_delimiter(glue) && !is_boundary(glue);
+        }
+        let last = before[..end].chars().next_back().unwrap();
+        return !is_delimiter(last) && !is_boundary(last);
+    }
+}
+
+/// Byte index of a `{ident}` format hole that ends `text`.
+fn trailing_format_hole(text: &str) -> Option<usize> {
+    if !text.ends_with('}') {
+        return None;
+    }
+    let open = text.rfind('{')?;
+    is_format_hole(&text[open..]).then_some(open)
 }
 
 /// One `{ident}` format hole, with an ASCII identifier and no other text.
@@ -300,9 +339,9 @@ fn is_format_hole(segment: &str) -> bool {
 /// a reviewed literal, so a private name cannot hide behind a character the
 /// scanner did not expect. An absolute candidate needs two segments
 /// (`/single` and `and/or` are prose). An absolute candidate whose every
-/// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text.
-/// A real segment beside a hole, a home path, a shell variable, or a Windows
-/// path stays a candidate.
+/// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text,
+/// unless that run continues a real path segment. A real segment beside a
+/// hole, a home path, a shell variable, or a Windows path stays a candidate.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
@@ -359,7 +398,7 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
         } else {
             token.chars().nth(3).is_some()
         };
-        if keep && !token.is_empty() && !is_non_path_format_text(token) {
+        if keep && !token.is_empty() && !is_non_path_format_text(text, index, token) {
             tokens.push(token);
             // Resume after the candidate so its interior is not rescanned.
             while chars.peek().is_some_and(|(at, _)| *at < index + end) {

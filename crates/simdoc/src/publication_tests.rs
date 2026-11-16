@@ -403,6 +403,9 @@ fn rust_format_labels_are_not_filesystem_paths() {
         "see }/etc/passwd now",
         "/{lens}/etc/passwd",
         "C:\\{User}\\{Secret}",
+        "cache at //home/alice/{project}/{lens}/{fidelity}",
+        "notes/{target}/{lens}/{fidelity}",
+        "foo{project}/{lens}/{fidelity}",
     ] {
         assert!(
             guard(repo, "README.md", text).is_err(),
