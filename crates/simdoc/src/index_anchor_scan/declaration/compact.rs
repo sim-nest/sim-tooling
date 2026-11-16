@@ -147,23 +147,37 @@ fn adds_private_path(text: &str, already: &[String]) -> bool {
 
 /// Drop each whitespace run that does not add a private path. A run that
 /// would add one stays as a single space, which is enough to keep the slash
-/// segments apart.
+/// segments apart. A later deletion can turn a blocked join into a reviewed
+/// literal, so the scan repeats until a pass drops nothing more.
 fn drop_safe_whitespace(spaced: &str, already: &[String]) -> String {
     let mut current = spaced.to_owned();
+    loop {
+        let next = drop_one_pass(&current, already);
+        if next == current {
+            return current;
+        }
+        current = next;
+    }
+}
+
+fn drop_one_pass(current: &str, already: &[String]) -> String {
+    let mut out = current.to_owned();
     let mut from = 0;
-    while let Some((start, end)) = next_whitespace_run(&current, from) {
-        let mut trial = String::with_capacity(current.len() - (end - start));
-        trial.push_str(&current[..start]);
-        trial.push_str(&current[end..]);
+    while let Some((start, end)) = next_whitespace_run(&out, from) {
+        let mut trial = String::with_capacity(out.len() - (end - start));
+        trial.push_str(&out[..start]);
+        trial.push_str(&out[end..]);
         if adds_private_path(&trial, already) {
-            current.replace_range(start..end, " ");
+            if end - start != 1 || !out[start..end].starts_with(' ') {
+                out.replace_range(start..end, " ");
+            }
             from = start + 1;
         } else {
-            current = trial;
+            out = trial;
             from = start;
         }
     }
-    current
+    out
 }
 
 fn next_whitespace_run(text: &str, from: usize) -> Option<(usize, usize)> {
@@ -257,6 +271,25 @@ mod tests {
     fn an_admitted_literal_joined_across_a_space_stays_fully_stripped() {
         let compacted = compact_src(r#"fn demo() { let _ = "; /proc /cpuinfo"; }"#);
         assert!(compacted.contains(";/proc/cpuinfo"), "{compacted}");
+        guard(
+            Path::new("/work/constellation/sim-fixture"),
+            "README.md",
+            &compacted,
+        )
+        .unwrap_or_else(|err| panic!("{err}\n{compacted}"));
+    }
+
+    #[test]
+    fn a_later_join_strips_the_reviewed_literal_and_keeps_the_machine_path_apart() {
+        let compacted = compact_src(r#"fn demo() { let _ = "; /proc /cpu info; /tmp /db"; }"#);
+        assert!(compacted.contains(";/proc/cpuinfo;"), "{compacted}");
+        assert!(!compacted.contains("/proc /"), "{compacted}");
+        assert!(!compacted.contains("/tmp/db"), "{compacted}");
+        assert!(
+            !path_tokens(&compacted).contains(&"/tmp/db"),
+            "{compacted} {:?}",
+            path_tokens(&compacted)
+        );
         guard(
             Path::new("/work/constellation/sim-fixture"),
             "README.md",
