@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Conservative protocol-implementation resolution over one parsed Rust file.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -108,8 +113,8 @@ impl<'a> ProtocolResolver<'a> {
                     };
                     facts.push(ProtocolImplFact {
                         protocol: self.resolve(module, protocol),
-                        source_spelling: compact_tokens(&protocol.to_token_stream().to_string()),
-                        implementor: compact_tokens(&item.self_ty.to_token_stream().to_string()),
+                        source_spelling: compact_tokens(&protocol.to_token_stream()),
+                        implementor: compact_tokens(&item.self_ty.to_token_stream()),
                         body_fingerprint: implementation_fingerprint(item),
                         source_anchor: format!("{}#declaration-{declaration}", self.file),
                     });

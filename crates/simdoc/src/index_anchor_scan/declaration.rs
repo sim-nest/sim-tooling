@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Bounded, normalized declaration facts produced by the anchor scanner.
 
 use std::collections::BTreeMap;
@@ -6,7 +11,9 @@ use quote::ToTokens;
 
 use super::{is_public, join_path};
 
+mod compact;
 pub(super) mod protocol;
+use compact::compact_tokens;
 pub(super) use protocol::ProtocolImplFact;
 use protocol::protocol_impl_facts;
 
@@ -366,11 +373,7 @@ pub(super) fn normalize_tokens<T: ToTokens>(value: &T, generics: &syn::Generics)
             .collect()
     }
 
-    compact_tokens(&rewrite(value.to_token_stream(), &names).to_string())
-}
-
-pub(super) fn compact_tokens(tokens: &str) -> String {
-    tokens.split_whitespace().collect()
+    compact_tokens(&rewrite(value.to_token_stream(), &names))
 }
 
 fn bound_fact(fact: &mut DeclarationFact, limit: usize, scan: &mut DeclarationScan) {
@@ -454,5 +457,100 @@ mod tests {
             "unexpected declaration facts: {:?}",
             scan.facts
         );
+    }
+
+    #[test]
+    fn string_line_continuations_are_not_path_separators() {
+        let src = r##"
+            fn demo<'a>(_: &'a str) {
+                let _ = "carrier samples/wavelength \
+                    u={:?}, above \
+                    {maximum:?}";
+                let _ = "keep\nthis";
+                let _ = "\\ n";
+                let _ = r"a\ b";
+                let _ = "cook\\
+ed";
+                let _ = r"raw\
+cont";
+                let _ = '"';
+                let _ = r#"a"\
+b"#;
+                let _ = b'"';
+                let _ = b"byte\
+mark";
+                let _ = c"cwave\
+len";
+                let _ = "after\
+char";
+            }
+        "##;
+        let parsed = syn::parse_file(src).expect("sample");
+        let tokens = quote::ToTokens::to_token_stream(&parsed);
+        let compacted = compact_tokens(&tokens);
+        assert!(
+            !compacted.contains("wavelength\\") && !compacted.contains("above\\"),
+            "{compacted}"
+        );
+        assert!(
+            compacted.contains("samples/wavelengthu={:?}"),
+            "{compacted}"
+        );
+        assert!(compacted.contains("above{maximum:?}"), "{compacted}");
+        assert!(compacted.contains("keep\\nthis"), "{compacted}");
+        // An escaped backslash followed by a space is not a continuation.
+        // Compacting the space must leave both backslashes, so the spelling
+        // does not collapse into the newline escape above.
+        assert!(compacted.contains("\\\\n"), "{compacted}");
+        assert!(compacted.contains("r\"a\\b\""), "{compacted}");
+        // An escaped backslash followed by a real newline is not a continuation.
+        assert!(compacted.contains("\"cook\\\\ed\""), "{compacted}");
+        // A raw string keeps a backslash that precedes a newline.
+        assert!(compacted.contains("r\"raw\\cont\""), "{compacted}");
+        // A character literal may contain a quote. That quote must not open
+        // a string, or the following raw backslash would be dropped.
+        assert!(compacted.contains("'\"'"), "{compacted}");
+        assert!(compacted.contains("r#\"a\"\\b\"#"), "{compacted}");
+        assert!(compacted.contains("b\"bytemark\""), "{compacted}");
+        assert!(compacted.contains("c\"cwavelen\""), "{compacted}");
+        assert!(
+            compacted.contains("afterchar") && !compacted.contains("after\\"),
+            "{compacted}"
+        );
+
+        let crlf =
+            "fn demo() {\n    let _ = \"wave\\\r\nlength\";\n    let _ = \"a\\\\\r\nb\";\n}\n";
+        let crlf_tokens = quote::ToTokens::to_token_stream(&syn::parse_file(crlf).expect("crlf"));
+        let crlf_compacted = compact_tokens(&crlf_tokens);
+        assert!(
+            crlf_compacted.contains("wavelength") && !crlf_compacted.contains("wave\\"),
+            "{crlf_compacted}"
+        );
+        assert!(crlf_compacted.contains("\"a\\\\b\""), "{crlf_compacted}");
+    }
+
+    #[test]
+    fn ordinary_literals_match_whitespace_stripped_display() {
+        let src = r#"
+            fn demo<'a, T: Clone>(value: &'a [T]) -> bool {
+                let flag = true;
+                let ch = '"';
+                let byte = b'"';
+                let raw = r"a\ b";
+                let craw = cr"a\ b";
+                let cooked = "keep\n \\ n";
+                let n = 1.5f64;
+                let pair = (ch, raw);
+                flag && n > 0.0 && value.len() == pair.0.len()
+            }
+        "#;
+        let parsed = syn::parse_file(src).expect("sample");
+        let tokens = quote::ToTokens::to_token_stream(&parsed);
+        let stripped: String = tokens
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        assert_eq!(compact_tokens(&tokens), stripped, "{stripped}");
     }
 }
