@@ -253,28 +253,46 @@ fn local_locations(repo: &Path) -> Vec<String> {
     locations
 }
 
-/// Whether `token` is an absolute run of Rust format holes and nothing else.
+/// Whether the raw candidate at `token_start` is the split tail of a format label.
 ///
-/// `/{lens}/{fidelity}` is label text. The same run stays a candidate when it
-/// continues a real path segment, as in `//home/alice/{project}/{lens}/{fidelity}`,
-/// `name={project}/{lens}/{fidelity}`, or `name({project}/{lens}/{fidelity}`.
-/// A backslash inside a slash segment, as in `/{lens}\{fidelity}`, is not a
-/// format hole. `/home/{user}`, `~/{secret}/x`, and `/tmp/${SECRET}` name a
-/// machine location and stay candidates too.
-fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool {
-    if !token.starts_with('/') || token.starts_with("//") || continues_real_path(text, token_start)
-    {
+/// The scanner starts an absolute candidate at the `/` inside
+/// `{target}/{lens}/{fidelity}`, so the token is `/{lens}/{fidelity}` and the
+/// `{target}` hole sits outside it. That is the demonstrated false positive in
+/// `badge("{target}/{lens}/{fidelity}")`. The raw candidate, before
+/// [`boundary_token`] strips a tail, has to be only `{ident}` holes. The holes
+/// before that slash have to reach a quote or whitespace, the same characters
+/// that already end a candidate. A leading-slash placeholder has no preceding
+/// hole and stays a path. So does anything glued on by another character,
+/// including `=`, `\`, a real segment, or punctuation.
+fn is_non_path_format_text(text: &str, token_start: usize, raw_len: usize) -> bool {
+    let raw_end = token_start + raw_len;
+    if !is_pure_format_hole_path(&text[token_start..raw_end]) {
         return false;
     }
-    // `boundary_token` strips a trailing dot before this sees it, so
-    // `/{project}/{lens}/.` arrives as token `/{project}/{lens}/` plus `.`.
-    // That slash is path context for the stripped mark.
-    let slash_before = token.ends_with('/') || token.ends_with('\\');
-    if real_segment_after(&text[token_start + token.len()..], slash_before) {
+    let mut cursor = token_start;
+    loop {
+        let Some(hole_at) = trailing_format_hole(&text[..cursor]) else {
+            return false;
+        };
+        if hole_at == 0 {
+            return true;
+        }
+        let glue = text[..hole_at].chars().next_back().unwrap();
+        if glue == '/' {
+            cursor = hole_at - glue.len_utf8();
+            continue;
+        }
+        return is_label_separator(glue);
+    }
+}
+
+/// An absolute `/` run whose every segment is one `{ident}` hole.
+fn is_pure_format_hole_path(raw: &str) -> bool {
+    if !raw.starts_with('/') || raw.starts_with("//") {
         return false;
     }
     let mut any = false;
-    for segment in token.split('/') {
+    for segment in raw.split('/') {
         if segment.is_empty() {
             continue;
         }
@@ -286,148 +304,9 @@ fn is_non_path_format_text(text: &str, token_start: usize, token: &str) -> bool 
     any
 }
 
-/// Whether the format-hole run at `token_start` is glued to a real path segment.
-///
-/// `{target}/{lens}` is still label text. `alice/{project}/{lens}` is not: the
-/// hole is only the tail of a path the candidate split did not swallow.
-/// `name({project}/{lens}`, `name)({project}/{lens}`, and `name][{project}/{lens}`
-/// stay paths. A backslash does too: `\{User}\{Secret}/{lens}` is a path.
-/// A quote or whitespace still separates label text, so
-/// `badge("{target}/{lens}")` and `({target}/{lens})` do not.
-fn continues_real_path(text: &str, token_start: usize) -> bool {
-    let before = &text[..token_start];
-    let mut end = before.len();
-    loop {
-        if end == 0 {
-            return false;
-        }
-        if let Some(hole_at) = trailing_format_hole(&before[..end]) {
-            if hole_at == 0 {
-                return false;
-            }
-            let glue = before[..hole_at].chars().next_back().unwrap();
-            if glue == '/' {
-                end = hole_at - glue.len_utf8();
-                continue;
-            }
-            // A backslash is path evidence. Skipping it would publish
-            // `\{User}\{Secret}/{lens}/{fidelity}` as label text.
-            if glue == '\\' {
-                return true;
-            }
-            if continues_through_glue(&before[..hole_at], glue) {
-                return true;
-            }
-            return !is_delimiter(glue) && !is_boundary(glue);
-        }
-        let last = before[..end].chars().next_back().unwrap();
-        if continues_through_glue(&before[..end], last) {
-            return true;
-        }
-        return !is_delimiter(last) && !is_boundary(last);
-    }
-}
-
-/// Whether `glue` joins the format-hole tail to a real segment in `text`.
-///
-/// `text` ends at `glue`. `=` always joins, including `name=/{lens}`. Other
-/// path punctuation joins when a segment sits behind it, so
-/// `name)({project}/{lens}` stays a path. A quote or whitespace stops the
-/// walk: `badge("{target}/{lens}")` and `({target}/{lens})` stay label text.
-fn continues_through_glue(text: &str, glue: char) -> bool {
-    if glue == '=' {
-        return true;
-    }
-    if is_label_separator(glue) || !is_path_punctuation(glue) {
-        return false;
-    }
-    segment_behind_punctuation(&text[..text.len() - glue.len_utf8()])
-}
-
-/// A quote or whitespace ends a format label. Other punctuation does not.
+/// A quote or whitespace ends a candidate and a format label.
 fn is_label_separator(c: char) -> bool {
     c.is_whitespace() || matches!(c, '"' | '\'' | '`')
-}
-
-/// Punctuation the candidate split can leave between a segment and a format hole.
-fn is_path_punctuation(c: char) -> bool {
-    matches!(
-        c,
-        '=' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '|'
-    )
-}
-
-/// Whether a real path segment follows a format-hole token.
-///
-/// `/{project}/{lens})/secret` is one path the candidate split at `)`.
-/// `/{target}/{lens}\ ` keeps the backslash as path evidence. A quote or
-/// whitespace still ends the label, and a bare `)` does not invent a segment.
-/// A period, colon, question mark, or exclamation point is the sentence
-/// punctuation `boundary_token` already strips, so `/{target}/{lens}.` stays
-/// a label. A parent marker does not: `/{project}/{lens})/..` stays a path.
-/// After a slash, `.`, `:`, `?`, and `!` are path segments, including when
-/// the candidate boundary already removed the mark (`/{project}/{lens}/.`
-/// and `/{project}/{lens}/!`). `slash_before` is that slash. The same marks
-/// without a preceding slash stay sentence punctuation. A real segment after
-/// sentence punctuation, as in `/{project}/{lens}.)/secret`, stays a path.
-fn real_segment_after(text: &str, mut saw_slash: bool) -> bool {
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if is_label_separator(ch) {
-            return false;
-        }
-        if ch == '\\' {
-            return true;
-        }
-        if ch == '.' && chars.peek() == Some(&'.') {
-            return true;
-        }
-        if saw_slash && is_stripped_sentence_mark(ch) {
-            return true;
-        }
-        if ch == '/' {
-            saw_slash = true;
-        }
-        if is_path_punctuation(ch) || ch == '/' || is_stripped_sentence_mark(ch) {
-            continue;
-        }
-        return !is_delimiter(ch) && !is_boundary(ch);
-    }
-    false
-}
-
-/// Sentence punctuation `boundary_token` removes from the end of a candidate.
-///
-/// These marks are not path segments. A backslash is absent here on purpose:
-/// `boundary_token` strips it too, and the caller keeps that as path evidence.
-fn is_stripped_sentence_mark(c: char) -> bool {
-    matches!(c, '.' | ':' | '?' | '!')
-}
-
-/// Whether a real path segment sits in `text` once path punctuation is skipped.
-///
-/// `=` always joins, including through other punctuation: `=({project}/{lens}`
-/// is a path. Skipping `=` here would publish that tail. A quote or
-/// whitespace still ends the label.
-fn segment_behind_punctuation(text: &str) -> bool {
-    let mut end = text.len();
-    loop {
-        if end == 0 {
-            return false;
-        }
-        let ch = text[..end].chars().next_back().unwrap();
-        if ch == '=' {
-            return true;
-        }
-        if is_label_separator(ch) {
-            return false;
-        }
-        if is_path_punctuation(ch) {
-            end -= ch.len_utf8();
-            continue;
-        }
-        return !is_delimiter(ch) && !is_boundary(ch);
-    }
 }
 
 /// Byte index of a `{ident}` format hole that ends `text`.
@@ -464,14 +343,11 @@ fn is_format_hole(segment: &str) -> bool {
 /// `$`, braces, `%`, `*`. A candidate is published only when it exactly equals
 /// a reviewed literal, so a private name cannot hide behind a character the
 /// scanner did not expect. An absolute candidate needs two segments
-/// (`/single` and `and/or` are prose). An absolute candidate whose every
-/// segment is one Rust format hole (`/{lens}/{fidelity}`) is non-path text,
-/// unless that run continues a real path segment, a real segment follows it,
-/// or a segment contains a backslash. A trailing backslash stays path
-/// evidence. Sentence punctuation does not. A real segment beside a hole
-/// stays a candidate, including one joined through path punctuation other
-/// than a quote or whitespace. A home path, a shell variable, or a Windows
-/// path stays a candidate too.
+/// (`/single` and `and/or` are prose). The tail of a `{ident}` hole run that
+/// this scan splits at `/`, bounded by a quote or whitespace, is non-path
+/// text. The judgment uses the raw candidate, before a trailing mark is
+/// stripped. A leading-slash placeholder stays a candidate. A home path, a
+/// shell variable, or a Windows path stays a candidate too.
 pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut previous: Option<char> = None;
@@ -528,8 +404,10 @@ pub(crate) fn path_tokens(text: &str) -> Vec<&str> {
         } else {
             token.chars().nth(3).is_some()
         };
-        if keep && !token.is_empty() && !is_non_path_format_text(text, index, token) {
-            tokens.push(token);
+        if keep && !token.is_empty() {
+            if !is_non_path_format_text(text, index, end) {
+                tokens.push(token);
+            }
             // Resume after the candidate so its interior is not rescanned.
             while chars.peek().is_some_and(|(at, _)| *at < index + end) {
                 chars.next();
