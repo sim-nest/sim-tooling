@@ -192,6 +192,7 @@ fn conformance_rust_files(repo: &Path) -> Vec<PathBuf> {
     collect_ext_files(&repo.join("src"), "rs", &mut files);
     collect_ext_files(&repo.join("tests"), "rs", &mut files);
     collect_ext_files(&repo.join("crates"), "rs", &mut files);
+    collect_ext_files(&repo.join("recipes"), "rs", &mut files);
     collect_ext_files(&repo.join("xtask"), "rs", &mut files);
     files.retain(|path| {
         let rel = rel_path(repo, path);
@@ -363,6 +364,12 @@ mod tests {
         )
         .unwrap();
         fs::write(xtask_dir.join("docs.rs"), "// conformance: the maintenance package resolves its encoder.\n#[test]\nfn encoder_resolves() {}\n").unwrap();
+        fs::write(
+            checked_dir.join("setup.rs"),
+            "// conformance: the checked recipe scenario runs under cargo test.\n#[test]\nfn scenario() {}\n",
+        )
+        .unwrap();
+        fs::write(checked_dir.join("helper.rs"), "fn helper() {}\n").unwrap();
         let packages = vec![
             package("sim-demo", ""),
             package("sim-codec-doc", "crates/sim-codec-doc"),
@@ -386,6 +393,15 @@ mod tests {
         );
         let root_spec_test = find(&specimens, "spec-test/sim-demo-repo/tests/behavior");
         let xtask_spec = find(&specimens, "spec-test/sim-demo-repo/xtask/src/docs");
+        let recipe_spec = find(
+            &specimens,
+            "spec-test/sim-demo-repo/recipes/01-basics/checked/setup",
+        );
+        assert_eq!(recipe_spec.kind, "spec-test");
+        assert_eq!(recipe_spec.subject.as_str(), "crate/sim-demo");
+        assert!(recipe_spec.runnable && recipe_spec.checked);
+        assert_eq!(recipe_spec.checked_by.as_deref(), Some("cargo test"));
+        assert!(ids.iter().all(|id| !id.ends_with("helper")));
         assert_eq!(xtask_spec.subject.as_str(), "crate/xtask");
         assert!(xtask_spec.runnable && xtask_spec.checked);
         assert!(ids.iter().all(|id| !id.contains("xtask/src/main")));
