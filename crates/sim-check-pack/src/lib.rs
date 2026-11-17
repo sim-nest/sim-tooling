@@ -1,9 +1,11 @@
 //! Exact native invocation of SIM's public conformance packs.
 //!
 //! This crate owns the small typed adapter named by the native checker binding.
-//! It has no process, filesystem, proof-store, or revocation authority. The
-//! caller must hold the weak operation-local handle issued by the live SDK
-//! owner, and the returned value remains bound to that owner generation.
+//! It has no process, filesystem, proof-store, or revocation authority.
+//! Operation-local invocation requires the weak handle issued by the live SDK
+//! owner, and that returned value remains bound to that owner generation.
+//! Source-identity observation takes the caller-named subject and the injected
+//! manifest text, and returns that source-identity result.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -14,7 +16,10 @@ use sim_conformance_packs::{
 };
 
 mod prepared;
+mod source_identity;
+
 pub use prepared::{PreparedOperationLocalCheck, prepare_operation_local};
+pub use source_identity::{SourceIdentityObservation, observe_source_identity};
 
 /// Code-only implementation selected by the protected SIM boot.
 #[derive(Clone, Copy, Debug, Default)]

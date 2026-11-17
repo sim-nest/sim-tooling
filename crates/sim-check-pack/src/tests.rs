@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -66,7 +71,7 @@ fn native_call_uses_distinct_binding_and_live_owner() {
         Symbol::qualified("test", "native-checker-owner"),
         [7; 32],
     ));
-    owner.mark_current(evidence.subject_id().unwrap()).unwrap();
+    owner.mark_current(&evidence).unwrap();
     let authority = owner.operation_handle();
     let support = support(&evidence, 1);
     let qualified = invoke_operation_local(&evidence, &support, &authority).unwrap();
@@ -107,7 +112,7 @@ fn preparation_is_authority_free_and_matches_live_issue() {
         Symbol::qualified("test", "prepared-checker-owner"),
         [8; 32],
     ));
-    owner.mark_current(evidence.subject_id().unwrap()).unwrap();
+    owner.mark_current(&evidence).unwrap();
     let qualified = prepared.issue(&owner.operation_handle()).unwrap();
     assert_eq!(qualified.receipt().result(), &expected_result);
 }
@@ -159,7 +164,7 @@ fn support_substitution_changes_typed_support_and_provenance_identities() {
         Symbol::qualified("test", "support-substitution-owner"),
         [9; 32],
     ));
-    owner.mark_current(evidence.subject_id().unwrap()).unwrap();
+    owner.mark_current(&evidence).unwrap();
     let authority = owner.operation_handle();
     let first = invoke_operation_local(&evidence, &support(&evidence, 1), &authority).unwrap();
     let second = invoke_operation_local(&evidence, &support(&evidence, 2), &authority).unwrap();
@@ -178,7 +183,7 @@ fn missing_support_member_refuses_before_checker_issue() {
         Symbol::qualified("test", "missing-support-owner"),
         [10; 32],
     ));
-    owner.mark_current(evidence.subject_id().unwrap()).unwrap();
+    owner.mark_current(&evidence).unwrap();
     let authority = owner.operation_handle();
     let mut members = support(&evidence, 1).members().clone();
     members.pop_first();
