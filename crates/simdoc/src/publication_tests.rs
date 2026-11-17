@@ -567,3 +567,38 @@ fn storage_table_examples_are_exact_public_literals() {
     assert!(!is_public_path("/remote/nested/extra"));
     assert!(guard(repo, "docs/humans/README.md", "`/remote/nested/extra`").is_err());
 }
+
+#[test]
+fn femm_artifact_refs_are_exact_public_literals() {
+    let repo = Path::new("/work/constellation/sim-fixture");
+    let specimen = r##"
+        artifact_ref: "table:femm/geometry/citizen".to_owned()
+        artifact_ref: "table:femm/mesh/citizen".to_owned()
+        FemmMeshDescriptor::from_mesh(&solution.mesh, "table:femm/mesh/tiny")
+        matrix_ref: "stable:femm/matrix/citizen".to_owned()
+        matrix_ref: "stable:femm/matrix/tiny".to_owned()
+        artifact_ref: "stable:femm/tape/citizen".to_owned()
+        [geometry "#(femm/Geometry v1 1 0 \"table:femm/geometry/citizen\")"]
+        [mesh "#(femm/Mesh v1 3 1 \"table:femm/mesh/citizen\")"]
+        [tape "#(femm/Tape v1 1 1 \"stable:femm/tape/citizen\")"]
+        [solve "#(femm/Solve v1 \"sparse-lu\" \"stable:femm/matrix/citizen\")"]
+    "##;
+    let tokens = path_tokens(specimen);
+    assert!(
+        tokens.iter().all(|token| is_public_path(token)),
+        "{tokens:?}"
+    );
+    guard(
+        repo,
+        "docs/generated/sim-index-fragment.claims.sx",
+        specimen,
+    )
+    .unwrap();
+    assert!(!is_public_path("/geometry/citizen/extra"));
+    assert!(guard(repo, "docs/humans/README.md", "`/geometry/citizen/extra`").is_err());
+    assert!(!is_public_path("/unreviewed/route"));
+    assert!(guard(repo, "docs/humans/README.md", "`/unreviewed/route`").is_err());
+    assert!(!is_public_path("/tmp/db"));
+    assert!(is_machine_path("/tmp/db"));
+    assert!(guard(repo, "docs/humans/README.md", "\"/tmp/db\"").is_err());
+}

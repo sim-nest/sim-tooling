@@ -106,6 +106,13 @@ pub(crate) const PUBLIC_LITERALS: &[&str] = &[
     "/team/frozen",
     "/team/manual",
     "/virtual/leaf",
+    // FEMM artifact refs quoted by checked specimens and recipes. Exact only.
+    "/geometry/citizen",
+    "/matrix/citizen",
+    "/matrix/tiny",
+    "/mesh/citizen",
+    "/mesh/tiny",
+    "/tape/citizen",
     "file:///source",
     "file:///etc/passwd",
     "C:/SIM-Index",
