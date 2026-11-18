@@ -908,6 +908,11 @@ Specimen `spec-test/sim-tooling/src/check_pack` is checked by `cargo test`.
 Source `src/check_pack.rs`:
 
 ```rust
+// SPDX-License-Identifier: MPL-2.0
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Exact conformance-pack command adapter.
 
 use serde_json::{Value, json};
@@ -1160,10 +1165,13 @@ mod tests {
     // substitution or noncanonical input.
 
     fn subject_id(evidence: &str) -> Result<sim_conformance_core::CheckedSubjectId, String> {
-        OperationLocalEvidence::parse(evidence.as_bytes())
-            .map_err(|error| error.to_string())?
+        owned_evidence(evidence)
             .subject_id()
             .map_err(|error| error.to_string())
+    }
+
+    fn owned_evidence(evidence: &str) -> OperationLocalEvidence {
+        OperationLocalEvidence::parse(evidence.as_bytes()).expect("canonical evidence")
     }
 
     fn options(checker: &str, scope: &str, evidence: &str) -> CheckPackOptions {
@@ -1218,7 +1226,7 @@ mod tests {
     fn sdk_owner_currentness_yields_receipt_bound_fresh_observation() {
         let evidence = operation_evidence("positive");
         let owner = owner(1);
-        owner.mark_current(subject_id(&evidence).unwrap()).unwrap();
+        owner.mark_current(&owned_evidence(&evidence)).unwrap();
         let output = execute_operation(&evidence, &owner.operation_handle()).unwrap();
         assert_eq!(output["outcome"], "pass");
         assert_eq!(output["grade"], "bootstrap");
@@ -1237,7 +1245,7 @@ mod tests {
         for (byte, variant) in [(2, "a"), (3, "b")] {
             let evidence = operation_evidence(variant);
             let owner = owner(byte);
-            owner.mark_current(subject_id(&evidence).unwrap()).unwrap();
+            owner.mark_current(&owned_evidence(&evidence)).unwrap();
             let authority = owner.operation_handle();
             let first = execute_operation(&evidence, &authority).unwrap();
             let second = execute_operation(&evidence, &authority).unwrap();
@@ -1259,14 +1267,14 @@ mod tests {
         );
 
         let revoked = owner(5);
-        revoked.revoke(subject_id(&evidence).unwrap()).unwrap();
+        revoked.revoke(&owned_evidence(&evidence)).unwrap();
         assert_eq!(
             execute_operation(&evidence, &revoked.operation_handle()).unwrap_err()["reason"],
             "receipt-refused"
         );
 
         let dead = owner(6);
-        dead.mark_current(subject_id(&evidence).unwrap()).unwrap();
+        dead.mark_current(&owned_evidence(&evidence)).unwrap();
         let authority = dead.operation_handle();
         drop(dead);
         assert_eq!(
@@ -1279,7 +1287,7 @@ mod tests {
     fn substituted_subject_scope_binding_and_noncanonical_input_fail_closed() {
         let evidence = operation_evidence("original");
         let owner = owner(7);
-        owner.mark_current(subject_id(&evidence).unwrap()).unwrap();
+        owner.mark_current(&owned_evidence(&evidence)).unwrap();
         let authority = owner.operation_handle();
         let substituted = operation_evidence("substituted");
         assert_eq!(
@@ -1346,7 +1354,7 @@ mod tests {
             "identity.cross-architecture-confirmed=true\nidentity.cross-toolchain-confirmed=true\n";
         let operation = operation_evidence("unsupported");
         let owner = owner(8);
-        owner.mark_current(subject_id(&operation).unwrap()).unwrap();
+        owner.mark_current(&owned_evidence(&operation)).unwrap();
         let authority = owner.operation_handle();
         assert_eq!(
             execute_with_owner_currentness(
