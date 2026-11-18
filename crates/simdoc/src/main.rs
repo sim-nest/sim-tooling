@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 fn main() {
+    // bin-boot-exempt: documentation and repository-contract tool with no product runtime.
     if let Err(err) = simdoc::run(std::env::args().collect()) {
         eprintln!("{err}");
         std::process::exit(1);

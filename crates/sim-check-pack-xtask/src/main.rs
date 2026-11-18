@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 fn main() {
+    // bin-boot-exempt: isolated checker command with no product runtime.
     if let Err(err) = sim_check_pack_xtask::run(std::env::args().collect()) {
         eprintln!("{err}");
         std::process::exit(1);
