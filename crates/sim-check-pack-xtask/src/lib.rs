@@ -19,11 +19,13 @@ pub use git_release::admit_git_release;
 pub use owner_receipt::{OwnerReceiptRefusal, admit_executed_journal};
 pub use portable_seams::admit_portable_seams;
 pub use release_obligations::admit_release_obligations;
+pub use roadmap_authority::admit_roadmap_authority;
 
 mod git_release;
 mod owner_receipt;
 mod portable_seams;
 mod release_obligations;
+mod roadmap_authority;
 
 /// Dispatches the isolated checker command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
