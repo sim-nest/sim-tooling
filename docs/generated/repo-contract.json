@@ -341,7 +341,7 @@
       "executable": {
         "lock_sha256": "de3cf584352514646909797b8454326e8ba4d3d90bf87ed7c3592ae971073678",
         "package": "simdoc",
-        "source_sha256": "2e1adc4c57c85dfcff6f2ba40dadaa44b8ffdc465bab9fcb909712116f1e504c",
+        "source_sha256": "973f5e03ad72a70bee9ca7aff993326dfc52d0a4791425b67aa32e583aaa7120",
         "version": "0.1.0"
       },
       "operation": "repo-contract --repo .",
@@ -357,13 +357,13 @@
         }
       }
     },
-    "generation_timestamp": "2026-11-18T00:27:31+01:00",
+    "generation_timestamp": "2026-11-19T20:57:04+01:00",
     "generator": "xtask repo-contract v1",
-    "git_commit": "4b817e0f7298077a29db4b385b88e2c3618f8226",
+    "git_commit": "4682a168f30a8c700340ac4bfa18e54f8487e8f7",
     "regeneration_command": "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "4b817e0f7298077a29db4b385b88e2c3618f8226",
+    "source_commit": "4682a168f30a8c700340ac4bfa18e54f8487e8f7",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -379,9 +379,9 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "e1dfb1bcc32d3061",
+    "workspace_hash": "6517bb3d1fabbfe2",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 241,
+    "workspace_hash_input_count": 249,
     "workspace_hash_inputs": [
       ".github/workflows/authorship.yml",
       ".github/workflows/ci.yml",
@@ -406,8 +406,16 @@
       "crates/sim-check-pack-ubuntu-pc/src/model.rs",
       "crates/sim-check-pack-ubuntu-pc/src/tests.rs",
       "crates/sim-check-pack-xtask/Cargo.toml",
+      "crates/sim-check-pack-xtask/src/facet_transaction.rs",
+      "crates/sim-check-pack-xtask/src/git_release.rs",
       "crates/sim-check-pack-xtask/src/lib.rs",
       "crates/sim-check-pack-xtask/src/main.rs",
+      "crates/sim-check-pack-xtask/src/neutral_input.rs",
+      "crates/sim-check-pack-xtask/src/owner_receipt.rs",
+      "crates/sim-check-pack-xtask/src/portable_seams.rs",
+      "crates/sim-check-pack-xtask/src/release_obligations.rs",
+      "crates/sim-check-pack-xtask/src/roadmap_authority.rs",
+      "crates/sim-check-pack-xtask/src/sealed_convergence.rs",
       "crates/simdoc/Cargo.toml",
       "crates/simdoc/build.rs",
       "crates/simdoc/build_identity.rs",

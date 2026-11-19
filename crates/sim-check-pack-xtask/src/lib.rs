@@ -22,6 +22,7 @@ pub use owner_receipt::{OwnerReceiptRefusal, admit_executed_journal};
 pub use portable_seams::admit_portable_seams;
 pub use release_obligations::admit_release_obligations;
 pub use roadmap_authority::admit_roadmap_authority;
+pub use sealed_convergence::admit_sealed_convergence;
 
 mod facet_transaction;
 mod git_release;
@@ -30,6 +31,7 @@ mod owner_receipt;
 mod portable_seams;
 mod release_obligations;
 mod roadmap_authority;
+mod sealed_convergence;
 
 /// Dispatches the isolated checker command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
