@@ -68,7 +68,7 @@ pub fn admit_executed_journal(subject: &str, body: &str) -> Result<Datum, OwnerR
     })
 }
 
-fn claim_number(result: &str) -> Result<u8, OwnerReceiptRefusal> {
+pub(crate) fn claim_number(result: &str) -> Result<u8, OwnerReceiptRefusal> {
     let (head, tail) = match result.split_once(' ') {
         Some((head, tail)) => {
             if tail.is_empty() || tail.split(' ').any(str::is_empty) {
