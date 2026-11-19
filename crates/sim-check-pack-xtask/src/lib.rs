@@ -15,6 +15,9 @@ pub mod check_pack;
 mod check_pack_test_support;
 
 pub use check_pack::{CheckPackOptions, execute_with_owner_currentness};
+pub use owner_receipt::{OwnerReceiptRefusal, admit_executed_journal};
+
+mod owner_receipt;
 
 /// Dispatches the isolated checker command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
