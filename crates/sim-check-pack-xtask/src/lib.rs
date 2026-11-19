@@ -17,9 +17,11 @@ mod check_pack_test_support;
 pub use check_pack::{CheckPackOptions, execute_with_owner_currentness};
 pub use git_release::admit_git_release;
 pub use owner_receipt::{OwnerReceiptRefusal, admit_executed_journal};
+pub use release_obligations::admit_release_obligations;
 
 mod git_release;
 mod owner_receipt;
+mod release_obligations;
 
 /// Dispatches the isolated checker command.
 pub fn run(args: Vec<String>) -> Result<(), String> {
