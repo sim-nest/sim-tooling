@@ -13,7 +13,7 @@ homepage.workspace = true
 serde_json = "1"
 sim-check-pack = { version = "0.1.0", path = "../sim-check-pack" }
 sim-conformance-core = "0.3.0"
-sim-conformance-packs = "0.8.6"
+sim-conformance-packs = "0.8.7"
 sim-kernel = "0.4.0"
 sim-lib-world = "0.1.13"
 
