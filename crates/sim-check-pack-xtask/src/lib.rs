@@ -16,12 +16,14 @@ mod check_pack_test_support;
 
 pub use check_pack::{CheckPackOptions, execute_with_owner_currentness};
 pub use git_release::admit_git_release;
+pub use neutral_input::admit_neutral_input;
 pub use owner_receipt::{OwnerReceiptRefusal, admit_executed_journal};
 pub use portable_seams::admit_portable_seams;
 pub use release_obligations::admit_release_obligations;
 pub use roadmap_authority::admit_roadmap_authority;
 
 mod git_release;
+mod neutral_input;
 mod owner_receipt;
 mod portable_seams;
 mod release_obligations;
