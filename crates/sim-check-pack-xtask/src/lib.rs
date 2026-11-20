@@ -26,6 +26,7 @@ pub use portable_seams::admit_portable_seams;
 pub use release_obligations::admit_release_obligations;
 pub use roadmap_authority::admit_roadmap_authority;
 pub use sealed_convergence::admit_sealed_convergence;
+pub use source_universe::admit_source_universe;
 pub use stage_one::admit_stage_one;
 
 mod cold_stage;
@@ -39,6 +40,7 @@ mod portable_seams;
 mod release_obligations;
 mod roadmap_authority;
 mod sealed_convergence;
+mod source_universe;
 mod stage_one;
 
 /// Dispatches the isolated checker command.
