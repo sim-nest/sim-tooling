@@ -15,6 +15,7 @@ pub mod check_pack;
 mod check_pack_test_support;
 
 pub use check_pack::{CheckPackOptions, execute_with_owner_currentness};
+pub use cold_stage::admit_cold_stage;
 pub use facet_transaction::admit_facet_transaction;
 pub use git_release::admit_git_release;
 pub use neutral_input::admit_neutral_input;
@@ -24,6 +25,7 @@ pub use release_obligations::admit_release_obligations;
 pub use roadmap_authority::admit_roadmap_authority;
 pub use sealed_convergence::admit_sealed_convergence;
 
+mod cold_stage;
 mod facet_transaction;
 mod git_release;
 mod neutral_input;
