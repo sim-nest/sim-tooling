@@ -1070,6 +1070,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-codec-index"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16a64b731a0065ecb8cc906c71ea301f49056e369db1b60b9889dc6473e7e7e9"
+dependencies = [
+ "serde_json",
+ "sim-codec",
+ "sim-codec-json",
+ "sim-codec-lisp",
+ "sim-index-core",
+ "sim-kernel",
+ "sim-value",
+]
+
+[[package]]
 name = "sim-codec-json"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1155,9 +1170,9 @@ dependencies = [
 
 [[package]]
 name = "sim-conformance-packs"
-version = "0.8.13"
+version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38823ed087d81e2fd914abd6773dd4441527269a55e870a1b4b0cb803800410"
+checksum = "f2067a6119e50c09abfc44bffe8a531e842af0c4ae928ba257041458247f4aeb"
 dependencies = [
  "sha2",
  "sim-artifact-facet",
@@ -1221,6 +1236,15 @@ checksum = "1b8007d9fc7c727277877f7d0f57a171af091367798e7809af2e0b5c347336fa"
 dependencies = [
  "globset",
  "sim-conformance-core 0.3.0",
+ "sim-kernel",
+]
+
+[[package]]
+name = "sim-index-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2ef7fe2375c663c60616828d0d61a17a0a1aba9be866f63d6f0ad84eb0686bf"
+dependencies = [
  "sim-kernel",
 ]
 
@@ -1513,6 +1537,20 @@ dependencies = [
  "sim-cookbook",
  "sim-cookbook-build",
  "sim-kernel",
+]
+
+[[package]]
+name = "sim-lib-index"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "451d136e8aabf121d886609d2472ee1e83a422f5af7bbe2444132200b523a6b6"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sim-codec-index",
+ "sim-index-core",
+ "sim-kernel",
+ "sim-run-core",
 ]
 
 [[package]]
@@ -2051,9 +2089,9 @@ dependencies = [
 
 [[package]]
 name = "sim-lib-world"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346b7e7c8f093a5916183b06e108e063631704243ad5cdec9fa7abcd39180bf0"
+checksum = "beb3baef61cbe2ef81e6cbd9fe1d62ddb277db0858dd9f40a359dc88b8492463"
 dependencies = [
  "sha2",
  "sim-artifact-facet",
@@ -2061,6 +2099,7 @@ dependencies = [
  "sim-conformance-core 0.3.0",
  "sim-incremental-core 0.5.3",
  "sim-kernel",
+ "sim-lib-index",
  "sim-lib-journal",
  "sim-lib-operation-gate 0.5.0",
  "sim-lib-roadmap-runner",
