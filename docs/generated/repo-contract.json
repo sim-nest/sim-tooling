@@ -357,13 +357,13 @@
         }
       }
     },
-    "generation_timestamp": "2026-11-20T01:22:31+01:00",
+    "generation_timestamp": "2026-11-20T08:11:27+01:00",
     "generator": "xtask repo-contract v1",
-    "git_commit": "77712db66abb9106c4ad2011e27bf4b13dc71c24",
+    "git_commit": "a4a0768fc4eba95b06b33cf077be8a5d05ea2021",
     "regeneration_command": "cargo run --locked --offline --manifest-path crates/simdoc/Cargo.toml -- simdoc",
     "repo": "sim-tooling",
     "schema": "sim.provenance.v1",
-    "source_commit": "77712db66abb9106c4ad2011e27bf4b13dc71c24",
+    "source_commit": "a4a0768fc4eba95b06b33cf077be8a5d05ea2021",
     "source_remote": "https://github.com/sim-nest/sim-tooling",
     "validation_commands": [
       "cargo fmt --all --check",
@@ -379,9 +379,9 @@
       "cargo run -p xtask -- validation-matrix --check --repo .",
       "cargo run -p xtask -- crate-catalog --check --repo ."
     ],
-    "workspace_hash": "33f0f275ebf85150",
+    "workspace_hash": "9e5cb4314c011147",
     "workspace_hash_algorithm": "fnv1a64",
-    "workspace_hash_input_count": 251,
+    "workspace_hash_input_count": 252,
     "workspace_hash_inputs": [
       ".github/workflows/authorship.yml",
       ".github/workflows/ci.yml",
@@ -407,6 +407,7 @@
       "crates/sim-check-pack-ubuntu-pc/src/tests.rs",
       "crates/sim-check-pack-xtask/Cargo.toml",
       "crates/sim-check-pack-xtask/src/cold_stage.rs",
+      "crates/sim-check-pack-xtask/src/consumers.rs",
       "crates/sim-check-pack-xtask/src/facet_transaction.rs",
       "crates/sim-check-pack-xtask/src/git_release.rs",
       "crates/sim-check-pack-xtask/src/lib.rs",
