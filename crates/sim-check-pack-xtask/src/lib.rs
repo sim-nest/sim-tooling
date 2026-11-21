@@ -17,6 +17,7 @@ mod check_pack_test_support;
 pub use check_pack::{CheckPackOptions, execute_with_owner_currentness};
 pub use closure_final::admit_closure_final;
 pub use cold_stage::admit_cold_stage;
+pub use constructor_final::admit_constructor_final;
 pub use consumers::admit_consumers;
 pub use facet_transaction::admit_facet_transaction;
 pub use git_release::admit_git_release;
@@ -33,6 +34,7 @@ pub use stage_one::admit_stage_one;
 
 mod closure_final;
 mod cold_stage;
+mod constructor_final;
 mod consumers;
 mod facet_transaction;
 mod git_release;
