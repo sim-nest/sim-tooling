@@ -1170,9 +1170,9 @@ dependencies = [
 
 [[package]]
 name = "sim-conformance-packs"
-version = "0.8.21"
+version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca7a05d5bcc5a2167709680ccd1e682eae4045daf25739db1c7f5d9afa9afec1"
+checksum = "d0d7740f8c0adb0990fe6d0007dded2b63d3548b69f0a2e1355373c483eb7a70"
 dependencies = [
  "sha2",
  "sim-artifact-facet",
@@ -2089,9 +2089,9 @@ dependencies = [
 
 [[package]]
 name = "sim-lib-world"
-version = "0.1.25"
+version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a053958df0c22f954c5219019e8eab97b14cb302693253b521ce357bbff3019"
+checksum = "0bfe5c5ddb6eaad378facee7bfdfc4596651e67a2bc93979efaa9a4b3a4aae6f"
 dependencies = [
  "sha2",
  "sim-artifact-facet",
