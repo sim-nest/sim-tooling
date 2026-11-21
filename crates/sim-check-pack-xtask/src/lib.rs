@@ -15,6 +15,7 @@ pub mod check_pack;
 mod check_pack_test_support;
 
 pub use check_pack::{CheckPackOptions, execute_with_owner_currentness};
+pub use closure_final::admit_closure_final;
 pub use cold_stage::admit_cold_stage;
 pub use consumers::admit_consumers;
 pub use facet_transaction::admit_facet_transaction;
@@ -30,6 +31,7 @@ pub use sealed_convergence::admit_sealed_convergence;
 pub use source_universe::admit_source_universe;
 pub use stage_one::admit_stage_one;
 
+mod closure_final;
 mod cold_stage;
 mod consumers;
 mod facet_transaction;
